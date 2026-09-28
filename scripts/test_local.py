@@ -76,7 +76,7 @@ class LocalAutomationTest(unittest.TestCase):
                 return ""
 
             with patch.object(local, "ROOT", root), patch.object(local, "ENV", env), \
-                 patch.object(local, "preflight"), patch.object(local, "run"), \
+                 patch.object(local, "preflight"), patch.object(local, "run") as command, \
                  patch.object(local, "compose", side_effect=fake_compose), \
                  patch.object(local, "api_probe"), patch.object(local, "checks"):
                 local.setup()
@@ -84,6 +84,25 @@ class LocalAutomationTest(unittest.TestCase):
             self.assertEqual(env.read_text(encoding="utf-8"), "private existing value")
             self.assertEqual(sum(call[:2] == ("up", "-d") for call in calls), 2)
             self.assertEqual(sum(call[:2] == ("exec", "-T") for call in calls), 4)
+            self.assertEqual(sum("playwright" in call.args[0] and "chromium" in call.args[0]
+                                 for call in command.call_args_list), 2)
+
+    def test_rejected_test_database_never_starts_compose(self):
+        with patch.object(local, "checked_test_url", side_effect=local.Failure("unsafe target", 2)), \
+             patch.object(local, "compose") as compose:
+            with self.assertRaises(local.Failure):
+                local.test_db()
+            compose.assert_not_called()
+
+    def test_test_database_restores_initially_stopped_service(self):
+        calls = []
+        with patch.object(local, "checked_test_url", return_value="validated"), \
+             patch.object(local, "preflight"), \
+             patch.object(local, "test_db_state", return_value=False), \
+             patch.object(local, "wait_databases"), \
+             patch.object(local, "compose", side_effect=lambda *args, **kwargs: calls.append(args)):
+            local.with_test_database(lambda url: self.assertEqual(url, "validated"))
+        self.assertEqual(calls, [("up", "-d", "db-test"), ("stop", "db-test")])
 
     def test_windows_job_assignment_precedes_launch_and_survives_launcher_exit(self):
         events = []

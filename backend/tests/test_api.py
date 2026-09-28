@@ -1,74 +1,45 @@
-"""Focused API smoke checks without a running database or test framework."""
+"""HTTP-level behavior of the existing health and readiness API."""
 
 import asyncio
-import json
-import unittest
 from unittest.mock import patch
 
-from app.main import _check_database, app
+import httpx
+import psycopg
+
+from app.main import app
 
 
-async def request(path: str) -> tuple[int, dict[str, str]]:
-    messages: list[dict] = []
-
-    async def receive() -> dict:
-        return {"type": "http.request", "body": b"", "more_body": False}
-
-    async def send(message: dict) -> None:
-        messages.append(message)
-
-    await app(
-        {
-            "type": "http",
-            "asgi": {"version": "3.0"},
-            "method": "GET",
-            "path": path,
-            "raw_path": path.encode(),
-            "root_path": "",
-            "query_string": b"",
-            "headers": [],
-            "scheme": "http",
-            "server": ("testserver", 80),
-            "client": ("127.0.0.1", 12345),
-            "http_version": "1.1",
-        },
-        receive,
-        send,
-    )
-    status = next(message["status"] for message in messages if message["type"] == "http.response.start")
-    body = b"".join(message.get("body", b"") for message in messages if message["type"] == "http.response.body")
-    return status, json.loads(body)
+def get(path: str) -> httpx.Response:
+    async def request() -> httpx.Response:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+            return await client.get(path)
+    return asyncio.run(request())
 
 
-class ApiSmokeTest(unittest.TestCase):
-    def test_database_probe_executes_bounded_select(self) -> None:
-        with patch.dict("os.environ", {"DATABASE_URL": "postgresql://example:example@localhost/example"}):
-            with patch("app.main.psycopg.connect") as connect:
-                connect.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value.fetchone.return_value = (1,)
-                _check_database()
-        connect.assert_called_once_with(
-            "postgresql://example:example@localhost/example",
-            connect_timeout=2,
-            options="-c statement_timeout=2000",
-        )
-        cursor = connect.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
-        cursor.execute.assert_called_once_with("SELECT 1")
-
-    def test_health_is_live(self) -> None:
-        self.assertEqual(asyncio.run(request("/api/health")), (200, {"status": "ok"}))
-
-    def test_ready_when_database_query_succeeds(self) -> None:
-        with patch("app.main._check_database") as check:
-            self.assertEqual(asyncio.run(request("/api/ready")), (200, {"status": "ready"}))
-            check.assert_called_once_with()
-
-    def test_ready_failure_is_sanitized(self) -> None:
-        with patch("app.main._check_database", side_effect=RuntimeError("secret connection string")):
-            status, body = asyncio.run(request("/api/ready"))
-        self.assertEqual(status, 503)
-        self.assertEqual(body["code"], "database_unavailable")
-        self.assertNotIn("secret connection string", json.dumps(body))
+def test_health_reports_api_liveness():
+    response = get("/api/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_ready_reports_query_success():
+    with patch("app.main._check_database") as check:
+        response = get("/api/ready")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready"}
+    check.assert_called_once_with()
+
+
+def test_ready_sanitizes_database_failure():
+    with patch("app.main._check_database", side_effect=psycopg.OperationalError("secret connection details")):
+        response = get("/api/ready")
+    assert response.status_code == 503
+    assert response.json() == {"code": "database_unavailable", "message": "데이터베이스에 연결할 수 없습니다."}
+    assert "secret" not in response.text
+
+
+def test_ready_sanitizes_missing_database_setting():
+    with patch.dict("os.environ", {}, clear=True):
+        response = get("/api/ready")
+    assert response.status_code == 503
+    assert "DATABASE_URL" not in response.text

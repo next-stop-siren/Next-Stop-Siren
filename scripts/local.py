@@ -17,6 +17,9 @@ from urllib.request import urlopen
 ROOT = Path(__file__).resolve().parent.parent
 FRONTEND = ROOT / "frontend"
 BACKEND = ROOT / "backend"
+sys.path.insert(0, str(BACKEND / "tests"))
+from db_guard import UnsafeTestDatabase, guarded_url  # noqa: E402
+
 ENV = ROOT / ".env"
 SERVICES = ("db-dev", "db-test")
 VERSIONS = {"node": "v24.21.0", "npm": "11.19.0", "uv": "0.11.19"}
@@ -104,14 +107,18 @@ def setup():
     run(tool("npm", "ci"), cwd=FRONTEND, timeout=600, env=command_env())
     run(tool("uv", "sync", "--locked", "--no-managed-python", "--python", sys.executable),
         cwd=BACKEND, timeout=600)
+    browser_env = command_env()
+    browser_env["PLAYWRIGHT_BROWSERS_PATH"] = str(ROOT / ".cache" / "playwright")
+    run(tool("npm", "exec", "--", "playwright", "install", "chromium"),
+        cwd=FRONTEND, timeout=600, env=browser_env)
     compose("up", "-d", *SERVICES, timeout=300)
     wait_databases()
     api_probe()
     checks()
 
 
-def wait_databases():
-    for service in SERVICES:
+def wait_databases(services=SERVICES):
+    for service in services:
         for attempt in range(30):
             try:
                 status = json.loads(compose("ps", "--format", "json", service, capture=True))
@@ -160,7 +167,7 @@ def api_probe():
 def checks():
     preflight(frontend=True, backend=True)
     run(tool("npm", "run", "typecheck"), cwd=FRONTEND, timeout=120, env=command_env())
-    run(tool("uv", "run", "--no-sync", "python", "-m", "unittest", "discover", "-s", "tests", "-v"),
+    run(tool("uv", "run", "--no-sync", "pytest", "-m", "not db", "-q"),
         cwd=BACKEND, timeout=120)
     compose("config", capture=True)
 
@@ -241,8 +248,8 @@ class WindowsJob:
             self.handle = None
 
 
-def spawn(command, cwd):
-    kwargs = {"cwd": cwd, "env": command_env()}
+def spawn(command, cwd, *, env=None):
+    kwargs = {"cwd": cwd, "env": env if env is not None else command_env()}
     if os.name == "nt":
         # The gate prevents the launcher from creating descendants until the job owns it.
         bridge = ("import json,subprocess,sys; "
@@ -334,6 +341,98 @@ def stop():
     compose("stop", *SERVICES)
 
 
+def test_unit():
+    preflight(frontend=True, backend=True)
+    run(tool("uv", "run", "--no-sync", "pytest", "-m", "not db", "-q"), cwd=BACKEND, timeout=120)
+    run(tool("npm", "run", "test:unit"), cwd=FRONTEND, timeout=120, env=command_env())
+
+
+def checked_test_url():
+    try:
+        return guarded_url()
+    except UnsafeTestDatabase as exc:
+        raise Failure(str(exc), 2) from exc
+
+
+def test_db_state():
+    raw = compose("ps", "--all", "--format", "json", "db-test", capture=True)
+    records = [json.loads(line) for line in raw.splitlines() if line.strip()]
+    return any(record.get("Service") == "db-test" and record.get("State") == "running" for record in records)
+
+
+def with_test_database(action):
+    url = checked_test_url()  # never start a service before validating the exact target
+    preflight(docker=True, backend=True)
+    was_running = test_db_state()
+    try:
+        compose("up", "-d", "db-test", timeout=300)
+        wait_databases(("db-test",))
+        action(url)
+    finally:
+        if not was_running:
+            compose("stop", "db-test")
+
+
+def test_db():
+    def check(url):
+        env = command_env()
+        env["TEST_DATABASE_URL"] = url
+        run(tool("uv", "run", "--no-sync", "pytest", "-m", "db", "-q"),
+            cwd=BACKEND, timeout=120, env=env)
+    with_test_database(check)
+
+
+def require_free_ports():
+    for port in (8000, 5173):
+        with socket.socket() as probe:
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError as exc:
+                raise Failure(f"Local port {port} is occupied or unavailable; test servers were not started", 2) from exc
+
+
+def wait_http(url, expected):
+    for _ in range(30):
+        try:
+            with urlopen(url, timeout=2) as response:
+                if response.status == expected:
+                    return
+        except (URLError, HTTPError, TimeoutError):
+            pass
+        time.sleep(0.5)
+    raise Failure("Owned test server did not become ready", 4)
+
+
+def test_e2e():
+    preflight(frontend=True, backend=True)
+    def check(url):
+        require_free_ports()
+        api_env = command_env()
+        api_env["DATABASE_URL"] = url
+        browser_env = command_env()
+        browser_env["PLAYWRIGHT_BROWSERS_PATH"] = str(ROOT / ".cache" / "playwright")
+        children = []
+        try:
+            children.append(spawn(tool("uv", "run", "--no-sync", "python", "-m", "uvicorn",
+                                       "app.main:app", "--host", "127.0.0.1", "--port", "8000"),
+                                  BACKEND, env=api_env))
+            wait_http("http://127.0.0.1:8000/api/ready", 200)
+            children.append(spawn(tool("npm", "run", "dev", "--", "--port", "5173", "--strictPort"),
+                                  FRONTEND, env=browser_env))
+            wait_http("http://127.0.0.1:5173/", 200)
+            run(tool("npm", "run", "test:e2e"), cwd=FRONTEND, timeout=180, env=browser_env)
+        finally:
+            for child in reversed(children):
+                stop_child(child)
+    with_test_database(check)
+
+
+def test_all():
+    test_unit()
+    test_db()
+    test_e2e()
+
+
 def clean():
     preflight(frontend=True, backend=True)
     run(tool("npm", "run", "clean"), cwd=FRONTEND, env=command_env())
@@ -349,11 +448,13 @@ def main():
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, interrupted)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("setup", "dev", "check", "build", "stop", "clean"))
+    parser.add_argument("command", choices=("setup", "dev", "check", "build", "stop", "clean",
+                                            "test", "test-unit", "test-db", "test-e2e"))
     args = parser.parse_args()
     try:
         {"setup": setup, "dev": dev, "check": checks, "build": build,
-         "stop": stop, "clean": clean}[args.command]()
+         "stop": stop, "clean": clean, "test": test_all, "test-unit": test_unit,
+         "test-db": test_db, "test-e2e": test_e2e}[args.command]()
     except Failure as exc:
         print(f"error: {exc}", file=sys.stderr)
         return exc.code
