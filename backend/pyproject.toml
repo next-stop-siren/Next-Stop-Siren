@@ -19,8 +19,16 @@ packages = ["app"]
 [dependency-groups]
 dev = [
     "httpx==0.28.1",
+    "mypy==2.3.1",
     "pytest==9.1.1",
+    "ruff==0.16.5",
 ]
 
 [tool.pytest.ini_options]
 markers = ["db: requires the guarded local test database"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F"]

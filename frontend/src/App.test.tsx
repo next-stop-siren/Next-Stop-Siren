@@ -11,8 +11,13 @@ afterEach(() => {
 
 test('shows loading and then successful database readiness', async () => {
   let complete!: (response: Response) => void
-  const pending = new Promise<Response>((resolve) => { complete = resolve })
-  vi.stubGlobal('fetch', vi.fn(() => pending))
+  const pending = new Promise<Response>((resolve) => {
+    complete = resolve
+  })
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(() => pending),
+  )
   const user = userEvent.setup()
   render(<App />)
 
@@ -25,8 +30,13 @@ test('shows loading and then successful database readiness', async () => {
 })
 
 test('shows a sanitized failure and succeeds when retried', async () => {
-  const fetch = vi.fn()
-    .mockResolvedValueOnce(new Response(JSON.stringify({ code: 'database_unavailable', message: '데이터베이스에 연결할 수 없습니다.' }), { status: 503 }))
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ code: 'database_unavailable', message: '데이터베이스에 연결할 수 없습니다.' }), {
+        status: 503,
+      }),
+    )
     .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'ready' }), { status: 200 }))
   vi.stubGlobal('fetch', fetch)
   const user = userEvent.setup()

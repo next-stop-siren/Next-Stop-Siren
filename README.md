@@ -23,6 +23,8 @@ macOS에는 실행 중인 Docker 엔진과 Compose가 필요하며 Colima 또는
 | `test-e2e` | 전용 테스트 DB·API·화면을 연결한 Chromium 검사를 실행합니다. 8000/5173 포트가 비어 있어야 합니다. |
 | `test` | `test-unit`, `test-db`, `test-e2e`를 순서대로 실행합니다. |
 
+CI와 동일한 정적 검사는 `frontend`에서 `npm run format:check`, `npm run lint`, `npm run typecheck`, `backend`에서 `uv run --no-sync ruff format --check app tests scripts`, `uv run --no-sync ruff check app tests scripts`, `uv run --no-sync mypy app`입니다. 잠금 파일 설치 후 실행하세요. CI 설정과 수동 리뷰 준비 단계는 [품질 지침](docs/quality.md)에 있습니다.
+
 `setup`과 `dev`는 Docker daemon을 필요로 합니다. 버전 또는 daemon 사전 검사가 실패하면 설치·파일 복사·컨테이너 시작 전에 종료합니다. 종료 코드 2는 도구/버전 또는 준비 조건, 3은 실행 명령 실패, 4는 준비 시간 초과 또는 개발 프로세스 종료를 뜻합니다. `.env.example`의 자격 증명은 로컬 예시입니다. 기존 `.env`는 자동 명령이 바꾸거나 출력하지 않습니다.
 
 `test-unit`은 DB 없이 실행합니다. `test-db`, `test-e2e`, `test`는 실행 전에 `TEST_DATABASE_URL`을 환경 변수로 명시해야 합니다. URL은 `.env`의 `TEST_DB_USER`, `TEST_DB_PASSWORD`, `TEST_DB_NAME`과 정확히 일치하는 `postgresql://사용자:URL인코딩된암호@127.0.0.1:55433/DB이름` 형식입니다. macOS에서는 `export TEST_DATABASE_URL='...'` 후 `./local.sh test`, PowerShell에서는 `$env:TEST_DATABASE_URL='...'` 후 `.\local.ps1 test`를 실행하세요. 개발 DB(55432), 원격 주소, `.env`의 테스트 설정과 다른 URL은 연결 전에 거부합니다. E2E는 비어 있는 8000/5173 포트에서 소유 서버만 시작·종료하고 원래 중지되어 있던 테스트 DB는 다시 중지합니다. Windows의 실제 실행은 아직 검증하지 않았습니다.

@@ -40,8 +40,14 @@ def validate_test_database(url: str | None, settings: dict[str, str]) -> str:
             raise UnsafeTestDatabase("Database environment conflicts with local .env")
     if not all(expected) or expected == dev or name == settings.get("DEV_DB_NAME"):
         raise UnsafeTestDatabase("Local test and development database settings must be distinct")
-    if (parsed.scheme not in {"postgresql", "postgres"} or host != "127.0.0.1"
-            or port != 55433 or (user, password, name) != expected or parsed.query or parsed.fragment):
+    if (
+        parsed.scheme not in {"postgresql", "postgres"}
+        or host != "127.0.0.1"
+        or port != 55433
+        or (user, password, name) != expected
+        or parsed.query
+        or parsed.fragment
+    ):
         raise UnsafeTestDatabase("TEST_DATABASE_URL must match the dedicated local db-test service")
     if url in {settings.get("DATABASE_URL"), os.environ.get("DATABASE_URL")}:
         raise UnsafeTestDatabase("Development database cannot be used for tests")
