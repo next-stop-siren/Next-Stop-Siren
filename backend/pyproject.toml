@@ -1,0 +1,17 @@
+[project]
+name = "b7-1-backend"
+version = "0.1.0"
+description = "Local API and database readiness for the B7-1 project"
+requires-python = "==3.13.15"
+dependencies = [
+  "fastapi==0.117.1",
+  "psycopg[binary]==3.2.10",
+  "uvicorn==0.36.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
