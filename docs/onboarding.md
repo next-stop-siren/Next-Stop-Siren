@@ -51,7 +51,11 @@ Windows 팀원이 Git, Node.js 24.21.0/npm 11.19.0, Python 3.13.15, uv 0.11.19, 
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-$py = if ($env:B71_PYTHON) { $env:B71_PYTHON } else { 'python' }
+if (-not $env:B71_PYTHON) {
+    $env:B71_PYTHON = (& py -3.13 -c 'import sys; print(sys.executable)')
+    if ($LASTEXITCODE -ne 0) { throw 'Python 3.13 launcher failed' }
+}
+$py = $env:B71_PYTHON
 node --version                         # v24.21.0
 npm --version                          # 11.19.0
 & $py --version                        # Python 3.13.15
@@ -65,7 +69,7 @@ function Run-Step([string]$Name) {
 Run-Step setup
 ```
 
-버전이 맞지 않거나 daemon이 응답하지 않거나 `setup`이 실패하면 멈추고 해결한다. 기대 결과는 macOS와 같은 두 DB `SELECT 1 passed`, API 준비 상태와 기본 검사 성공이다. 별도 PowerShell에서 `.\local.ps1 dev`를 실행하고, 다른 창에서 아래 네 요청이 HTTP 200인지 확인한 뒤 `dev` 창에서 `Ctrl+C`를 누른다.
+버전이 맞지 않거나 daemon이 응답하지 않거나 `setup`이 실패하면 멈추고 해결한다. 기대 결과는 macOS와 같은 두 DB `SELECT 1 passed`, API 준비 상태와 기본 검사 성공이다. 같은 PowerShell에서 `.\local.ps1 dev`를 실행하고, 다른 창에서 아래 네 요청이 HTTP 200인지 확인한 뒤 `dev` 창에서 `Ctrl+C`를 누른다. 그 창에서 아래 테스트 명령을 이어 실행한다.
 
 ```powershell
 (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:5173/).StatusCode
