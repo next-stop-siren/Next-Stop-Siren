@@ -4,7 +4,7 @@ React·TypeScript·Vite 화면, FastAPI 서버, PostgreSQL 개발·테스트 DB�
 
 ## 준비
 
-macOS 또는 Windows에 Docker Desktop(Compose 포함)을 설치하고 **daemon을 실행**하세요. Node.js **24.21.0**(포함된 npm **11.19.0**), Python **3.13.15**, uv **0.11.19**를 설치하세요. PostgreSQL **17.11**은 Compose가 가져옵니다. Python 3.13.15가 일반 명령 경로에 없다면 macOS에서 `B71_PYTHON=/absolute/path/to/python3.13`, Windows에서 `$env:B71_PYTHON='C:\path\to\python.exe'`를 지정하세요. `B71_NODE`, `B71_NPM`, `B71_UV`, `B71_DOCKER`도 해당 실행 파일의 경로로 지정할 수 있습니다. Node 경로를 재정의하면 그 디렉터리를 npm 실행 환경의 PATH 앞에 둡니다. uv 관리형 Python 목록에는 현재 3.13.15가 없어 공식 배포본이나 공식 소스 빌드가 필요합니다.
+macOS에는 실행 중인 Docker 엔진과 Compose가 필요하며 Colima 또는 Docker Desktop을 사용할 수 있습니다. Windows에는 Docker Desktop(Compose 포함)을 설치하고 **daemon을 실행**하세요. Node.js **24.21.0**(포함된 npm **11.19.0**), Python **3.13.15**, uv **0.11.19**를 설치하세요. PostgreSQL **17.11**은 Compose가 가져옵니다. Python 3.13.15가 일반 명령 경로에 없다면 macOS에서 `B71_PYTHON=/absolute/path/to/python3.13`, Windows에서 `$env:B71_PYTHON='C:\path\to\python.exe'`를 지정하세요. `B71_NODE`, `B71_NPM`, `B71_UV`, `B71_DOCKER`도 해당 실행 파일의 경로로 지정할 수 있습니다. Node 경로를 재정의하면 그 디렉터리를 npm 실행 환경의 PATH 앞에 둡니다. uv 관리형 Python 목록에는 현재 3.13.15가 없어 공식 배포본이나 공식 소스 빌드가 필요합니다.
 
 ## 명령
 
@@ -21,4 +21,6 @@ macOS 또는 Windows에 Docker Desktop(Compose 포함)을 설치하고 **daemon�
 
 `setup`과 `dev`는 Docker daemon을 필요로 합니다. 버전 또는 daemon 사전 검사가 실패하면 설치·파일 복사·컨테이너 시작 전에 종료합니다. 종료 코드 2는 도구/버전 또는 준비 조건, 3은 실행 명령 실패, 4는 준비 시간 초과 또는 개발 프로세스 종료를 뜻합니다. `.env.example`의 자격 증명은 로컬 예시입니다. 기존 `.env`는 자동 명령이 바꾸거나 출력하지 않습니다.
 
-`GET /api/health`는 API 생존 응답, `GET /api/ready`는 개발 DB의 실제 `SELECT 1`에 성공할 때 준비 응답을 돌려줍니다. 테스트 DB도 setup에서 직접 `SELECT 1`로 확인합니다. Windows 실행 검증은 아직 수행하지 않았습니다.
+macOS Colima에서 Docker Desktop을 제거한 뒤 `docker-credential-osxkeychain`이 없다는 이미지 가져오기 오류가 나오면 Docker CLI의 기존 자격 증명 도우미 설정을 확인하세요. 이 검증에서는 공개 PostgreSQL 이미지를 위해 임시 `DOCKER_CONFIG`에 Compose 플러그인을 연결하고 Colima의 `DOCKER_HOST`를 지정해 실행했습니다. 사용자의 전역 Docker 설정은 바꾸지 않았습니다.
+
+`GET /api/health`는 API 생존 응답, `GET /api/ready`는 개발 DB의 실제 `SELECT 1`에 성공할 때 준비 응답을 돌려줍니다. 테스트 DB도 setup에서 직접 `SELECT 1`로 확인합니다. macOS Colima에서 두 DB, API, Vite 프록시, 중지·재시작을 검증했습니다. Windows 실행 검증은 아직 수행하지 않았습니다.

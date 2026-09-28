@@ -2,7 +2,7 @@
 
 ## 기준과 소유
 
-이 저장소의 구현 기준은 React·TypeScript·Vite 화면, FastAPI 서버, PostgreSQL이다. 공통 설정은 PM이 검토한다. 팀원은 같은 저장소와 잠금 파일을 사용하며 개인별로 프로젝트를 다시 초기화하지 않는다. 초기 앱과 macOS·Windows 수동 실행 명령은 루트 [README](../README.md)에 있다. Windows 실행과 DB 런타임은 아직 검증하지 않았다.
+이 저장소의 구현 기준은 React·TypeScript·Vite 화면, FastAPI 서버, PostgreSQL이다. 공통 설정은 PM이 검토한다. 팀원은 같은 저장소와 잠금 파일을 사용하며 개인별로 프로젝트를 다시 초기화하지 않는다. 초기 앱과 macOS·Windows 수동 실행 명령은 루트 [README](../README.md)에 있다. macOS Colima의 DB 런타임은 검증했으며 Windows 실행은 아직 검증하지 않았다.
 
 | 도구 | 채택 기준 | 구현 단계에서 고정할 것 |
 | --- | --- | --- |
@@ -14,7 +14,7 @@
 
 ## 공통 초기 준비 절차
 
-macOS와 Windows에는 Git, 위 언어 도구, Docker Desktop과 Compose가 필요하다. 초기 구현 단계에서 OS별 설치·확인 명령과 다음 단계를 실행 가능한 형태로 제공한다. 각 단계의 성공 결과를 README에 기록한다.
+macOS에는 Git, 위 언어 도구, 실행 중인 Docker 엔진과 Compose가 필요하다(Colima 또는 Docker Desktop). Windows에는 Git, 위 언어 도구, Docker Desktop과 Compose가 필요하다. 초기 구현 단계에서 OS별 설치·확인 명령과 다음 단계를 실행 가능한 형태로 제공한다. 각 단계의 성공 결과를 README에 기록한다.
 
 1. **확인·설치:** 고정 버전과 잠금 파일을 확인하고 화면·서버 의존성을 설치한다. 실제 비밀값이 없는 예시 설정을 복사해 개인 `.env`를 만든다. 기존 `.env`는 덮어쓰지 않는다.
 2. **시작:** Compose로 개발용 PostgreSQL을 시작하고, 화면과 API는 로컬 프로세스로 각각 실행한다. 초기 통합에서는 기본 화면, API 상태 확인, DB 연결, 화면→API 연결을 확인한다.
