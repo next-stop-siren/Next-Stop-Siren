@@ -1,6 +1,7 @@
 """Bounded, repository-scoped local development commands (Python stdlib only)."""
 
 import argparse
+import ctypes
 import json
 import os
 from pathlib import Path
@@ -166,10 +167,100 @@ def build():
     run(tool("npm", "run", "build"), cwd=FRONTEND, timeout=180, env=command_env())
 
 
+class WindowsJob:
+    """Keep a launcher and all descendants owned even after the launcher exits."""
+
+    def __init__(self, pid):
+        from ctypes import wintypes
+
+        class BasicLimits(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_longlong),
+                        ("PerJobUserTimeLimit", ctypes.c_longlong),
+                        ("LimitFlags", wintypes.DWORD),
+                        ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t),
+                        ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t),
+                        ("PriorityClass", wintypes.DWORD),
+                        ("SchedulingClass", wintypes.DWORD)]
+
+        class IoCounters(ctypes.Structure):
+            _fields_ = [(name, ctypes.c_ulonglong) for name in
+                        ("ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+                         "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+
+        class ExtendedLimits(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", BasicLimits), ("IoInfo", IoCounters),
+                        ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                        ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+        kernel.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        kernel.SetInformationJobObject.restype = wintypes.BOOL
+        kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        kernel.AssignProcessToJobObject.restype = wintypes.BOOL
+        kernel.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        kernel.TerminateJobObject.restype = wintypes.BOOL
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel.CloseHandle.restype = wintypes.BOOL
+
+        self.kernel = kernel
+        self.handle = kernel.CreateJobObjectW(None, None)
+        if not self.handle:
+            raise OSError(ctypes.get_last_error(), "CreateJobObjectW failed")
+        process = None
+        try:
+            limits = ExtendedLimits()
+            limits.BasicLimitInformation.LimitFlags = 0x00002000  # KILL_ON_JOB_CLOSE
+            if not kernel.SetInformationJobObject(self.handle, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
+                raise OSError(ctypes.get_last_error(), "SetInformationJobObject failed")
+            process = kernel.OpenProcess(0x0101, False, pid)  # SET_QUOTA | TERMINATE
+            if not process:
+                raise OSError(ctypes.get_last_error(), "OpenProcess failed")
+            if not kernel.AssignProcessToJobObject(self.handle, process):
+                raise OSError(ctypes.get_last_error(), "AssignProcessToJobObject failed")
+        except BaseException:
+            self.close()
+            raise
+        finally:
+            if process:
+                kernel.CloseHandle(process)
+
+    def close(self):
+        if self.handle:
+            self.kernel.TerminateJobObject(self.handle, 1)
+            self.kernel.CloseHandle(self.handle)
+            self.handle = None
+
+
 def spawn(command, cwd):
     kwargs = {"cwd": cwd, "env": command_env()}
     if os.name == "nt":
-        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        # The gate prevents the launcher from creating descendants until the job owns it.
+        bridge = ("import json,subprocess,sys; "
+                  "sys.exit(subprocess.call(json.loads(sys.argv[1]), cwd=sys.argv[2]) "
+                  "if sys.stdin.buffer.read(1) == b'1' else 1)")
+        child = subprocess.Popen([sys.executable, "-c", bridge, json.dumps(command), str(cwd)],
+                                 stdin=subprocess.PIPE,
+                                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP, **kwargs)
+        try:
+            child._b71_job = WindowsJob(child.pid)
+            child.stdin.write(b"1")
+            child.stdin.close()
+        except BaseException:
+            child.stdin.close()
+            if hasattr(child, "_b71_job"):
+                child._b71_job.close()
+            else:
+                child.terminate()
+            child.wait(timeout=5)
+            raise
+        return child
     else:
         kwargs["start_new_session"] = True
     return subprocess.Popen(command, **kwargs)
@@ -177,8 +268,23 @@ def spawn(command, cwd):
 
 def stop_child(child):
     if os.name == "nt":
-        if child.poll() is None:
-            child.send_signal(signal.CTRL_BREAK_EVENT)
+        try:
+            if child.poll() is None:
+                try:
+                    child.send_signal(signal.CTRL_BREAK_EVENT)
+                except OSError:
+                    pass  # The job still owns and terminates the full process tree.
+                try:
+                    child.wait(timeout=8)
+                except subprocess.TimeoutExpired:
+                    pass
+        finally:
+            child._b71_job.close()
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                raise Failure("Owned Windows process did not stop after job termination", 4)
+        return
     else:
         try:
             os.killpg(child.pid, signal.SIGTERM)
