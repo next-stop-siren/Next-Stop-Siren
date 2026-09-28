@@ -14,6 +14,12 @@ import local
 
 
 class LocalAutomationTest(unittest.TestCase):
+    def test_windows_tool_resolves_command_wrapper(self):
+        with patch.object(local.os, "name", "nt"), \
+             patch.object(local.shutil, "which", return_value=r"C:\Tools\npm.cmd"):
+            self.assertEqual(local.tool("npm", "--version"),
+                             [r"C:\Tools\npm.cmd", "--version"])
+
     def test_clean_removes_only_generated_caches(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

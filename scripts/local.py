@@ -42,7 +42,10 @@ def run(command, *, cwd=ROOT, capture=False, timeout=120, env=None):
 
 
 def tool(name, *args):
-    return [TOOLS[name], *args]
+    executable = TOOLS[name]
+    if os.name == "nt":
+        executable = shutil.which(executable) or executable
+    return [executable, *args]
 
 
 def compose(*args, env=None, capture=False, timeout=120):
