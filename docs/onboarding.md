@@ -7,12 +7,13 @@
 Git, Node.js 24.21.0(동봉 npm 11.19.0), Python 3.13.15, uv 0.11.19, 실행 중인 Docker Desktop 또는 Colima와 Docker Compose를 준비한다. Python 실행 파일이 `python3.13`이 아니면 `export B71_PYTHON=/절대/경로/python3.13`을 설정한다. 다른 도구도 필요할 때 `B71_NODE`, `B71_NPM`, `B71_UV`, `B71_DOCKER`에 실행 파일의 절대 경로를 지정한다. Node 경로를 지정했다면 그 디렉터리를 `PATH` 앞에 둔다.
 
 ```sh
-node --version                    # v24.21.0
-npm --version                     # 11.19.0
+if [ -n "${B71_NODE:-}" ]; then export PATH="$(dirname "$B71_NODE"):$PATH"; fi
+"${B71_NODE:-node}" --version      # v24.21.0
+"${B71_NPM:-npm}" --version        # 11.19.0
 "${B71_PYTHON:-python3.13}" --version  # Python 3.13.15
-uv --version                      # uv 0.11.19
-docker compose version            # Compose 사용 가능
-docker info --format '{{.ServerVersion}}'  # daemon 응답
+"${B71_UV:-uv}" --version         # uv 0.11.19
+"${B71_DOCKER:-docker}" compose version  # Compose 사용 가능
+"${B71_DOCKER:-docker}" info --format '{{.ServerVersion}}'  # daemon 응답
 ./local.sh setup
 ```
 
@@ -36,8 +37,8 @@ export TEST_DATABASE_URL="$("${B71_PYTHON:-python3.13}" -c 'import sys; from pat
 ./local.sh test-unit
 ./local.sh test-db
 ./local.sh test-e2e
-(cd frontend && npm run format:check && npm run lint && npm run typecheck)
-(cd backend && uv run --no-sync ruff format --check app tests scripts && uv run --no-sync ruff check app tests scripts && uv run --no-sync mypy app)
+(cd frontend && "${B71_NPM:-npm}" run format:check && "${B71_NPM:-npm}" run lint && "${B71_NPM:-npm}" run typecheck)
+(cd backend && "${B71_UV:-uv}" run --no-sync ruff format --check app tests scripts && "${B71_UV:-uv}" run --no-sync ruff check app tests scripts && "${B71_UV:-uv}" run --no-sync mypy app)
 ./local.sh build
 ./local.sh clean
 ./local.sh stop
@@ -47,7 +48,7 @@ export TEST_DATABASE_URL="$("${B71_PYTHON:-python3.13}" -c 'import sys; from pat
 
 ## Windows PowerShell: **NOT RUN**
 
-Windows 팀원이 Git, Node.js 24.21.0/npm 11.19.0, Python 3.13.15, uv 0.11.19, 실행 중인 Docker Desktop(Compose 포함)을 설치한 후 저장소 루트의 PowerShell에서 실행한다. Python이 `python` 명령으로 3.13.15가 아니면 `$env:B71_PYTHON='C:\절대\경로\python.exe'`를 지정한다. 다른 실행 파일은 `B71_NODE`, `B71_NPM`, `B71_UV`, `B71_DOCKER`로 지정할 수 있다. PowerShell 실행 정책 때문에 로컬 스크립트가 막히면 조직 정책에 맞는 허용 방법을 관리자에게 확인한다.
+Windows 팀원이 Git, Node.js 24.21.0/npm 11.19.0, Python 3.13.15, uv 0.11.19, 실행 중인 Docker Desktop(Compose 포함)을 설치한 후 저장소 루트의 PowerShell에서 실행한다. Python 실행 파일을 직접 지정해야 하면 `$env:B71_PYTHON='C:\절대\경로\python.exe'`를 설정한다. 다른 실행 파일은 `B71_NODE`, `B71_NPM`, `B71_UV`, `B71_DOCKER`로 지정할 수 있다. Node 경로를 지정하면 npm 스크립트가 그 Node를 찾도록 해당 디렉터리를 `PATH` 앞에 둔다. PowerShell 실행 정책 때문에 로컬 스크립트가 막히면 조직 정책에 맞는 허용 방법을 관리자에게 확인한다.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
@@ -56,12 +57,21 @@ if (-not $env:B71_PYTHON) {
     if ($LASTEXITCODE -ne 0) { throw 'Python 3.13 launcher failed' }
 }
 $py = $env:B71_PYTHON
-node --version                         # v24.21.0
-npm --version                          # 11.19.0
-& $py --version                        # Python 3.13.15
-uv --version                           # uv 0.11.19
-docker compose version
-docker info --format '{{.ServerVersion}}'
+if ($env:B71_NODE) { $env:PATH = (Split-Path -Parent $env:B71_NODE) + [IO.Path]::PathSeparator + $env:PATH }
+$node = if ($env:B71_NODE) { $env:B71_NODE } else { 'node' }
+$npm = if ($env:B71_NPM) { $env:B71_NPM } else { 'npm.cmd' }
+$uv = if ($env:B71_UV) { $env:B71_UV } else { 'uv' }
+$docker = if ($env:B71_DOCKER) { $env:B71_DOCKER } else { 'docker' }
+function Check-Tool([string]$Name, [string]$Exe, [string[]]$Arguments) {
+    & $Exe @Arguments
+    if ($LASTEXITCODE -ne 0) { throw "$Name failed: exit $LASTEXITCODE" }
+}
+Check-Tool node $node @('--version')                # v24.21.0
+Check-Tool npm $npm @('--version')                  # 11.19.0
+Check-Tool python $py @('--version')               # Python 3.13.15
+Check-Tool uv $uv @('--version')                   # uv 0.11.19
+Check-Tool docker $docker @('compose', 'version')  # Compose 사용 가능
+Check-Tool docker $docker @('info', '--format', '{{.ServerVersion}}')  # daemon 응답
 function Run-Step([string]$Name) {
     & .\local.ps1 $Name
     if ($LASTEXITCODE -ne 0) { throw "$Name failed: exit $LASTEXITCODE" }
@@ -87,14 +97,14 @@ Run-Step test-unit
 Run-Step test-db
 Run-Step test-e2e
 Push-Location frontend
-npm run format:check; if ($LASTEXITCODE -ne 0) { throw 'format:check failed' }
-npm run lint; if ($LASTEXITCODE -ne 0) { throw 'lint failed' }
-npm run typecheck; if ($LASTEXITCODE -ne 0) { throw 'typecheck failed' }
+& $npm run format:check; if ($LASTEXITCODE -ne 0) { throw 'format:check failed' }
+& $npm run lint; if ($LASTEXITCODE -ne 0) { throw 'lint failed' }
+& $npm run typecheck; if ($LASTEXITCODE -ne 0) { throw 'typecheck failed' }
 Pop-Location
 Push-Location backend
-uv run --no-sync ruff format --check app tests scripts; if ($LASTEXITCODE -ne 0) { throw 'ruff format failed' }
-uv run --no-sync ruff check app tests scripts; if ($LASTEXITCODE -ne 0) { throw 'ruff check failed' }
-uv run --no-sync mypy app; if ($LASTEXITCODE -ne 0) { throw 'mypy failed' }
+& $uv run --no-sync ruff format --check app tests scripts; if ($LASTEXITCODE -ne 0) { throw 'ruff format failed' }
+& $uv run --no-sync ruff check app tests scripts; if ($LASTEXITCODE -ne 0) { throw 'ruff check failed' }
+& $uv run --no-sync mypy app; if ($LASTEXITCODE -ne 0) { throw 'mypy failed' }
 Pop-Location
 Run-Step build
 Run-Step clean
