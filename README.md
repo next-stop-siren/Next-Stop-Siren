@@ -37,7 +37,7 @@ cp -n .env.example .env
 docker compose up -d db-dev
 cd backend
 uv sync --locked --no-managed-python --python 3.13.15
-uv run --no-sync --env-file ../.env uvicorn app.main:app --host 127.0.0.1 --port 8000
+uv run --no-sync --env-file ../.env uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 API는 별도 터미널에서 실행해 둡니다. 화면은 저장소 루트의 다른 터미널에서 시작합니다.
@@ -59,7 +59,7 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 docker compose up -d db-dev
 Set-Location backend
 uv sync --locked --no-managed-python --python 3.13.15
-uv run --no-sync --env-file ../.env uvicorn app.main:app --host 127.0.0.1 --port 8000
+uv run --no-sync --env-file ../.env uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 다른 PowerShell 창에서 화면을 시작합니다.
