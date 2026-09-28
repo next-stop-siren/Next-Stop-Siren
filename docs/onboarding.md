@@ -1,6 +1,6 @@
 # 팀원 로컬 실행 체크리스트
 
-저장소 루트에서 실행한다. 도구 설치는 팀원이 먼저 한다. `setup`은 Node·npm·Python·uv 버전과 Docker daemon을 확인하고, `.env`가 없으면 예시를 복사한 뒤 잠금 파일로 프런트엔드·백엔드 의존성과 프로젝트 Playwright Chromium을 설치한다. 이어 개발·테스트 PostgreSQL을 시작해 각각 `SELECT 1`, API 준비 상태와 기본 검사를 확인한다. Docker가 필요하면 PostgreSQL 17.11 이미지를 가져온다. `setup`은 Node, Python, uv 또는 Docker 자체를 설치하지 않는다. 기존 `.env`와 DB 볼륨을 덮어쓰지 않는다.
+저장소 루트에서 실행한다. Git, 지정 버전의 Node·npm·Python·uv, 실행 중인 Docker 엔진과 Compose는 팀원이 먼저 설치·준비한다. `setup`은 도구 버전과 Docker daemon을 확인하고, `.env`가 없으면 예시를 복사한 뒤 잠금 파일로 프런트엔드·백엔드 의존성과 프로젝트 Playwright Chromium을 설치한다. 이어 개발·테스트 PostgreSQL을 시작해 각각 `SELECT 1`, API 준비 상태와 기본 검사를 확인한다. Docker가 필요하면 PostgreSQL 17.11 이미지를 가져온다. `setup`은 Node, Python, uv 또는 Docker 자체를 설치하지 않는다. 기존 `.env`와 DB 볼륨을 덮어쓰지 않는다. 이 Mac의 확인은 OS 도구·Docker 이미지·볼륨·다운로드 캐시가 이미 있던 상태에서 수행했으며 Windows 실제 실행은 아직 **NOT RUN**이다.
 
 ## macOS: 실제 실행 확인
 

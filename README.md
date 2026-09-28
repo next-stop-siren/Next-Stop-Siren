@@ -1,8 +1,8 @@
 # B7-1 로컬 개발 시작
 
-React·TypeScript·Vite 화면, FastAPI 서버, PostgreSQL 개발·테스트 DB의 초기 구성입니다. 현재 화면은 API와 DB 연결 상태만 확인합니다. 팀 규칙은 [문서 목록](docs/README.md)을 참고하세요.
+React·TypeScript·Vite 화면, FastAPI 서버, PostgreSQL 개발·테스트 DB의 초기 구성입니다. 현재 화면은 API와 DB 연결 상태만 확인하며 로그인·채팅·AI 호출은 아직 제공하지 않습니다. [문서 목록](docs/README.md)에서 환경, 역할, 협업과 품질 안내를 찾을 수 있습니다.
 
-처음 참여하는 팀원은 [macOS·Windows 실행 체크리스트](docs/onboarding.md)를 순서대로 진행하세요. 필요한 도구 설치와 프로젝트 `setup`의 역할, 기대 결과, 실패 시 중단 지점을 구분했습니다. 이 저장소에서 실제로 확인한 경로는 macOS입니다. Windows PowerShell 절차는 **NOT RUN**이며 Windows 팀원의 실행 결과를 기다립니다.
+처음 참여하는 팀원은 [공통 환경](docs/environment.md)을 확인한 뒤 [macOS·Windows 실행 체크리스트](docs/onboarding.md)를 순서대로 진행하세요. Git 작업은 [협업 흐름](docs/workflow.md), 검사 범위는 [품질 지침](docs/quality.md)을 참고하세요. 필요한 OS 도구와 Docker는 팀원이 먼저 설치해야 하며 프로젝트 `setup`은 이를 설치하지 않습니다. 이 저장소에서 실제로 확인한 경로는 macOS입니다. Windows PowerShell 절차는 **NOT RUN**이며 Windows 팀원의 실행 결과를 기다립니다.
 
 Windows 팀원은 위 도구를 설치하고 Docker Desktop daemon을 시작한 뒤 저장소 루트에서 `.\windows-check.ps1` 한 명령으로 로컬 확인을 실행할 수 있습니다. 이 명령은 버전·daemon, 잠금 설치, 정적 검사, 단위·전용 DB·브라우저 E2E, 빌드를 순서대로 확인하고 첫 실패에서 종료합니다. 공유용 요약은 Git에서 제외되는 `.cache/windows-check/report.json`에 저장됩니다. 자세한 범위와 실행 전제는 [Windows 체크리스트](docs/onboarding.md)를 참고하세요. Windows 실제 실행 결과는 아직 **NOT RUN**입니다.
 
