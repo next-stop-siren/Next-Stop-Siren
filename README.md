@@ -2,6 +2,8 @@
 
 React·TypeScript·Vite 화면, FastAPI 서버, PostgreSQL 개발·테스트 DB의 초기 구성입니다. 현재 화면은 API와 DB 연결 상태만 확인합니다. 팀 규칙은 [문서 목록](docs/README.md)을 참고하세요.
 
+처음 참여하는 팀원은 [macOS·Windows 실행 체크리스트](docs/onboarding.md)를 순서대로 진행하세요. 필요한 도구 설치와 프로젝트 `setup`의 역할, 기대 결과, 실패 시 중단 지점을 구분했습니다. 이 저장소에서 실제로 확인한 경로는 macOS입니다. Windows PowerShell 절차는 **NOT RUN**이며 Windows 팀원의 실행 결과를 기다립니다.
+
 ## 준비
 
 macOS에는 실행 중인 Docker 엔진과 Compose가 필요하며 Colima 또는 Docker Desktop을 사용할 수 있습니다. Windows에는 Docker Desktop(Compose 포함)을 설치하고 **daemon을 실행**하세요. Node.js **24.21.0**(포함된 npm **11.19.0**), Python **3.13.15**, uv **0.11.19**를 설치하세요. PostgreSQL **17.11**은 Compose가 가져옵니다. Python 3.13.15가 일반 명령 경로에 없다면 macOS에서 `B71_PYTHON=/absolute/path/to/python3.13`, Windows에서 `$env:B71_PYTHON='C:\path\to\python.exe'`를 지정하세요. `B71_NODE`, `B71_NPM`, `B71_UV`, `B71_DOCKER`도 해당 실행 파일의 경로로 지정할 수 있습니다. Node 경로를 재정의하면 그 디렉터리를 npm 실행 환경의 PATH 앞에 둡니다. uv 관리형 Python 목록에는 현재 3.13.15가 없어 공식 배포본이나 공식 소스 빌드가 필요합니다.
@@ -31,4 +33,4 @@ CI와 동일한 정적 검사는 `frontend`에서 `npm run format:check`, `npm r
 
 macOS Colima에서 Docker Desktop을 제거한 뒤 `docker-credential-osxkeychain`이 없다는 이미지 가져오기 오류가 나오면 Docker CLI의 자격 증명 도우미 설정을 확인하세요. 기존 설정이 `osxkeychain`을 지정한다면 공식 Homebrew `docker-credential-helper` 패키지로 해당 실행 파일을 설치할 수 있습니다. 이 호스트에서는 설치 후 기본 Colima 컨텍스트와 기존 Docker 설정으로 공개 PostgreSQL 이미지 가져오기와 `./local.sh setup`을 검증했습니다. 전역 Docker 설정은 바꾸지 않았습니다.
 
-`GET /api/health`는 API 생존 응답, `GET /api/ready`는 개발 DB의 실제 `SELECT 1`에 성공할 때 준비 응답을 돌려줍니다. 테스트 DB도 setup에서 직접 `SELECT 1`로 확인합니다. macOS Colima에서 두 DB, API, Vite 프록시, 중지·재시작을 검증했습니다. Windows 실행 검증은 아직 수행하지 않았습니다.
+`GET /api/health`는 API 생존 응답, `GET /api/ready`는 개발 DB의 실제 `SELECT 1`에 성공할 때 준비 응답을 돌려줍니다. 테스트 DB도 setup에서 직접 `SELECT 1`로 확인합니다. macOS Colima에서 새 프로젝트 의존성 설치, 두 DB, API, Vite 프록시, 분리된 테스트, 품질 검사, 빌드, 정리, 중지를 검증했습니다. 이 Mac에는 언어 도구, Docker, PostgreSQL 이미지, 컨테이너·볼륨, 다운로드 캐시가 이미 있었으므로 새 OS 전체 설치 검증은 아닙니다. Windows 실행 검증은 아직 수행하지 않았습니다.

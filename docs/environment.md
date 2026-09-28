@@ -14,7 +14,7 @@
 
 ## 공통 초기 준비 절차
 
-macOS에는 Git, 위 언어 도구, 실행 중인 Docker 엔진과 Compose가 필요하다(Colima 또는 Docker Desktop). Windows에는 Git, 위 언어 도구, Docker Desktop과 Compose가 필요하다. 초기 구현 단계에서 OS별 설치·확인 명령과 다음 단계를 실행 가능한 형태로 제공한다. 각 단계의 성공 결과를 README에 기록한다.
+macOS에는 Git, 위 언어 도구, 실행 중인 Docker 엔진과 Compose가 필요하다(Colima 또는 Docker Desktop). Windows에는 Git, 위 언어 도구, Docker Desktop과 Compose가 필요하다. 실제 명령과 기대 결과는 [실행 체크리스트](onboarding.md)에 있다. macOS 프로젝트 의존성 설치와 실행은 검증했으며 Windows 절차는 현지 실행 대기 중이다.
 
 1. **확인·설치:** 고정 버전과 잠금 파일을 확인하고 화면·서버 의존성을 설치한다. 실제 비밀값이 없는 예시 설정을 복사해 개인 `.env`를 만든다. 기존 `.env`는 덮어쓰지 않는다.
 2. **시작:** Compose로 개발용 PostgreSQL을 시작하고, 화면과 API는 로컬 프로세스로 각각 실행한다. 초기 통합에서는 기본 화면, API 상태 확인, DB 연결, 화면→API 연결을 확인한다.
@@ -24,7 +24,7 @@ macOS에는 Git, 위 언어 도구, 실행 중인 Docker 엔진과 Compose가 �
 
 개발 DB는 Compose의 별도 서비스·볼륨으로 유지한다. 테스트는 개발 DB와 다른 이름·접속 정보·볼륨의 전용 PostgreSQL을 쓴다. 테스트 시작 전 대상 DB가 테스트 전용인지 확인하고, 개발 DB를 가리키면 즉시 실패시킨다. 전체 서비스 컨테이너 구성은 이후 운영 빌드 검증에서 다룬다. 배포는 별도 승인·검증 절차에 따른다.
 
-공통 설정이나 잠금 파일의 변경은 이유, 영향, macOS·Windows 확인 결과를 PR에 적고 PM 검토를 받는다. 정확한 명령, 파일 경로와 포트는 구현 파일이 존재하고 두 OS에서 확인된 뒤 문서에 반영한다.
+공통 설정이나 잠금 파일의 변경은 이유, 영향, macOS·Windows 확인 결과를 PR에 적고 PM 검토를 받는다. OS별 미실행 항목은 검증 완료로 표시하지 않는다.
 
 ## 향후 출시 확인
 
