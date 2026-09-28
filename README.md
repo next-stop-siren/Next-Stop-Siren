@@ -74,4 +74,4 @@ npm run dev
 
 화면 검사: `cd frontend`, `npm run typecheck`, `npm run build`. API 스모크 검사: `cd backend`, `uv run --no-sync python -m unittest discover -s tests -v`. DB 접속은 이 스모크 검사에서 모의 처리하므로 실제 DB 확인은 `/api/ready`로 별도 확인해야 합니다. 이번 초기 구성 작업에서는 Docker가 없어 Compose 정적 검사와 DB 실행·접속 검증을 수행하지 않았습니다. 개발 DB와 분리된 테스트 DB가 필요할 때만 `docker compose up -d db-test`를 사용하며 포트는 각각 로컬 전용 `55432`, `55433`입니다.
 
-화면·API 프로세스는 각 터미널에서 Ctrl+C로 중지합니다. DB는 저장소 루트에서 `docker compose stop db-dev`로 중지합니다. `docker compose down -v`는 DB 데이터를 지우므로 일반 정리 명령으로 사용하지 않습니다. `.env`와 DB 볼륨을 보존하고, 의존성 재설치가 필요하면 잠금 파일에 맞춰 `npm ci`, `uv sync --locked`를 다시 실행합니다.
+화면·API 프로세스는 각 터미널에서 Ctrl+C로 중지합니다. DB는 저장소 루트에서 `docker compose stop db-dev`로 중지합니다. `docker compose down -v`는 DB 데이터를 지우므로 일반 정리 명령으로 사용하지 않습니다. 생성된 화면 빌드·Vite 캐시만 정리하려면 `cd frontend`에서 `npm run clean`, 백엔드의 알려진 Python 캐시만 정리하려면 `cd backend`에서 `uv run --no-sync python scripts/clean_cache.py`를 실행합니다. 이 명령은 `.env`, 의존성 설치 폴더와 DB 볼륨을 지우지 않습니다. 의존성 재설치가 필요하면 잠금 파일에 맞춰 `npm ci`, `uv sync --locked`를 다시 실행합니다.
