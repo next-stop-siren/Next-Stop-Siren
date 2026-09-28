@@ -8,4 +8,5 @@ PM이 작업과 검토를 조정하고, 프론트엔드·인증 백엔드·채�
 - [프론트엔드](frontend.md)
 - [백엔드](backend.md)
 - [품질과 설정](quality.md)
+- [공통 개발 환경과 인계](environment.md)
 - [협업 흐름](workflow.md)
