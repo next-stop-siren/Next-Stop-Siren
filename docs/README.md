@@ -1,11 +1,11 @@
 # 팀 개발 지침
 
-이 문서는 웹 챗봇을 함께 만드는 팀의 작업 기준이다. 프론트엔드는 React와 TypeScript, 백엔드는 FastAPI, 데이터 저장은 PostgreSQL을 사용한다. Google 로그인에는 OIDC를 사용하고, 로그인 후에는 애플리케이션의 접근·갱신 JWT를 사용한다. 하나의 저장소에서 프론트엔드와 백엔드를 관리하며 각각 배포할 수 있게 구성한다.
+이 저장소는 React·TypeScript·Vite 화면, FastAPI 서버, PostgreSQL을 사용하는 챗봇 프로젝트의 공통 개발 규칙을 담는다. 초기 앱, 의존성 잠금 파일과 로컬 실행 명령은 루트 [README](../README.md)에 있다. 아래 문서의 로그인·채팅·테스트 계획은 후속 단계의 기준이다.
 
-PM이 작업과 검토를 조정하고, 프론트엔드·인증 백엔드·채팅 및 데이터 백엔드 담당자가 이슈별로 구현하고 확인한다. GitHub Projects에서 이슈를 관리하며 `main`을 기준으로 이슈 브랜치와 PR을 사용한다.
-
-- [역할과 인계](roles.md)
+- [공통 환경과 초기 준비 절차](environment.md)
+- [macOS·Windows 실행 체크리스트](onboarding.md)
 - [프론트엔드](frontend.md)
-- [백엔드](backend.md)
-- [품질과 설정](quality.md)
+- [백엔드와 API](backend.md)
+- [품질·테스트·비밀값](quality.md)
 - [협업 흐름](workflow.md)
+- [역할과 인계](roles.md)

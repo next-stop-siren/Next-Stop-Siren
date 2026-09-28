@@ -1,0 +1,38 @@
+services:
+  db-dev:
+    image: postgres:17.11
+    environment:
+      POSTGRES_USER: ${DEV_DB_USER:-b71_dev}
+      POSTGRES_PASSWORD: ${DEV_DB_PASSWORD:-local_dev_only_change_me}
+      POSTGRES_DB: ${DEV_DB_NAME:-b71_dev}
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - db-dev-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  db-test:
+    image: postgres:17.11
+    environment:
+      POSTGRES_USER: ${TEST_DB_USER:-b71_test}
+      POSTGRES_PASSWORD: ${TEST_DB_PASSWORD:-local_test_only_change_me}
+      POSTGRES_DB: ${TEST_DB_NAME:-b71_test}
+    ports:
+      - "127.0.0.1:55433:5432"
+    volumes:
+      - db-test-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  db-dev-data:
+  db-test-data:
