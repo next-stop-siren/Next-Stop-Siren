@@ -16,6 +16,8 @@ import local
 REPORT = local.ROOT / ".cache" / "windows-check" / "report.json"
 STEPS = ("preflight", "inventory", "locked_setup", "format", "lint", "typecheck",
          "ruff_format", "ruff_lint", "mypy", "unit", "database", "browser_e2e", "build")
+AMBIGUOUS_TEST_OWNER = ("Cannot identify started db-test; it may remain running "
+                        "and requires manual inspection")
 
 
 def test_url():
@@ -139,10 +141,19 @@ def execute(report_path=REPORT, *, steps=None, info=None):
         for step in STEPS:
             try:
                 actions[step]()
+            except KeyboardInterrupt:
+                state[step] = "FAIL"
+                result["exit_code"] = 130
+                print(f"{step} interrupted (exit 130)", file=sys.stderr)
+                break
             except local.Failure as exc:
                 state[step] = "FAIL"
                 result["exit_code"] = exc.code
                 print(f"{step} failed (exit {exc.code})", file=sys.stderr)
+                if step in ("database", "browser_e2e") and str(exc) == AMBIGUOUS_TEST_OWNER:
+                    print("A db-test started by this check may still be running. "
+                          "Inspect the B7-1 db-test service manually before retrying.",
+                          file=sys.stderr)
                 break
             except Exception as exc:
                 state[step] = "FAIL"

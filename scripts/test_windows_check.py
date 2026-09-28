@@ -1,6 +1,8 @@
 """Portable checks for the Windows entry's orchestration and report boundary."""
 
 import json
+from contextlib import redirect_stderr
+import io
 import os
 from pathlib import Path
 import tempfile
@@ -12,6 +14,45 @@ import windows_check
 
 
 class WindowsCheckTest(unittest.TestCase):
+    def run_with_failure(self, failed_step, failure):
+        calls = []
+        actions = {name: lambda name=name: calls.append(name) for name in windows_check.STEPS}
+
+        def fail():
+            calls.append(failed_step)
+            raise failure
+
+        actions[failed_step] = fail
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp, redirect_stderr(output):
+            report = Path(temp) / "report.json"
+            code = windows_check.execute(report, steps=actions,
+                                         info=lambda: {"os": "Windows", "versions": {},
+                                                       "git_commit": "a" * 40})
+            data = json.loads(report.read_text(encoding="utf-8"))
+        return code, data, calls, output.getvalue()
+
+    def test_interrupt_marks_active_step_failed_and_future_steps_not_run(self):
+        code, data, calls, output = self.run_with_failure("lint", KeyboardInterrupt())
+        self.assertEqual(code, 130)
+        self.assertEqual(calls, list(windows_check.STEPS[:5]))
+        self.assertEqual(data["steps"]["format"], "PASS")
+        self.assertEqual(data["steps"]["lint"], "FAIL")
+        self.assertEqual(data["steps"]["typecheck"], "NOT_RUN")
+        self.assertEqual(data["exit_code"], 130)
+        self.assertIn("lint interrupted (exit 130)", output)
+
+    def test_ambiguous_test_owner_has_fixed_manual_inspection_notice(self):
+        for step in ("database", "browser_e2e"):
+            with self.subTest(step=step):
+                failure = local.Failure(windows_check.AMBIGUOUS_TEST_OWNER, 2)
+                code, data, _, output = self.run_with_failure(step, failure)
+                self.assertEqual(code, 2)
+                self.assertEqual(data["steps"][step], "FAIL")
+                self.assertIn("Inspect the B7-1 db-test service manually", output)
+                self.assertNotIn(windows_check.AMBIGUOUS_TEST_OWNER, output)
+                self.assertNotIn(windows_check.AMBIGUOUS_TEST_OWNER, json.dumps(data))
+
     def test_first_failure_stops_and_report_excludes_secrets(self):
         calls = []
         actions = {name: lambda name=name: calls.append(name) for name in windows_check.STEPS}
