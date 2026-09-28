@@ -100,29 +100,33 @@ class LocalAutomationTest(unittest.TestCase):
         with patch.object(local, "checked_test_url", return_value="validated"), \
              patch.object(local, "ensure_test_compose_target"), \
              patch.object(local, "preflight"), \
-             patch.object(local, "test_db_state", side_effect=[None, "owned-id", "owned-id"]), \
-             patch.object(local, "inspect_test_container") as inspect, \
-             patch.object(local, "wait_databases"), \
+             patch.object(local, "test_db_state", side_effect=[None, "123456789abc", "123456789abc"]), \
+             patch.object(local, "inspect_test_container", return_value="123456789abc0000") as inspect, \
+             patch.object(local, "wait_test_database") as sql, \
              patch.object(local, "verify_host_database") as host, \
+             patch.object(local, "stop_test_container") as stop, \
              patch.object(local, "compose", side_effect=lambda *args, **kwargs: calls.append(args)):
             local.with_test_database(lambda url: self.assertEqual(url, "validated"))
-        self.assertEqual(calls, [("up", "-d", "db-test"), ("stop", "db-test")])
-        inspect.assert_called_once_with("owned-id")
-        host.assert_called_once_with("validated")
+        self.assertEqual(calls, [("up", "-d", "db-test")])
+        inspect.assert_called_once_with("123456789abc")
+        sql.assert_called_once_with("123456789abc0000")
+        host.assert_called_once_with("validated", "123456789abc0000")
+        stop.assert_called_once_with("123456789abc0000")
 
     def test_test_database_preserves_initially_running_service(self):
         with patch.object(local, "checked_test_url", return_value="validated"), \
              patch.object(local, "ensure_test_compose_target"), \
              patch.object(local, "preflight"), \
-             patch.object(local, "test_db_state", return_value="owned-id"), \
-             patch.object(local, "inspect_test_container") as inspect, \
-             patch.object(local, "wait_databases"), \
+             patch.object(local, "test_db_state", return_value="123456789abc"), \
+             patch.object(local, "inspect_test_container", return_value="123456789abc0000") as inspect, \
+             patch.object(local, "wait_test_database") as sql, \
              patch.object(local, "verify_host_database") as host, \
              patch.object(local, "compose") as compose:
             local.with_test_database(lambda url: self.assertEqual(url, "validated"))
             compose.assert_not_called()
-            inspect.assert_called_once_with("owned-id")
-            host.assert_called_once_with("validated")
+            inspect.assert_called_once_with("123456789abc")
+            sql.assert_called_once_with("123456789abc0000")
+            host.assert_called_once_with("validated", "123456789abc0000")
 
     def test_running_container_stale_port_or_mount_fails_before_db_access(self):
         good = {"Id": "123456789abc0000", "State": {"Running": True},
@@ -149,7 +153,7 @@ class LocalAutomationTest(unittest.TestCase):
                      patch.object(local, "preflight"), \
                      patch.object(local, "test_db_state", return_value="123456789abc"), \
                      patch.object(local, "run", return_value=json.dumps([details])), \
-                     patch.object(local, "wait_databases") as sql, \
+                     patch.object(local, "wait_test_database") as sql, \
                      patch.object(local, "verify_host_database") as host, \
                      patch.object(local, "compose") as compose:
                     with self.assertRaisesRegex(local.Failure, "container ownership"):
@@ -162,21 +166,83 @@ class LocalAutomationTest(unittest.TestCase):
         with patch.object(local, "checked_test_url", return_value="validated"), \
              patch.object(local, "ensure_test_compose_target"), \
              patch.object(local, "preflight"), \
-             patch.object(local, "test_db_state", return_value="owned-id"), \
-             patch.object(local, "inspect_test_container"), \
-             patch.object(local, "wait_databases"), \
+             patch.object(local, "test_db_state", return_value="123456789abc"), \
+             patch.object(local, "inspect_test_container", return_value="123456789abc0000"), \
+             patch.object(local, "wait_test_database"), \
              patch.object(local, "verify_host_database", side_effect=local.Failure("foreign port", 2)), \
              patch.object(local, "compose") as compose:
             with self.assertRaises(local.Failure):
                 local.with_test_database(lambda _: self.fail("action reached"))
             compose.assert_not_called()
 
+    def test_service_swap_before_host_proof_never_reaches_action(self):
+        events = []
+        with patch.object(local, "checked_test_url", return_value="validated"), \
+             patch.object(local, "ensure_test_compose_target"), \
+             patch.object(local, "preflight"), \
+             patch.object(local, "test_db_state", side_effect=["123456789abc", "fedcba987654"]), \
+             patch.object(local, "inspect_test_container", return_value="123456789abc0000"), \
+             patch.object(local, "wait_test_database", side_effect=lambda cid: events.append(("sql", cid))), \
+             patch.object(local, "verify_host_database", side_effect=lambda url, cid: events.append(("host", cid))), \
+             patch.object(local, "compose") as compose:
+            with self.assertRaisesRegex(local.Failure, "service changed"):
+                local.with_test_database(lambda _: self.fail("action reached"))
+            compose.assert_not_called()
+        self.assertEqual(events, [("sql", "123456789abc0000"),
+                                  ("host", "123456789abc0000")])
+
+    def test_service_swap_during_cleanup_stops_only_started_id(self):
+        current = {"id": "123456789abc"}
+        calls = []
+        def state():
+            if not calls:
+                calls.append("initial")
+                return None
+            return current["id"]
+        def command(argv, **_kwargs):
+            self.assertEqual(argv[-2:], ["stop", "123456789abc0000"])
+            calls.append("stopped-owned-id")
+            return "123456789abc0000"
+        with patch.object(local, "checked_test_url", return_value="validated"), \
+             patch.object(local, "ensure_test_compose_target"), \
+             patch.object(local, "preflight"), \
+             patch.object(local, "test_db_state", side_effect=state), \
+             patch.object(local, "inspect_test_container", return_value="123456789abc0000"), \
+             patch.object(local, "wait_test_database"), \
+             patch.object(local, "verify_host_database"), \
+             patch.object(local, "compose"), \
+             patch.object(local, "run", side_effect=command):
+            local.with_test_database(lambda _: current.update(id="fedcba987654"))
+        self.assertIn("stopped-owned-id", calls)
+
+    def test_up_success_with_missing_ps_id_uses_exact_fallback_or_reports_residual(self):
+        with patch.object(local, "checked_test_url", return_value="validated"), \
+             patch.object(local, "ensure_test_compose_target"), \
+             patch.object(local, "preflight"), \
+             patch.object(local, "test_db_state", side_effect=[None, None, "123456789abc"]), \
+             patch.object(local, "compose", side_effect=lambda *args, **_: "123456789abc0000" if args[:2] == ("ps", "-q") else ""), \
+             patch.object(local, "inspect_test_container", return_value="123456789abc0000"), \
+             patch.object(local, "wait_test_database"), \
+             patch.object(local, "verify_host_database"), \
+             patch.object(local, "stop_test_container") as stop:
+            local.with_test_database(lambda _: None)
+            stop.assert_called_once_with("123456789abc0000")
+        with patch.object(local, "checked_test_url", return_value="validated"), \
+             patch.object(local, "ensure_test_compose_target"), \
+             patch.object(local, "preflight"), \
+             patch.object(local, "test_db_state", side_effect=[None, None]), \
+             patch.object(local, "compose", return_value=""), \
+             patch.object(local, "stop_test_container") as stop:
+            with self.assertRaisesRegex(local.Failure, "may remain running"):
+                local.with_test_database(lambda _: self.fail("action reached"))
+            stop.assert_not_called()
+
     def test_host_database_identity_mismatch_fails_closed(self):
-        with patch.object(local, "compose", return_value="12345"), \
-             patch.object(local, "run", return_value="67890") as command:
+        with patch.object(local, "run", return_value="0") as command:
             with self.assertRaisesRegex(local.Failure, "host port belongs to db-test"):
-                local.verify_host_database("validated")
+                local.verify_host_database("validated", "123456789abc0000")
             self.assertEqual(command.call_args.kwargs["env"]["TEST_DATABASE_URL"], "validated")
+            self.assertEqual(command.call_args.kwargs["env"]["B71_PROBE_CONTAINER"], "123456789abc0000")
 
     def test_shell_compose_routing_rejected_before_service_command(self):
         for key, value in (("COMPOSE_FILE", "/tmp/alternate.yaml"),

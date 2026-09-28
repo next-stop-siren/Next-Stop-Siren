@@ -443,11 +443,36 @@ def inspect_test_container(container_id):
                 or ports != {"5432/tcp": expected_port}
                 or bindings != {"5432/tcp": expected_port}):
             raise ValueError("unexpected container identity or binding")
+        return details["Id"]
     except (Failure, IndexError, KeyError, TypeError, ValueError) as exc:
         raise Failure("Cannot verify dedicated database test container ownership", 2) from exc
 
 
-def verify_host_database(url):
+def wait_test_database(container_id):
+    """Use the inspected container, even if Compose service membership changes."""
+    try:
+        for _ in range(30):
+            state = json.loads(run(tool("docker", "inspect", "--type", "container",
+                                      "--format", "{{json .State}}", container_id),
+                                   capture=True, timeout=15))
+            if not state["Running"]:
+                raise Failure("Inspected database test container stopped", 4)
+            if state.get("Health", {}).get("Status") == "healthy":
+                break
+            time.sleep(2)
+        else:
+            raise Failure("db-test did not become healthy within 60 seconds", 4)
+        result = run(tool("docker", "exec", "-i", container_id, "sh", "-c",
+                          'PGPASSWORD="$POSTGRES_PASSWORD" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT 1"'),
+                     capture=True, timeout=15)
+        if result != "1":
+            raise Failure("db-test: SELECT 1 returned an unexpected result", 4)
+    except (Failure, KeyError, TypeError, ValueError) as exc:
+        raise Failure("Cannot verify the inspected database test container", 4) from exc
+    print("db-test: SELECT 1 passed")
+
+
+def verify_host_database(url, container_id):
     """Find the live host connection inside this container's pg_stat_activity."""
     try:
         script = '''import os, secrets, subprocess, psycopg
@@ -457,10 +482,8 @@ with psycopg.connect(os.environ["TEST_DATABASE_URL"], connect_timeout=3,
     pid = connection.execute("SELECT pg_backend_pid()").fetchone()[0]
     query = ("SELECT count(*) FROM pg_stat_activity WHERE pid = " + str(pid)
              + " AND application_name = '" + marker + "'")
-    root = os.environ["B71_PROBE_ROOT"]
-    command = [os.environ["B71_PROBE_DOCKER"], "compose", "--project-directory", root,
-               "--env-file", os.environ["B71_PROBE_ENV"], "-f", root + "/compose.yaml",
-               "-p", "b7-1", "exec", "-T", "db-test", "sh", "-c",
+    command = [os.environ["B71_PROBE_DOCKER"], "exec", "-i",
+               os.environ["B71_PROBE_CONTAINER"], "sh", "-c",
                'PGPASSWORD="$POSTGRES_PASSWORD" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "$1"',
                "sh", query]
     result = subprocess.run(command, text=True, capture_output=True, timeout=10)
@@ -468,9 +491,8 @@ with psycopg.connect(os.environ["TEST_DATABASE_URL"], connect_timeout=3,
 '''
         env = command_env()
         env["TEST_DATABASE_URL"] = url
-        env["B71_PROBE_ROOT"] = str(ROOT)
-        env["B71_PROBE_ENV"] = str(ENV)
         env["B71_PROBE_DOCKER"] = TOOLS["docker"]
+        env["B71_PROBE_CONTAINER"] = container_id
         result = run(tool("uv", "run", "--no-sync", "python", "-c", script),
                      cwd=BACKEND, capture=True, timeout=20, env=env)
         if result != "1":
@@ -479,27 +501,51 @@ with psycopg.connect(os.environ["TEST_DATABASE_URL"], connect_timeout=3,
         raise Failure("Cannot verify that the database test host port belongs to db-test", 2) from exc
 
 
+def started_test_container():
+    """Resolve a successful Compose up without guessing a replacement's owner."""
+    try:
+        try:
+            candidate = test_db_state()
+        except Failure:
+            candidate = None
+        if not candidate:
+            raw = compose("ps", "-q", "db-test", capture=True, test=True)
+            candidates = raw.splitlines()
+            if len(candidates) != 1:
+                raise ValueError("ambiguous started container")
+            candidate = candidates[0]
+        return inspect_test_container(candidate)
+    except (Failure, ValueError) as exc:
+        raise Failure("Cannot identify started db-test; it may remain running and requires manual inspection", 2) from exc
+
+
+def stop_test_container(container_id):
+    try:
+        run(tool("docker", "stop", container_id), capture=True, timeout=30)
+    except Failure as exc:
+        raise Failure("Could not stop the container started by this command; inspect db-test manually", 2) from exc
+
+
 def with_test_database(action):
     url = checked_test_url()  # never start a service before validating the exact target
     ensure_test_compose_target()
     preflight(docker=True, backend=True)
     initial_id = test_db_state()
     started_id = None
-    started = False
     try:
         if not initial_id:
             compose("up", "-d", "db-test", timeout=300, test=True)
-            started = True
-            started_id = test_db_state()
-            if not started_id:
-                raise Failure("Cannot identify the started database test container", 2)
-        inspect_test_container(initial_id or started_id)
-        wait_databases(("db-test",), test=True)
-        verify_host_database(url)
+            started_id = started_test_container()
+        container_id = started_id or inspect_test_container(initial_id)
+        wait_test_database(container_id)
+        verify_host_database(url, container_id)
+        current = test_db_state()
+        if not current or not container_id.startswith(current):
+            raise Failure("Database test service changed during ownership verification", 2)
         action(url)
     finally:
-        if started and test_db_state() == started_id and started_id:
-            compose("stop", "db-test", test=True)
+        if started_id:
+            stop_test_container(started_id)
 
 
 def test_db():
