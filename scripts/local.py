@@ -98,6 +98,15 @@ def command_env():
 
 def setup():
     preflight(docker=True, frontend=True, backend=True)
+    setup_dependencies()
+    compose("up", "-d", *SERVICES, timeout=300)
+    wait_databases()
+    api_probe()
+    checks()
+
+
+def setup_dependencies():
+    """Install locked local dependencies without changing service state."""
     if not ENV.exists():
         try:
             descriptor = os.open(ENV, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -114,10 +123,6 @@ def setup():
     browser_env["PLAYWRIGHT_BROWSERS_PATH"] = str(ROOT / ".cache" / "playwright")
     run(tool("npm", "exec", "--", "playwright", "install", "chromium"),
         cwd=FRONTEND, timeout=600, env=browser_env)
-    compose("up", "-d", *SERVICES, timeout=300)
-    wait_databases()
-    api_probe()
-    checks()
 
 
 def wait_databases(services=SERVICES, *, test=False):

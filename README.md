@@ -4,6 +4,8 @@ React·TypeScript·Vite 화면, FastAPI 서버, PostgreSQL 개발·테스트 DB�
 
 처음 참여하는 팀원은 [macOS·Windows 실행 체크리스트](docs/onboarding.md)를 순서대로 진행하세요. 필요한 도구 설치와 프로젝트 `setup`의 역할, 기대 결과, 실패 시 중단 지점을 구분했습니다. 이 저장소에서 실제로 확인한 경로는 macOS입니다. Windows PowerShell 절차는 **NOT RUN**이며 Windows 팀원의 실행 결과를 기다립니다.
 
+Windows 팀원은 위 도구를 설치하고 Docker Desktop daemon을 시작한 뒤 저장소 루트에서 `.\windows-check.ps1` 한 명령으로 로컬 확인을 실행할 수 있습니다. 이 명령은 버전·daemon, 잠금 설치, 정적 검사, 단위·전용 DB·브라우저 E2E, 빌드를 순서대로 확인하고 첫 실패에서 종료합니다. 공유용 요약은 Git에서 제외되는 `.cache/windows-check/report.json`에 저장됩니다. 자세한 범위와 실행 전제는 [Windows 체크리스트](docs/onboarding.md)를 참고하세요. Windows 실제 실행 결과는 아직 **NOT RUN**입니다.
+
 ## 준비
 
 macOS에는 실행 중인 Docker 엔진과 Compose가 필요하며 Colima 또는 Docker Desktop을 사용할 수 있습니다. Windows에는 Docker Desktop(Compose 포함)을 설치하고 **daemon을 실행**하세요. Node.js **24.21.0**(포함된 npm **11.19.0**), Python **3.13.15**, uv **0.11.19**를 설치하세요. PostgreSQL **17.11**은 Compose가 가져옵니다. Python 3.13.15가 일반 명령 경로에 없다면 macOS에서 `B71_PYTHON=/absolute/path/to/python3.13`, Windows에서 `$env:B71_PYTHON='C:\path\to\python.exe'`를 지정하세요. `B71_NODE`, `B71_NPM`, `B71_UV`, `B71_DOCKER`도 해당 실행 파일의 경로로 지정할 수 있습니다. Node 경로를 재정의하면 그 디렉터리를 npm 실행 환경의 PATH 앞에 둡니다. uv 관리형 Python 목록에는 현재 3.13.15가 없어 공식 배포본이나 공식 소스 빌드가 필요합니다.
