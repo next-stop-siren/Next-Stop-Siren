@@ -407,23 +407,98 @@ def ensure_test_compose_target():
 
 
 def test_db_state():
-    raw = compose("ps", "--all", "--format", "json", "db-test", capture=True, test=True)
-    records = [json.loads(line) for line in raw.splitlines() if line.strip()]
-    return any(record.get("Service") == "db-test" and record.get("State") == "running" for record in records)
+    try:
+        raw = compose("ps", "--all", "--format", "json", "db-test", capture=True, test=True)
+        records = [json.loads(line) for line in raw.splitlines() if line.strip()]
+        running = [record.get("ID") for record in records
+                   if record.get("Service") == "db-test" and record.get("State") == "running"]
+        if len(running) > 1 or any(not item for item in running):
+            raise ValueError("ambiguous container")
+        return running[0] if running else None
+    except (Failure, AttributeError, TypeError, ValueError) as exc:
+        raise Failure("Cannot identify the dedicated database test container", 2) from exc
+
+
+def inspect_test_container(container_id):
+    """Verify the actual container before any SQL connection is attempted."""
+    try:
+        raw = run(tool("docker", "inspect", "--type", "container", container_id),
+                  capture=True, timeout=15)
+        details, = json.loads(raw)
+        labels = details["Config"]["Labels"]
+        mounts = details["Mounts"]
+        ports = details["NetworkSettings"]["Ports"]
+        bindings = details["HostConfig"]["PortBindings"]
+        expected_port = [{"HostIp": "127.0.0.1", "HostPort": "55433"}]
+        if (len(container_id) < 12 or not details["Id"].startswith(container_id)
+                or not details["State"]["Running"]
+                or labels["com.docker.compose.project"] != "b7-1"
+                or labels["com.docker.compose.service"] != "db-test"
+                or labels["com.docker.compose.project.working_dir"] != str(ROOT)
+                or labels["com.docker.compose.project.config_files"] != str(ROOT / "compose.yaml")
+                or len(mounts) != 1
+                or mounts[0]["Type"] != "volume"
+                or mounts[0]["Name"] != "b7-1_db-test-data"
+                or mounts[0]["Destination"] != "/var/lib/postgresql/data"
+                or ports != {"5432/tcp": expected_port}
+                or bindings != {"5432/tcp": expected_port}):
+            raise ValueError("unexpected container identity or binding")
+    except (Failure, IndexError, KeyError, TypeError, ValueError) as exc:
+        raise Failure("Cannot verify dedicated database test container ownership", 2) from exc
+
+
+def verify_host_database(url):
+    """Find the live host connection inside this container's pg_stat_activity."""
+    try:
+        script = '''import os, secrets, subprocess, psycopg
+marker = "b71-" + secrets.token_hex(16)
+with psycopg.connect(os.environ["TEST_DATABASE_URL"], connect_timeout=3,
+                     application_name=marker) as connection:
+    pid = connection.execute("SELECT pg_backend_pid()").fetchone()[0]
+    query = ("SELECT count(*) FROM pg_stat_activity WHERE pid = " + str(pid)
+             + " AND application_name = '" + marker + "'")
+    root = os.environ["B71_PROBE_ROOT"]
+    command = [os.environ["B71_PROBE_DOCKER"], "compose", "--project-directory", root,
+               "--env-file", os.environ["B71_PROBE_ENV"], "-f", root + "/compose.yaml",
+               "-p", "b7-1", "exec", "-T", "db-test", "sh", "-c",
+               'PGPASSWORD="$POSTGRES_PASSWORD" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "$1"',
+               "sh", query]
+    result = subprocess.run(command, text=True, capture_output=True, timeout=10)
+    print("1" if result.returncode == 0 and result.stdout.strip() == "1" else "0")
+'''
+        env = command_env()
+        env["TEST_DATABASE_URL"] = url
+        env["B71_PROBE_ROOT"] = str(ROOT)
+        env["B71_PROBE_ENV"] = str(ENV)
+        env["B71_PROBE_DOCKER"] = TOOLS["docker"]
+        result = run(tool("uv", "run", "--no-sync", "python", "-c", script),
+                     cwd=BACKEND, capture=True, timeout=20, env=env)
+        if result != "1":
+            raise ValueError("host connection was not found in db-test")
+    except (Failure, ValueError) as exc:
+        raise Failure("Cannot verify that the database test host port belongs to db-test", 2) from exc
 
 
 def with_test_database(action):
     url = checked_test_url()  # never start a service before validating the exact target
     ensure_test_compose_target()
     preflight(docker=True, backend=True)
-    was_running = test_db_state()
+    initial_id = test_db_state()
+    started_id = None
+    started = False
     try:
-        if not was_running:
+        if not initial_id:
             compose("up", "-d", "db-test", timeout=300, test=True)
+            started = True
+            started_id = test_db_state()
+            if not started_id:
+                raise Failure("Cannot identify the started database test container", 2)
+        inspect_test_container(initial_id or started_id)
         wait_databases(("db-test",), test=True)
+        verify_host_database(url)
         action(url)
     finally:
-        if not was_running:
+        if started and test_db_state() == started_id and started_id:
             compose("stop", "db-test", test=True)
 
 

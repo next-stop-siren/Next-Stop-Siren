@@ -100,21 +100,83 @@ class LocalAutomationTest(unittest.TestCase):
         with patch.object(local, "checked_test_url", return_value="validated"), \
              patch.object(local, "ensure_test_compose_target"), \
              patch.object(local, "preflight"), \
-             patch.object(local, "test_db_state", return_value=False), \
+             patch.object(local, "test_db_state", side_effect=[None, "owned-id", "owned-id"]), \
+             patch.object(local, "inspect_test_container") as inspect, \
              patch.object(local, "wait_databases"), \
+             patch.object(local, "verify_host_database") as host, \
              patch.object(local, "compose", side_effect=lambda *args, **kwargs: calls.append(args)):
             local.with_test_database(lambda url: self.assertEqual(url, "validated"))
         self.assertEqual(calls, [("up", "-d", "db-test"), ("stop", "db-test")])
+        inspect.assert_called_once_with("owned-id")
+        host.assert_called_once_with("validated")
 
     def test_test_database_preserves_initially_running_service(self):
         with patch.object(local, "checked_test_url", return_value="validated"), \
              patch.object(local, "ensure_test_compose_target"), \
              patch.object(local, "preflight"), \
-             patch.object(local, "test_db_state", return_value=True), \
+             patch.object(local, "test_db_state", return_value="owned-id"), \
+             patch.object(local, "inspect_test_container") as inspect, \
              patch.object(local, "wait_databases"), \
+             patch.object(local, "verify_host_database") as host, \
              patch.object(local, "compose") as compose:
             local.with_test_database(lambda url: self.assertEqual(url, "validated"))
             compose.assert_not_called()
+            inspect.assert_called_once_with("owned-id")
+            host.assert_called_once_with("validated")
+
+    def test_running_container_stale_port_or_mount_fails_before_db_access(self):
+        good = {"Id": "123456789abc0000", "State": {"Running": True},
+                "Config": {"Labels": {
+                    "com.docker.compose.project": "b7-1",
+                    "com.docker.compose.service": "db-test",
+                    "com.docker.compose.project.working_dir": str(local.ROOT),
+                    "com.docker.compose.project.config_files": str(local.ROOT / "compose.yaml")}},
+                "Mounts": [{"Type": "volume", "Name": "b7-1_db-test-data",
+                            "Destination": "/var/lib/postgresql/data"}],
+                "NetworkSettings": {"Ports": {"5432/tcp": [
+                    {"HostIp": "127.0.0.1", "HostPort": "55433"}]}},
+                "HostConfig": {"PortBindings": {"5432/tcp": [
+                    {"HostIp": "127.0.0.1", "HostPort": "55433"}]}}}
+        for field in ("port", "mount"):
+            with self.subTest(field=field):
+                details = json.loads(json.dumps(good))
+                if field == "port":
+                    details["NetworkSettings"]["Ports"]["5432/tcp"][0]["HostPort"] = "55434"
+                else:
+                    details["Mounts"][0]["Name"] = "foreign-volume"
+                with patch.object(local, "checked_test_url", return_value="validated"), \
+                     patch.object(local, "ensure_test_compose_target"), \
+                     patch.object(local, "preflight"), \
+                     patch.object(local, "test_db_state", return_value="123456789abc"), \
+                     patch.object(local, "run", return_value=json.dumps([details])), \
+                     patch.object(local, "wait_databases") as sql, \
+                     patch.object(local, "verify_host_database") as host, \
+                     patch.object(local, "compose") as compose:
+                    with self.assertRaisesRegex(local.Failure, "container ownership"):
+                        local.with_test_database(lambda _: self.fail("action reached"))
+                    sql.assert_not_called()
+                    host.assert_not_called()
+                    compose.assert_not_called()
+
+    def test_foreign_host_port_fails_before_action_and_preserves_running_service(self):
+        with patch.object(local, "checked_test_url", return_value="validated"), \
+             patch.object(local, "ensure_test_compose_target"), \
+             patch.object(local, "preflight"), \
+             patch.object(local, "test_db_state", return_value="owned-id"), \
+             patch.object(local, "inspect_test_container"), \
+             patch.object(local, "wait_databases"), \
+             patch.object(local, "verify_host_database", side_effect=local.Failure("foreign port", 2)), \
+             patch.object(local, "compose") as compose:
+            with self.assertRaises(local.Failure):
+                local.with_test_database(lambda _: self.fail("action reached"))
+            compose.assert_not_called()
+
+    def test_host_database_identity_mismatch_fails_closed(self):
+        with patch.object(local, "compose", return_value="12345"), \
+             patch.object(local, "run", return_value="67890") as command:
+            with self.assertRaisesRegex(local.Failure, "host port belongs to db-test"):
+                local.verify_host_database("validated")
+            self.assertEqual(command.call_args.kwargs["env"]["TEST_DATABASE_URL"], "validated")
 
     def test_shell_compose_routing_rejected_before_service_command(self):
         for key, value in (("COMPOSE_FILE", "/tmp/alternate.yaml"),
