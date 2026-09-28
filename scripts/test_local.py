@@ -1,6 +1,7 @@
 """Safe automation scenarios; all mutable state is temporary."""
 
 import ctypes
+import json
 import os
 from pathlib import Path
 import shutil
@@ -97,12 +98,90 @@ class LocalAutomationTest(unittest.TestCase):
     def test_test_database_restores_initially_stopped_service(self):
         calls = []
         with patch.object(local, "checked_test_url", return_value="validated"), \
+             patch.object(local, "ensure_test_compose_target"), \
              patch.object(local, "preflight"), \
              patch.object(local, "test_db_state", return_value=False), \
              patch.object(local, "wait_databases"), \
              patch.object(local, "compose", side_effect=lambda *args, **kwargs: calls.append(args)):
             local.with_test_database(lambda url: self.assertEqual(url, "validated"))
         self.assertEqual(calls, [("up", "-d", "db-test"), ("stop", "db-test")])
+
+    def test_test_database_preserves_initially_running_service(self):
+        with patch.object(local, "checked_test_url", return_value="validated"), \
+             patch.object(local, "ensure_test_compose_target"), \
+             patch.object(local, "preflight"), \
+             patch.object(local, "test_db_state", return_value=True), \
+             patch.object(local, "wait_databases"), \
+             patch.object(local, "compose") as compose:
+            local.with_test_database(lambda url: self.assertEqual(url, "validated"))
+            compose.assert_not_called()
+
+    def test_shell_compose_routing_rejected_before_service_command(self):
+        for key, value in (("COMPOSE_FILE", "/tmp/alternate.yaml"),
+                           ("COMPOSE_PROJECT_NAME", "alternate"),
+                           ("COMPOSE_ENV_FILES", "/tmp/alternate.env")):
+            with self.subTest(key=key), patch.dict(os.environ, {key: value}), \
+                 patch.object(local, "checked_test_url", return_value="validated"), \
+                 patch.object(local, "compose") as compose:
+                with self.assertRaisesRegex(local.Failure, "Compose environment overrides"):
+                    local.with_test_database(lambda _: None)
+                compose.assert_not_called()
+
+    def test_env_compose_routing_rejected_before_service_command(self):
+        for key in ("COMPOSE_FILE", "COMPOSE_PROJECT_NAME", "COMPOSE_ENV_FILES",
+                    "export COMPOSE_FILE"):
+            with self.subTest(key=key), patch.object(local, "checked_test_url", return_value="validated"), \
+                 patch.object(local, "read_settings", return_value={key: "alternate"}), \
+                 patch.object(local, "compose") as compose:
+                with self.assertRaisesRegex(local.Failure, "Compose settings in .env"):
+                    local.with_test_database(lambda _: None)
+                compose.assert_not_called()
+
+    def test_remote_docker_host_and_context_rejected_before_compose(self):
+        with patch.dict(os.environ, {"DOCKER_HOST": "tcp://remote.example:2376"}), \
+             patch.object(local, "checked_test_url", return_value="validated"), \
+             patch.object(local, "read_settings", return_value={}), \
+             patch.object(local, "compose") as compose:
+            with self.assertRaisesRegex(local.Failure, "local Docker endpoint"):
+                local.with_test_database(lambda _: None)
+            compose.assert_not_called()
+        with patch.dict(os.environ, {"DOCKER_CONTEXT": "remote"}), \
+             patch.object(local, "checked_test_url", return_value="validated"), \
+             patch.object(local, "read_settings", return_value={}), \
+             patch.object(local, "run", return_value='"ssh://remote.example"'), \
+             patch.object(local, "compose") as compose:
+            with self.assertRaisesRegex(local.Failure, "local Docker context"):
+                local.with_test_database(lambda _: None)
+            compose.assert_not_called()
+
+    def test_fixed_manifest_ignores_default_override_and_rejects_wrong_project(self):
+        config = {"name": "alternate", "services": {"db-dev": {}, "db-test": {
+            "ports": [{"host_ip": "127.0.0.1", "target": 5432, "published": "55433"}],
+            "volumes": [{"type": "volume", "source": "db-test-data",
+                         "target": "/var/lib/postgresql/data"}]}},
+            "volumes": {"db-test-data": {"name": "b7-1_db-test-data"}}}
+        with patch.object(local, "read_settings", return_value={}), \
+             patch.object(local, "ensure_local_docker"), \
+             patch.object(local, "compose", return_value=json.dumps(config)) as compose:
+            with self.assertRaisesRegex(local.Failure, "dedicated local service"):
+                local.ensure_test_compose_target()
+            compose.assert_called_once_with("config", "--format", "json", capture=True, test=True)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            env = root / ".env"
+            (root / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
+            (root / "compose.override.yaml").write_text(
+                "services:\n  unexpected-service:\n    image: busybox\n", encoding="utf-8")
+            env.write_text("TEST_DB_NAME=example\n", encoding="utf-8")
+            with patch.object(local, "ROOT", root), patch.object(local, "ENV", env), \
+                 patch.object(local, "run", return_value="{}") as command:
+                local.compose("config", "--format", "json", capture=True, test=True)
+            argv = command.call_args.args[0]
+            self.assertEqual(argv[argv.index("-f") + 1], str(root / "compose.yaml"))
+            self.assertNotIn(str(root / "compose.override.yaml"), argv)
+            self.assertEqual(argv[argv.index("-p") + 1], "b7-1")
+            self.assertEqual(argv[argv.index("--project-directory") + 1], str(root))
+            self.assertEqual(argv[argv.index("--env-file") + 1], str(env))
 
     def test_windows_job_assignment_precedes_launch_and_survives_launcher_exit(self):
         events = []

@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 FRONTEND = ROOT / "frontend"
 BACKEND = ROOT / "backend"
 sys.path.insert(0, str(BACKEND / "tests"))
-from db_guard import UnsafeTestDatabase, guarded_url  # noqa: E402
+from db_guard import UnsafeTestDatabase, guarded_url, read_settings  # noqa: E402
 
 ENV = ROOT / ".env"
 SERVICES = ("db-dev", "db-test")
@@ -51,9 +51,12 @@ def tool(name, *args):
     return [executable, *args]
 
 
-def compose(*args, env=None, capture=False, timeout=120):
+def compose(*args, env=None, capture=False, timeout=120, test=False):
+    options = ("--project-directory", str(ROOT), "--env-file", str(ENV),
+               "-f", str(ROOT / "compose.yaml"), "-p", "b7-1") if test else ()
     try:
-        return run(tool("docker", "compose", *args), env=env, capture=capture, timeout=timeout)
+        return run(tool("docker", "compose", *options, *args), env=env,
+                   capture=capture, timeout=timeout)
     except Failure as exc:
         raise Failure(f"docker compose {args[0]} failed (exit {exc.code}); check Docker and project service status", exc.code) from exc
 
@@ -117,11 +120,12 @@ def setup():
     checks()
 
 
-def wait_databases(services=SERVICES):
+def wait_databases(services=SERVICES, *, test=False):
     for service in services:
         for attempt in range(30):
             try:
-                status = json.loads(compose("ps", "--format", "json", service, capture=True))
+                status = json.loads(compose("ps", "--format", "json", service,
+                                            capture=True, test=test))
                 records = status if isinstance(status, list) else [status]
                 if any(record.get("Health") == "healthy" and
                        record.get("Service", service) == service for record in records):
@@ -134,7 +138,7 @@ def wait_databases(services=SERVICES):
         # psql returns a nonzero status on SQL/connection errors. Output has no credentials.
         result = compose("exec", "-T", service, "sh", "-c",
                 'PGPASSWORD="$POSTGRES_PASSWORD" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT 1"',
-                capture=True)
+                capture=True, test=test)
         if result != "1":
             raise Failure(f"{service}: SELECT 1 returned an unexpected result", 4)
         print(f"{service}: SELECT 1 passed")
@@ -354,23 +358,73 @@ def checked_test_url():
         raise Failure(str(exc), 2) from exc
 
 
+def ensure_local_docker():
+    """Reject TCP/SSH daemons, including a remote selected active context."""
+    def local_endpoint(value):
+        return value.startswith("unix:///") or value.startswith("npipe:////")
+
+    selected = os.environ.get("DOCKER_HOST", "")
+    if selected and not local_endpoint(selected):
+        raise Failure("Database tests require a local Docker endpoint", 2)
+    try:
+        endpoint = json.loads(run(tool("docker", "context", "inspect", "--format",
+                                       "{{json .Endpoints.docker.Host}}"), capture=True,
+                                  timeout=15))
+    except (Failure, ValueError) as exc:
+        raise Failure("Cannot verify the local Docker context", 2) from exc
+    if not isinstance(endpoint, str) or not local_endpoint(endpoint):
+        raise Failure("Database tests require a local Docker context", 2)
+
+
+def ensure_test_compose_target():
+    """Check all routing inputs and the exact resolved Compose target before mutation."""
+    if any(key.startswith("COMPOSE_") for key in os.environ):
+        raise Failure("Database tests reject Compose environment overrides", 2)
+    try:
+        settings = read_settings(ENV)
+    except UnsafeTestDatabase as exc:
+        raise Failure(str(exc), 2) from exc
+    if any(key.removeprefix("export ").strip().upper().startswith("COMPOSE_")
+           for key in settings):
+        raise Failure("Database tests reject Compose settings in .env", 2)
+    ensure_local_docker()
+    try:
+        config = json.loads(compose("config", "--format", "json", capture=True, test=True))
+        service = config["services"]["db-test"]
+        port = service["ports"]
+        mount = service["volumes"]
+        volume = config["volumes"]["db-test-data"]
+        expected_port = {"host_ip": "127.0.0.1", "target": 5432, "published": "55433"}
+        expected_mount = {"type": "volume", "source": "db-test-data",
+                          "target": "/var/lib/postgresql/data"}
+        if (config["name"] != "b7-1" or set(config["services"]) != set(SERVICES)
+                or len(port) != 1 or any(port[0].get(k) != v for k, v in expected_port.items())
+                or len(mount) != 1 or any(mount[0].get(k) != v for k, v in expected_mount.items())
+                or volume["name"] != "b7-1_db-test-data"):
+            raise ValueError("unexpected Compose target")
+    except (Failure, KeyError, TypeError, ValueError) as exc:
+        raise Failure("Database test Compose target does not match the dedicated local service", 2) from exc
+
+
 def test_db_state():
-    raw = compose("ps", "--all", "--format", "json", "db-test", capture=True)
+    raw = compose("ps", "--all", "--format", "json", "db-test", capture=True, test=True)
     records = [json.loads(line) for line in raw.splitlines() if line.strip()]
     return any(record.get("Service") == "db-test" and record.get("State") == "running" for record in records)
 
 
 def with_test_database(action):
     url = checked_test_url()  # never start a service before validating the exact target
+    ensure_test_compose_target()
     preflight(docker=True, backend=True)
     was_running = test_db_state()
     try:
-        compose("up", "-d", "db-test", timeout=300)
-        wait_databases(("db-test",))
+        if not was_running:
+            compose("up", "-d", "db-test", timeout=300, test=True)
+        wait_databases(("db-test",), test=True)
         action(url)
     finally:
         if not was_running:
-            compose("stop", "db-test")
+            compose("stop", "db-test", test=True)
 
 
 def test_db():
