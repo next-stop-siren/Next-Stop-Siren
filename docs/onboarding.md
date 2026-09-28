@@ -46,72 +46,21 @@ export TEST_DATABASE_URL="$("${B71_PYTHON:-python3.13}" -c 'import sys; from pat
 
 하나라도 실패하면 다음 명령으로 넘어가지 않고 오류를 확인한다. 기대 결과는 단위 검사 15개 백엔드·2개 프런트엔드, 테스트 DB 검사 1개, Chromium E2E 1개, 정적 검사 정상 종료, Vite 빌드 성공이다. `clean` 뒤 `frontend/dist`와 Vite·알려진 Python 캐시가 사라지지만 `.env`, 의존성 디렉터리, DB 볼륨은 남는다. `stop` 뒤 이 프로젝트의 두 DB 컨테이너가 중지된다. `test-db`와 `test-e2e`는 기존에 중지된 테스트 DB를 자체적으로 다시 중지한다. 전체 검사 묶음은 `./local.sh test`로도 실행할 수 있다.
 
-## Windows PowerShell: **NOT RUN**
+## Windows PowerShell 한 명령: **NOT RUN**
 
-Windows 팀원이 Git, Node.js 24.21.0/npm 11.19.0, Python 3.13.15, uv 0.11.19, 실행 중인 Docker Desktop(Compose 포함)을 설치한 후 저장소 루트의 PowerShell에서 실행한다. Python 실행 파일을 직접 지정해야 하면 `$env:B71_PYTHON='C:\절대\경로\python.exe'`를 설정한다. 다른 실행 파일은 `B71_NODE`, `B71_NPM`, `B71_UV`, `B71_DOCKER`로 지정할 수 있다. Node 경로를 지정하면 npm 스크립트가 그 Node를 찾도록 해당 디렉터리를 `PATH` 앞에 둔다. PowerShell 실행 정책 때문에 로컬 스크립트가 막히면 조직 정책에 맞는 허용 방법을 관리자에게 확인한다.
-
-```powershell
-$ErrorActionPreference = 'Stop'
-if (-not $env:B71_PYTHON) {
-    $env:B71_PYTHON = (& py -3.13 -c 'import sys; print(sys.executable)')
-    if ($LASTEXITCODE -ne 0) { throw 'Python 3.13 launcher failed' }
-}
-$py = $env:B71_PYTHON
-if ($env:B71_NODE) { $env:PATH = (Split-Path -Parent $env:B71_NODE) + [IO.Path]::PathSeparator + $env:PATH }
-$node = if ($env:B71_NODE) { $env:B71_NODE } else { 'node' }
-$npm = if ($env:B71_NPM) { $env:B71_NPM } else { 'npm.cmd' }
-$uv = if ($env:B71_UV) { $env:B71_UV } else { 'uv' }
-$docker = if ($env:B71_DOCKER) { $env:B71_DOCKER } else { 'docker' }
-function Check-Tool([string]$Name, [string]$Exe, [string[]]$Arguments) {
-    & $Exe @Arguments
-    if ($LASTEXITCODE -ne 0) { throw "$Name failed: exit $LASTEXITCODE" }
-}
-Check-Tool node $node @('--version')                # v24.21.0
-Check-Tool npm $npm @('--version')                  # 11.19.0
-Check-Tool python $py @('--version')               # Python 3.13.15
-Check-Tool uv $uv @('--version')                   # uv 0.11.19
-Check-Tool docker $docker @('compose', 'version')  # Compose 사용 가능
-Check-Tool docker $docker @('info', '--format', '{{.ServerVersion}}')  # daemon 응답
-function Run-Step([string]$Name) {
-    & .\local.ps1 $Name
-    if ($LASTEXITCODE -ne 0) { throw "$Name failed: exit $LASTEXITCODE" }
-}
-Run-Step setup
-```
-
-버전이 맞지 않거나 daemon이 응답하지 않거나 `setup`이 실패하면 멈추고 해결한다. 기대 결과는 macOS와 같은 두 DB `SELECT 1 passed`, API 준비 상태와 기본 검사 성공이다. 같은 PowerShell에서 `.\local.ps1 dev`를 실행하고, 다른 창에서 아래 네 요청이 HTTP 200인지 확인한 뒤 `dev` 창에서 `Ctrl+C`를 누른다. 그 창에서 아래 테스트 명령을 이어 실행한다.
+Windows 팀원이 Git, Node.js 24.21.0/npm 11.19.0, Python 3.13.15, uv 0.11.19, 실행 중인 Docker Desktop(Compose 포함)을 설치한 후 저장소 루트의 PowerShell에서 실행한다. 이 명령은 도구 자체를 설치하지 않는다. Python 실행 파일을 직접 지정해야 하면 `$env:B71_PYTHON='C:\절대\경로\python.exe'`를 설정한다. `B71_NODE`, `B71_NPM`, `B71_UV`, `B71_DOCKER` 실행 파일 경로도 지정할 수 있다. npm은 Windows의 `npm.cmd`를 사용할 수 있고, Node 경로를 지정하면 그 디렉터리가 npm 실행 환경의 `PATH` 앞에 놓인다. 실행 정책이 스크립트를 막으면 조직 정책에 맞는 허용 방법을 관리자에게 확인한다.
 
 ```powershell
-(Invoke-WebRequest -UseBasicParsing http://127.0.0.1:5173/).StatusCode
-(Invoke-WebRequest -UseBasicParsing http://127.0.0.1:5173/api/health).StatusCode
-(Invoke-WebRequest -UseBasicParsing http://127.0.0.1:5173/api/ready).StatusCode
-(Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8000/api/ready).StatusCode
+.\windows-check.ps1
 ```
 
-처음 창에서 테스트 URL을 화면에 출력하지 않고 `.env`로부터 만든 다음 검사한다.
+명령은 정확한 버전과 Docker daemon을 먼저 검사하고, 개발·테스트 서비스 및 55432·55433·8000·5173 포트 상태를 읽는다. 이후 `.env`가 없을 때만 예시를 복사하고 `npm ci`, `uv sync --locked`, 프로젝트 캐시의 Chromium 설치를 실행한다. 프런트엔드 Biome 포맷·린트·타입, 백엔드 Ruff 포맷·린트·mypy, 단위 테스트, 전용 테스트 DB, 실제 API/UI를 띄운 유한 시간 Playwright E2E, 빌드 순서다. 첫 실패에서 종료 코드가 0이 아니며 다음 단계는 실행되지 않는다. `dev`를 대기 상태로 실행하지 않는다.
 
-```powershell
-$env:TEST_DATABASE_URL = (& $py -c 'import sys; from pathlib import Path; from urllib.parse import quote; sys.path.insert(0, "backend/tests"); from db_guard import read_settings; s=read_settings(Path(".env")); print("postgresql://"+quote(s["TEST_DB_USER"],safe="")+":"+quote(s["TEST_DB_PASSWORD"],safe="")+"@127.0.0.1:55433/"+quote(s["TEST_DB_NAME"],safe=""))')
-if ($LASTEXITCODE -ne 0) { throw 'Could not derive test URL' }
-Run-Step test-unit
-Run-Step test-db
-Run-Step test-e2e
-Push-Location frontend
-& $npm run format:check; if ($LASTEXITCODE -ne 0) { throw 'format:check failed' }
-& $npm run lint; if ($LASTEXITCODE -ne 0) { throw 'lint failed' }
-& $npm run typecheck; if ($LASTEXITCODE -ne 0) { throw 'typecheck failed' }
-Pop-Location
-Push-Location backend
-& $uv run --no-sync ruff format --check app tests scripts; if ($LASTEXITCODE -ne 0) { throw 'ruff format failed' }
-& $uv run --no-sync ruff check app tests scripts; if ($LASTEXITCODE -ne 0) { throw 'ruff check failed' }
-& $uv run --no-sync mypy app; if ($LASTEXITCODE -ne 0) { throw 'mypy failed' }
-Pop-Location
-Run-Step build
-Run-Step clean
-Run-Step stop
-```
+테스트 DB URL은 `.env`의 `TEST_DB_*`에서 URL 인코딩해 프로세스 안에서 만들고 기존 DB guard로 검사한다. `.env`를 PowerShell에서 읽어 실행하지 않는다. 전용 DB 테스트는 기존 로컬 보호 경로를 사용해 이 명령이 시작한 테스트 DB만 종료한다. 원래 실행 중인 서비스는 유지하며 개발 DB는 이 명령이 시작하지 않는다. 포트가 이미 사용 중이면 E2E가 자체 검사에서 중단한다. 기존 `.env`·볼륨·데이터는 보존한다.
 
-한 단계라도 실패하면 뒤 단계를 실행하지 말고 명령, 종료 코드, 비밀값을 지운 오류 메시지를 공유한다. 완료 시 OS/도구 버전, `setup`·`dev` HTTP 상태·각 검사·`build`·`clean`·`stop`의 PASS/FAIL, 시작·종료 시 DB 컨테이너 상태를 팀에 전달한다. Windows에서 실행하기 전까지 이 절차의 결과는 **NOT RUN**이다.
+드물게 Compose가 새로 시작한 `db-test`의 컨테이너 ID를 확정할 수 없으면 보호 로직은 추측해 중지하지 않고 실패한다. 이때 화면에 수동 확인 안내가 나온다. 재시도 전에 이 프로젝트의 `db-test` 상태를 직접 확인하고, 다른 서비스나 볼륨을 일괄 중지·삭제하지 않는다.
+
+공유할 결과는 `.cache/windows-check/report.json`이다. OS, 도구 버전, Git 커밋, 각 단계의 `PASS`/`FAIL`/`NOT_RUN`, 종료 코드만 담고 환경값·DB URL·자격 증명·원시 로그·개인 경로는 담지 않는다. 실패 화면의 상세 출력은 공유 전에 비밀값을 직접 지워야 한다. Windows 팀원 실행 전 현재 결과는 **NOT RUN**이며 macOS 모의 검증이 Windows 동작을 증명하지 않는다.
 
 ## 문제 해결
 
