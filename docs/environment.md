@@ -2,15 +2,15 @@
 
 ## 기준과 소유
 
-이 저장소의 구현 기준은 React·TypeScript·Vite 화면, FastAPI 서버, PostgreSQL이다. 공통 설정은 PM이 검토한다. 팀원은 같은 저장소와 잠금 파일을 사용하며 개인별로 프로젝트를 다시 초기화하지 않는다. 현재 저장소는 문서만 담고 있다. 아래 기준의 실행 파일과 명령은 초기 구현 단계에서 추가하고 macOS·Windows 양쪽에서 확인한다.
+이 저장소의 구현 기준은 React·TypeScript·Vite 화면, FastAPI 서버, PostgreSQL이다. 공통 설정은 PM이 검토한다. 팀원은 같은 저장소와 잠금 파일을 사용하며 개인별로 프로젝트를 다시 초기화하지 않는다. 초기 앱과 macOS·Windows 수동 실행 명령은 루트 [README](../README.md)에 있다. Windows 실행과 DB 런타임은 아직 검증하지 않았다.
 
 | 도구 | 채택 기준 | 구현 단계에서 고정할 것 |
 | --- | --- | --- |
-| Node.js·npm | Node.js 24.21.0 LTS와 함께 제공되는 npm | npm 버전 확인, `package-lock.json` |
-| Python·uv | Python 3.13.15 안정판과 uv | uv 버전 확인, `uv.lock` |
-| PostgreSQL | 지원 중인 17.11 안정판 | Compose 이미지 태그와 개발·테스트 DB 구성 |
+| Node.js·npm | Node.js 24.21.0 LTS와 함께 제공되는 npm 11.19.0 | `frontend/package-lock.json` |
+| Python·uv | Python 3.13.15 안정판과 uv 0.11.19 | `backend/uv.lock` |
+| PostgreSQL | 지원 중인 17.11 안정판 | `compose.yaml`의 개발·테스트 DB 구성 |
 
-버전 확인은 macOS 터미널과 Windows PowerShell에서 각각 Node.js, npm, Python, uv, Docker/Compose, PostgreSQL 서버의 실제 버전을 출력해 기록한다. 설치된 버전이 저장소의 고정 버전과 다르면 설치를 멈추고 안내에 맞춘다. 잠금 파일을 추가한 뒤 npm은 그 파일을 따르는 깨끗한 설치, uv는 잠금 파일의 변경을 막는 동기화를 기본으로 한다. 잠금 파일 없이 임의 최신 버전을 설치하는 절차를 공통 안내로 삼지 않는다.
+버전 확인은 macOS 터미널과 Windows PowerShell에서 각각 Node.js, npm, Python, uv, Docker/Compose, PostgreSQL 서버의 실제 버전을 출력해 기록한다. 설치된 버전이 저장소의 고정 버전과 다르면 설치를 멈추고 안내에 맞춘다. npm은 잠금 파일을 따르는 깨끗한 설치, uv는 잠금 파일의 변경을 막는 동기화를 기본으로 한다. Python 3.13.15는 현재 uv 관리형 다운로드 목록에 없어 별도 공식 배포본을 먼저 설치한다.
 
 ## 공통 초기 준비 절차
 
