@@ -5,6 +5,7 @@
 처음 참여한다면 [공통 환경](environment.md)에서 설치 전제를 확인하고 [실행 체크리스트](onboarding.md)를 따른다. 변경 작업은 [협업 흐름](workflow.md)과 [품질 지침](quality.md)을 확인한다. 아래 문서의 로그인·채팅 계획은 후속 단계의 기준이며 현재 동작을 설명하지 않는다.
 
 - [서비스 범위와 첫 작업](service-scope.md)
+- [데이터베이스 설계](database.md)
 - [공통 환경과 초기 준비 절차](environment.md)
 - [macOS·Windows 실행 체크리스트](onboarding.md)
 - [프론트엔드](frontend.md)
