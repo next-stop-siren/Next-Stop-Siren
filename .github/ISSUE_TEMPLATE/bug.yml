@@ -17,7 +17,7 @@ body:
     id: steps
     attributes:
       label: 재현 절차
-      description: 다른 사람이 같은 문제를 확인할 수 있도록 순서대로 적어 주세요.
+      description: 문제가 다시 나타나는 순서대로 적어 주세요.
       placeholder: "1. …\n2. …\n3. …"
     validations:
       required: true
