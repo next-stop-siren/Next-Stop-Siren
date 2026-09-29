@@ -78,8 +78,10 @@ CI와 동일한 정적 검사는 `frontend`에서 `npm run format:check`, `npm r
 
 macOS에서는 `export TEST_DATABASE_URL='...'` 후 `./local.sh test`, PowerShell에서는 `$env:TEST_DATABASE_URL='...'` 후 `.\local.ps1 test`를 실행하세요. 개발 DB(55432), 원격 주소, `.env`의 테스트 설정과 다른 URL은 연결 전에 거부합니다. E2E는 비어 있는 8000/5173 포트에서 소유 서버만 시작·종료하고 원래 중지되어 있던 테스트 DB는 다시 중지합니다. Windows의 실제 실행은 아직 검증하지 않았습니다.
 
-macOS Colima에서 Docker Desktop을 제거한 뒤 `docker-credential-osxkeychain`이 없다는 이미지 가져오기 오류가 나오면 Docker CLI의 자격 증명 도우미 설정을 확인하세요. 기존 설정이 `osxkeychain`을 지정한다면 공식 Homebrew `docker-credential-helper` 패키지로 해당 실행 파일을 설치할 수 있습니다. 이 호스트에서는 설치 후 기본 Colima 컨텍스트와 기존 Docker 설정으로 공개 PostgreSQL 이미지 가져오기와 `./local.sh setup`을 검증했습니다. 전역 Docker 설정은 바꾸지 않았습니다.
+## 확인된 범위
 
-`GET /api/health`는 API 생존 응답, `GET /api/ready`는 개발 DB의 실제 `SELECT 1`에 성공할 때 준비 응답을 돌려줍니다. 테스트 DB도 setup에서 직접 `SELECT 1`로 확인합니다. macOS Colima에서 새 프로젝트 의존성 설치, 두 DB, API, Vite 프록시, 분리된 테스트, 품질 검사, 빌드, 정리, 중지를 검증했습니다.
+`GET /api/health`는 API 생존 상태를, `GET /api/ready`는 개발 DB의 `SELECT 1` 성공을 확인합니다. `setup`은 테스트 DB도 `SELECT 1`로 확인합니다.
 
-이 Mac에는 언어 도구, Docker, PostgreSQL 이미지, 컨테이너·볼륨, 다운로드 캐시가 이미 있었으므로 새 OS 전체 설치 검증은 아닙니다. Windows 실행 검증은 아직 수행하지 않았습니다.
+macOS Colima에서 프로젝트 의존성 설치, 두 DB, API, Vite 프록시, 분리된 테스트, 품질 검사, 빌드, 정리, 중지를 검증했습니다. 이 Mac에는 OS 도구, Docker 이미지·볼륨과 다운로드 캐시가 이미 있었습니다. 새 OS 전체 설치나 Windows 실제 실행은 검증하지 않았습니다.
+
+Colima의 이미지 가져오기에서 `docker-credential-osxkeychain` 부재 오류가 나오면 [온보딩 문제 해결](docs/onboarding.md#문제-해결)을 확인하세요.
