@@ -12,7 +12,7 @@ Windows 팀원은 Docker Desktop daemon을 시작한 뒤 저장소 루트에서 
 
 1. macOS에서는 Colima 또는 Docker Desktop의 Docker 엔진과 Compose를 실행하세요. Windows에서는 Docker Desktop의 daemon을 실행하세요.
 2. Node.js **24.21.0**(npm **11.19.0** 포함), Python **3.13.15**, uv **0.11.19**를 설치하세요. PostgreSQL **17.11** 이미지는 Compose가 가져옵니다.
-3. Python이 기본 경로에 없으면 macOS에서 `B71_PYTHON=/absolute/path/to/python3.13`, Windows에서 `$env:B71_PYTHON='C:\\path\\to\\python.exe'`를 설정하세요.
+3. Python이 기본 경로에 없으면 macOS에서 `B71_PYTHON=/absolute/path/to/python3.13`, Windows에서 `$env:B71_PYTHON='C:\path\to\python.exe'`를 설정하세요.
 4. 필요하면 `B71_NODE`, `B71_NPM`, `B71_UV`, `B71_DOCKER`에도 실행 파일 경로를 지정하세요. Node 경로를 바꾸면 해당 디렉터리를 npm의 `PATH` 앞에 두세요.
 
 Python 3.13.15는 현재 uv 관리형 다운로드 목록에 없으므로 공식 배포본이나 공식 소스 빌드가 필요합니다. 프로젝트 `setup`은 OS 도구를 설치하지 않습니다.
