@@ -1,0 +1,10 @@
+platform|tool|version|sha256|url
+darwin-arm64|node|24.21.0|bed7eea5325e1108f32ce5228ddd6a5f0f08a499ee42aa7442aea583702f6057|https://nodejs.org/dist/v24.21.0/node-v24.21.0-darwin-arm64.tar.gz
+darwin-x64|node|24.21.0|1462cb3b3046b815cf8ea436d3da450ec1a9f11dac7e5a46b0ada5305d7e8097|https://nodejs.org/dist/v24.21.0/node-v24.21.0-darwin-x64.tar.gz
+win-x64|node|24.21.0|158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541|https://nodejs.org/dist/v24.21.0/node-v24.21.0-win-x64.zip
+darwin-arm64|python|3.13.15|003d459a75ff6949a6590812b1e02a65e849b5b2a9f47c421010138ec643a11c|https://github.com/astral-sh/python-build-standalone/releases/download/20260929/cpython-3.13.15%2B20260929-aarch64-apple-darwin-install_only.tar.gz
+darwin-x64|python|3.13.15|54e9da9571fd13655096dbfbd2f18a04ff90fe0051c135cb6547d6e76c3db507|https://github.com/astral-sh/python-build-standalone/releases/download/20260929/cpython-3.13.15%2B20260929-x86_64-apple-darwin-install_only.tar.gz
+win-x64|python|3.13.15|26877c51b0aa91066f9d76291c324c6037b2ad8c40a1f85f51801b6c9ff0789c|https://github.com/astral-sh/python-build-standalone/releases/download/20260929/cpython-3.13.15%2B20260929-x86_64-pc-windows-msvc-install_only.tar.gz
+darwin-arm64|uv|0.11.19|d8f59c38e8c4168ee468d423cd63184be12fa6995a4283d41ee1a14d003c9453|https://github.com/astral-sh/uv/releases/download/0.11.19/uv-aarch64-apple-darwin.tar.gz
+darwin-x64|uv|0.11.19|1585f415cade9f061e7f00fe5b00030a79ccfac60c650242ce639ba946138d40|https://github.com/astral-sh/uv/releases/download/0.11.19/uv-x86_64-apple-darwin.tar.gz
+win-x64|uv|0.11.19|1665fc8e37b5d70a134820d6d7891747471a2ac8bc940ee7af0b69fd03b28d61|https://github.com/astral-sh/uv/releases/download/0.11.19/uv-x86_64-pc-windows-msvc.zip

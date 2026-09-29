@@ -181,6 +181,15 @@ def checks():
     compose("config", capture=True)
 
 
+def quality():
+    preflight(frontend=True, backend=True)
+    for task in ("format:check", "lint", "typecheck"):
+        run(tool("npm", "run", task), cwd=FRONTEND, timeout=120, env=command_env())
+    for args in (("ruff", "format", "--check", "app", "tests", "scripts"),
+                 ("ruff", "check", "app", "tests", "scripts"), ("mypy", "app")):
+        run(tool("uv", "run", "--no-sync", *args), cwd=BACKEND, timeout=120)
+
+
 def build():
     preflight(frontend=True)
     run(tool("npm", "run", "build"), cwd=FRONTEND, timeout=180, env=command_env())
@@ -628,11 +637,11 @@ def main():
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, interrupted)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("setup", "dev", "check", "build", "stop", "clean",
+    parser.add_argument("command", choices=("setup", "dev", "check", "quality", "build", "stop", "clean",
                                             "test", "test-unit", "test-db", "test-e2e"))
     args = parser.parse_args()
     try:
-        {"setup": setup, "dev": dev, "check": checks, "build": build,
+        {"setup": setup, "dev": dev, "check": checks, "quality": quality, "build": build,
          "stop": stop, "clean": clean, "test": test_all, "test-unit": test_unit,
          "test-db": test_db, "test-e2e": test_e2e}[args.command]()
     except Failure as exc:

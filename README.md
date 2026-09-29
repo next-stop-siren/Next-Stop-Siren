@@ -4,18 +4,17 @@ React·TypeScript·Vite 화면, FastAPI 서버, PostgreSQL 개발·테스트 DB�
 
 처음 참여한다면 [공통 환경](docs/environment.md)을 읽고 [실행 체크리스트](docs/onboarding.md)를 따르세요. Git 작업은 [협업 흐름](docs/workflow.md), 검사 범위는 [품질 지침](docs/quality.md)을 확인하세요.
 
-OS 도구와 Docker는 먼저 설치해야 합니다. 이 저장소에서 검증한 실행 환경은 macOS이며 Windows PowerShell 절차는 **NOT RUN**입니다.
+Git과 실행 중인 Docker 엔진·Compose를 먼저 준비하세요. `setup`이 Node.js 24.21.0/npm 11.19.0, Python 3.13.15, uv 0.11.19를 검증된 배포물에서 저장소의 `.cache/host-tools/`에 설치합니다. Windows PowerShell 실제 실행은 **NOT RUN**입니다.
 
 Windows 팀원은 Docker Desktop daemon을 시작한 뒤 저장소 루트에서 `.\windows-check.ps1`을 실행하세요. 이 명령은 도구 버전부터 빌드까지 순서대로 확인하며 첫 실패에서 종료합니다. 결과 요약은 Git에서 제외되는 `.cache/windows-check/report.json`에 남습니다. 자세한 전제는 [Windows 체크리스트](docs/onboarding.md)에 있습니다. 실제 Windows 실행은 **NOT RUN**입니다.
 
 ## 준비
 
-1. macOS에서는 Colima 또는 Docker Desktop의 Docker 엔진과 Compose를 실행하세요. Windows에서는 Docker Desktop의 daemon을 실행하세요.
-2. Node.js **24.21.0**(npm **11.19.0** 포함), Python **3.13.15**, uv **0.11.19**를 설치하세요. PostgreSQL **17.11** 이미지는 Compose가 가져옵니다.
-3. Python이 기본 경로에 없으면 macOS에서 `B71_PYTHON=/absolute/path/to/python3.13`, Windows에서 `$env:B71_PYTHON='C:\path\to\python.exe'`를 설정하세요.
-4. 필요하면 `B71_NODE`, `B71_NPM`, `B71_UV`, `B71_DOCKER`에도 실행 파일 경로를 지정하세요. Node 경로를 바꾸면 해당 디렉터리를 npm의 `PATH` 앞에 두세요.
+1. Git을 설치하고 저장소를 받으세요. macOS에서는 Colima 또는 Docker Desktop, Windows에서는 Docker Desktop의 Docker daemon과 Compose를 실행하세요.
+2. macOS에서 `./local.sh setup`, Windows PowerShell에서 `.\local.ps1 setup`을 실행하세요. 네트워크가 필요합니다. PostgreSQL **17.11** 이미지는 Compose가 가져옵니다.
+3. 이미 준비한 도구를 쓰려면 `B71_NODE`, `B71_NPM`, `B71_PYTHON`, `B71_UV`로 경로를 지정하세요. `B71_DOCKER`는 별도로 준비한 Docker CLI의 경로입니다.
 
-Python 3.13.15는 현재 uv 관리형 다운로드 목록에 없으므로 공식 배포본이나 공식 소스 빌드가 필요합니다. 프로젝트 `setup`은 OS 도구를 설치하지 않습니다.
+도구 다운로드가 실패하면 검증되지 않은 후보는 설치되지 않습니다. 다시 `setup`을 실행하세요. 설치된 도구는 `clean` 명령 후에도 남습니다. 제거하려면 사용 중인 프로세스를 종료한 뒤 `.cache/host-tools/`만 지우세요. `.env`와 DB 볼륨은 보존됩니다.
 
 ## 명령
 
@@ -23,7 +22,7 @@ Python 3.13.15는 현재 uv 관리형 다운로드 목록에 없으므로 공식
 
 ### `setup`
 
-- 정확한 도구 버전과 Docker daemon을 먼저 확인한 뒤 `.env`가 없을 때만 예시를 복사하고, `npm ci`와 잠금된 `uv sync`, 프로젝트 캐시의 Playwright Chromium 설치를 실행합니다.
+- 프로젝트 전용 도구를 설치·재사용하고 정확한 버전과 Docker daemon을 확인한 뒤 `.env`가 없을 때만 예시를 복사합니다. 이어 `npm ci`와 잠금된 `uv sync`, 프로젝트 캐시의 Playwright Chromium 설치를 실행합니다.
 - 개발·테스트 DB를 시작하고 두 DB에서 `SELECT 1`, 실제 API `/api/ready`, 기본 검사를 확인합니다.
 - 재실행해도 기존 `.env`와 DB 볼륨을 보존합니다.
 
@@ -36,6 +35,10 @@ Python 3.13.15는 현재 uv 관리형 다운로드 목록에 없으므로 공식
 ### `check`
 
 - 프런트엔드 타입 검사, 백엔드 DB 없는 API·보호 검사, Compose 정적 구성을 검사합니다.
+
+### `quality`
+
+- 저장소에 설치된 도구로 프런트엔드 형식·린트·타입 검사와 백엔드 Ruff·mypy 검사를 실행합니다.
 
 ### `build`
 
@@ -68,9 +71,9 @@ Python 3.13.15는 현재 uv 관리형 다운로드 목록에 없으므로 공식
 
 - `test-unit`, `test-db`, `test-e2e`를 순서대로 실행합니다.
 
-CI와 동일한 정적 검사는 `frontend`에서 `npm run format:check`, `npm run lint`, `npm run typecheck`, `backend`에서 `uv run --no-sync ruff format --check app tests scripts`, `uv run --no-sync ruff check app tests scripts`, `uv run --no-sync mypy app`입니다. 잠금 파일 설치 후 실행하세요. CI 설정과 수동 리뷰 준비 단계는 [품질 지침](docs/quality.md)에 있습니다.
+CI와 동일한 정적 검사는 `./local.sh quality` 또는 `.\local.ps1 quality`로 실행합니다. 잠금 파일 설치 후 실행하세요. CI 설정과 수동 리뷰 준비 단계는 [품질 지침](docs/quality.md)에 있습니다.
 
-`setup`과 `dev`는 Docker daemon을 필요로 합니다. 버전 또는 daemon 사전 검사가 실패하면 설치·파일 복사·컨테이너 시작 전에 종료합니다. 종료 코드 2는 도구/버전 또는 준비 조건, 3은 실행 명령 실패, 4는 준비 시간 초과 또는 개발 프로세스 종료를 뜻합니다.
+`setup`은 프로젝트 전용 언어 도구를 먼저 준비한 뒤 버전과 Docker daemon을 검사합니다. 사전 검사가 실패하면 프로젝트 의존성 설치, `.env` 복사와 컨테이너 시작 전에 종료합니다. `dev`도 Docker daemon이 필요합니다. 종료 코드 2는 도구/버전 또는 준비 조건, 3은 실행 명령 실패, 4는 준비 시간 초과 또는 개발 프로세스 종료를 뜻합니다.
 
 `.env.example`의 자격 증명은 로컬 예시입니다. 기존 `.env`는 자동 명령이 바꾸거나 출력하지 않습니다.
 
@@ -82,6 +85,6 @@ macOS에서는 `export TEST_DATABASE_URL='...'` 후 `./local.sh test`, PowerShel
 
 `GET /api/health`는 API 생존 상태를, `GET /api/ready`는 개발 DB의 `SELECT 1` 성공을 확인합니다. `setup`은 테스트 DB도 `SELECT 1`로 확인합니다.
 
-macOS Colima에서 프로젝트 의존성 설치, 두 DB, API, Vite 프록시, 분리된 테스트, 품질 검사, 빌드, 정리, 중지를 검증했습니다. 이 Mac에는 OS 도구, Docker 이미지·볼륨과 다운로드 캐시가 이미 있었습니다. 새 OS 전체 설치나 Windows 실제 실행은 검증하지 않았습니다.
+macOS Colima에서 프로젝트 전용 언어 도구 설치·재사용과 잠금 설치, 두 DB, API 및 기본 검사를 확인했습니다. Git과 Docker는 이미 준비된 호스트였습니다. 새 OS 전체 설치나 Windows 실제 실행은 검증하지 않았습니다.
 
 Colima의 이미지 가져오기에서 `docker-credential-osxkeychain` 부재 오류가 나오면 [온보딩 문제 해결](docs/onboarding.md#문제-해결)을 확인하세요.
