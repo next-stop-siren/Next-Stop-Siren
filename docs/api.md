@@ -4,6 +4,8 @@
 
 ## 공통 규칙
 
+이 문서의 **요청·응답 형식**은 앞으로 구현할 API의 기준이다. 가짜 테스트 데이터(fixture)는 실제 계정·토큰이 아닌 재현용 예시다. 서버가 확인한 사용자 정보(principal)는 로그인 자격 검증에서 얻은 ID다.
+
 - 기본 경로는 기존 앱과 같은 `/api`다. JSON 요청에는 `Content-Type: application/json`, 응답에는 `application/json`을 쓴다.
 - DB의 `bigint` ID와 이를 참조하는 필드는 JSON **십진 문자열**이다. 화면에서 `Number`로 바꾸지 않는다. 경로와 페이지 기준 ID도 같은 십진 문자열이다.
 - 시각은 UTC ISO 8601 문자열(`2026-01-02T03:04:05Z`)이다. 예시에서 `null`은 값이 아직 없거나 해당 상태에 적용되지 않음을 뜻한다.
@@ -45,7 +47,7 @@
 | 504 | `provider_timeout` | 모의 제공자 시간 초과가 중단 상태로 저장됨 |
 | 503 | `temporarily_unavailable` | 저장 전 서비스·DB 실패 |
 
-## 인증 API — 후속 구현 기준
+## 인증 요청·응답 — 후속 구현 기준
 
 정책과 브라우저 절차는 [인증 구현 기준](authentication.md)을 따른다. 현재 이 경로들은 동작하지 않는다. 예시 계정·토큰·시각은 fixture 전용이다. 모든 인증 오류도 위의 `error`/`fields`/`trace_id` 형식을 쓴다. 비밀번호 오류는 없는 계정과 틀린 비밀번호 모두 같은 `401 unauthenticated` 문구다. 로컬 가입·로그인 및 refresh·logout `POST`는 정확한 허용 `Origin`이 필요하다. Google의 top-level 시작·callback `GET`은 state·nonce·PKCE로 검증한다.
 

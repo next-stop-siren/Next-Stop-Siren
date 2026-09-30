@@ -2,7 +2,7 @@
 
 React·TypeScript·Vite 화면, FastAPI 서버, PostgreSQL 개발·테스트 DB의 초기 구성입니다. 현재 화면은 API와 DB 연결 상태만 확인하며 로그인·채팅·AI 호출은 아직 제공하지 않습니다. [문서 목록](docs/README.md)에서 환경, 역할, 협업과 품질 안내를 찾을 수 있습니다.
 
-처음 참여한다면 [공통 환경](docs/environment.md)을 읽고 [실행 체크리스트](docs/onboarding.md)를 따르세요. Git 작업은 [협업 흐름](docs/workflow.md), 검사 범위는 [품질 지침](docs/quality.md)을 확인하세요.
+처음 맡을 이슈는 [팀 작업 인계](docs/team-handoff.md)를 보세요. 처음 참여한다면 [공통 환경](docs/environment.md)을 읽고 [실행 체크리스트](docs/onboarding.md)를 따르세요. Git 작업은 [협업 흐름](docs/workflow.md), 검사 범위는 [품질 지침](docs/quality.md)을 확인하세요.
 
 Git과 실행 중인 Docker 엔진·Compose를 먼저 준비하세요. `setup`이 Node.js 24.21.0/npm 11.19.0, Python 3.13.15, uv 0.11.19를 검증된 배포물에서 저장소의 `.cache/host-tools/`에 설치합니다. Windows PowerShell 실제 실행은 **NOT RUN**입니다.
 

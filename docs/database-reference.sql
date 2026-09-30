@@ -1,6 +1,6 @@
 -- PostgreSQL 17 DB 설계 참고안. 실행/적용되지 않았음.
 -- 실제 마이그레이션은 S02/S08 담당자가 분리 작성하고 깨끗한 테스트 DB에서 검증한다.
--- digest 산출법과 토큰 수명·회전·재사용 정책은 D1에서 별도로 정한다.
+-- digest 산출법과 토큰 수명·회전·재사용 정책은 승인된 docs/authentication.md를 따른다.
 -- 초기 계정/대화 삭제 기능 없음. 모든 FK는 ON DELETE RESTRICT.
 
 CREATE TABLE users (
