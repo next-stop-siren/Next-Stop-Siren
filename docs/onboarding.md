@@ -1,6 +1,6 @@
 # 팀원 로컬 실행 체크리스트
 
-저장소 루트에서 실행한다. OS 도구와 Docker는 팀원이 먼저 준비한다. `setup`은 도구를 설치하지 않으며 기존 `.env`와 DB 볼륨을 보존한다.
+저장소 루트에서 실행한다. Git과 Docker 엔진·Compose는 팀원이 먼저 준비한다. `setup`은 Node.js/npm, Python, uv를 프로젝트 안에 설치하고 기존 `.env`와 DB 볼륨을 보존한다.
 
 ## macOS: 검증된 경로
 
@@ -14,14 +14,10 @@
 | Docker | 실행 중인 Colima 또는 Docker Desktop과 Compose |
 | PostgreSQL | Compose가 17.11 이미지를 가져옴 |
 
-Python의 기본 명령이 `python3.13`이 아니면 `export B71_PYTHON=/절대/경로/python3.13`을 설정한다. 다른 도구 경로는 `B71_NODE`, `B71_NPM`, `B71_UV`, `B71_DOCKER`로 지정할 수 있다. Node 경로를 지정했다면 그 디렉터리를 `PATH` 앞에 둔다.
+언어 도구는 `./local.sh setup`이 검증된 배포물에서 `.cache/host-tools/`에 설치한다. 이미 설치한 도구를 쓰려면 `B71_NODE`, `B71_NPM`, `B71_PYTHON`, `B71_UV`를 지정할 수 있다. `B71_DOCKER`는 수동 설치한 Docker CLI 경로다. 이후 `local.sh` 명령은 프로젝트 도구를 자동으로 재사용한다.
 
 ```sh
-if [ -n "${B71_NODE:-}" ]; then export PATH="$(dirname "$B71_NODE"):$PATH"; fi
-"${B71_NODE:-node}" --version      # v24.21.0
-"${B71_NPM:-npm}" --version        # 11.19.0
-"${B71_PYTHON:-python3.13}" --version  # Python 3.13.15
-"${B71_UV:-uv}" --version         # uv 0.11.19
+git --version
 "${B71_DOCKER:-docker}" compose version  # Compose 사용 가능
 "${B71_DOCKER:-docker}" info --format '{{.ServerVersion}}'  # daemon 응답
 ```
@@ -56,12 +52,11 @@ curl -f http://127.0.0.1:8000/api/ready    # {"status":"ready"}
 테스트 DB URL은 기존 `.env`의 `TEST_DB_*`에서 터미널 변수로만 만든다. 아래 명령은 URL을 화면에 출력하지 않는다. `.env`를 쉘에서 실행하거나 Git에 넣지 않는다.
 
 ```sh
-export TEST_DATABASE_URL="$("${B71_PYTHON:-python3.13}" -c 'import sys; from pathlib import Path; from urllib.parse import quote; sys.path.insert(0, "backend/tests"); from db_guard import read_settings; s=read_settings(Path(".env")); print("postgresql://"+quote(s["TEST_DB_USER"],safe="")+":"+quote(s["TEST_DB_PASSWORD"],safe="")+"@127.0.0.1:55433/"+quote(s["TEST_DB_NAME"],safe=""))')"
+export TEST_DATABASE_URL="$(backend/.venv/bin/python -c 'import sys; from pathlib import Path; from urllib.parse import quote; sys.path.insert(0, "backend/tests"); from db_guard import read_settings; s=read_settings(Path(".env")); print("postgresql://"+quote(s["TEST_DB_USER"],safe="")+":"+quote(s["TEST_DB_PASSWORD"],safe="")+"@127.0.0.1:55433/"+quote(s["TEST_DB_NAME"],safe=""))')"
 ./local.sh test-unit
 ./local.sh test-db
 ./local.sh test-e2e
-(cd frontend && "${B71_NPM:-npm}" run format:check && "${B71_NPM:-npm}" run lint && "${B71_NPM:-npm}" run typecheck)
-(cd backend && "${B71_UV:-uv}" run --no-sync ruff format --check app tests scripts && "${B71_UV:-uv}" run --no-sync ruff check app tests scripts && "${B71_UV:-uv}" run --no-sync mypy app)
+./local.sh quality
 ./local.sh build
 ```
 
@@ -78,13 +73,13 @@ export TEST_DATABASE_URL="$("${B71_PYTHON:-python3.13}" -c 'import sys; from pat
 
 ### macOS 검증 범위
 
-이 Mac에서는 프로젝트 `node_modules`와 `.venv`를 따로 보관한 뒤 새로 설치해 검증했다. OS 도구, Docker 이미지·볼륨, 브라우저 다운로드 캐시는 이미 있었다. 새 OS 전체 설치를 검증한 기록은 아니다.
+이 Mac에서 프로젝트 전용 언어 도구 설치와 재실행, 잠금 설치·DB 준비·기본 검사를 확인했다. Docker와 Git은 이미 준비된 호스트였으므로 새 OS 전체 설치를 검증한 기록은 아니다.
 
 ## Windows PowerShell: **NOT RUN**
 
 ### 준비
 
-Git, Node.js 24.21.0/npm 11.19.0, Python 3.13.15, uv 0.11.19, 실행 중인 Docker Desktop(Compose 포함)을 설치한다. 이 명령은 도구 자체를 설치하지 않는다. Python 경로는 필요하면 `$env:B71_PYTHON='C:\절대\경로\python.exe'`로 지정한다. `B71_NODE`, `B71_NPM`, `B71_UV`, `B71_DOCKER`도 지정할 수 있다. npm은 `npm.cmd`를 사용할 수 있으며 Node 경로 재정의 시 그 디렉터리를 npm의 `PATH` 앞에 둔다.
+Git과 실행 중인 Docker Desktop(Compose 포함)을 준비한다. `.\windows-check.ps1`과 `.\local.ps1 setup`은 언어 도구를 프로젝트 안에 설치·재사용하도록 구성했다. 필요하면 `B71_NODE`, `B71_NPM`, `B71_PYTHON`, `B71_UV`로 기존 도구를 지정한다. `B71_DOCKER`는 수동 준비한 Docker CLI 경로다. Windows 실제 실행은 아직 확인되지 않았다.
 
 실행 정책이 스크립트를 막으면 조직 정책에 맞는 허용 방법을 관리자에게 확인한다.
 
@@ -101,6 +96,8 @@ Git, Node.js 24.21.0/npm 11.19.0, Python 3.13.15, uv 0.11.19, 실행 중인 Dock
 테스트 DB URL은 `.env`의 `TEST_DB_*`를 프로세스 안에서 URL 인코딩해 만든 뒤 DB guard로 검사한다. `.env`를 PowerShell에서 실행하지 않는다. 기존 `.env`·볼륨·데이터와 원래 실행 중인 서비스는 유지한다. 포트가 사용 중이면 E2E가 중단한다.
 
 공유 결과는 `.cache/windows-check/report.json`에 있다. OS·도구 버전·Git 커밋·단계별 `PASS`/`FAIL`/`NOT_RUN`과 종료 코드만 담는다. 환경값, DB URL, 자격 증명, 원시 로그, 개인 경로는 담지 않는다. 상세 실패 출력을 공유할 때는 비밀값을 직접 지운다.
+
+언어 도구 준비가 Python 실행 전에 실패해도 새 결과 파일을 쓰고 `preflight: FAIL`, 나머지 단계 `NOT_RUN`, `failure_phase: host_bootstrap`, 종료 코드 2를 기록한다. 이전 실행 결과를 현재 결과로 읽지 않는다.
 
 ### 실패 시 확인
 

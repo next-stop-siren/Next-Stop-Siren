@@ -14,6 +14,21 @@ import windows_check
 
 
 class WindowsCheckTest(unittest.TestCase):
+    def test_bootstrap_failure_template_is_bounded_and_covers_all_steps(self):
+        template = Path(__file__).with_name("windows-bootstrap-failure.json")
+        result = json.loads(template.read_text(encoding="utf-8"))
+        self.assertEqual(set(result), {"os", "versions", "git_commit", "steps",
+                                       "failure_phase", "exit_code"})
+        self.assertEqual(result["os"], "Windows")
+        self.assertEqual(result["versions"], {})
+        self.assertEqual(result["git_commit"], "unavailable")
+        self.assertEqual(result["failure_phase"], "host_bootstrap")
+        self.assertEqual(result["exit_code"], 2)
+        self.assertEqual(set(result["steps"]), set(windows_check.STEPS))
+        self.assertEqual(result["steps"]["preflight"], "FAIL")
+        self.assertTrue(all(value == "NOT_RUN" for name, value in result["steps"].items()
+                            if name != "preflight"))
+
     def run_with_failure(self, failed_step, failure):
         calls = []
         actions = {name: lambda name=name: calls.append(name) for name in windows_check.STEPS}

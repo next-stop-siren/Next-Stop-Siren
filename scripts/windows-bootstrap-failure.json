@@ -1,0 +1,22 @@
+{
+  "os": "Windows",
+  "versions": {},
+  "git_commit": "unavailable",
+  "steps": {
+    "preflight": "FAIL",
+    "inventory": "NOT_RUN",
+    "locked_setup": "NOT_RUN",
+    "format": "NOT_RUN",
+    "lint": "NOT_RUN",
+    "typecheck": "NOT_RUN",
+    "ruff_format": "NOT_RUN",
+    "ruff_lint": "NOT_RUN",
+    "mypy": "NOT_RUN",
+    "unit": "NOT_RUN",
+    "database": "NOT_RUN",
+    "browser_e2e": "NOT_RUN",
+    "build": "NOT_RUN"
+  },
+  "failure_phase": "host_bootstrap",
+  "exit_code": 2
+}
