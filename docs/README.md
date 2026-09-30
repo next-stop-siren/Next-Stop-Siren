@@ -9,6 +9,7 @@
 - [서비스 범위와 첫 작업](service-scope.md)
 - [데이터베이스 설계](database.md)
 - [공통 API 형식과 모의 응답](api.md)
+- [인증 구현 기준](authentication.md)
 - [공통 환경과 초기 준비 절차](environment.md)
 - [macOS·Windows 실행 체크리스트](onboarding.md)
 - [프론트엔드](frontend.md)

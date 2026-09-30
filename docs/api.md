@@ -32,18 +32,37 @@
 
 | 상태 | `error.code` | 뜻 |
 | --- | --- | --- |
-| 401 | `unauthenticated` | 확인된 사용자가 없음 |
+| 401 | `unauthenticated` | 확인된 사용자가 없음; 로그인 실패·만료·폐기 refresh에도 사용 |
+| 403 | `csrf_failed` | Origin 또는 CSRF 검증 실패; 재사용의 증거는 아님 |
 | 404 | `not_found` | 자원이 없거나 다른 사용자 소유 |
 | 409 | `request_key_conflict` | 같은 대화·키에 다른 질문 본문 |
 | 409 | `conversation_busy` | 다른 질문의 답변이 진행 중 |
+| 409 | `refresh_race` | 회전된 refresh가 5초 경합 창에 재제출됨 |
+| 409 | `local_email_exists` | 로컬 가입 이메일이 이미 존재함 |
 | 422 | `validation_error` | 경로·본문·페이지 입력 오류 |
+| 429 | `rate_limited` | 로컬 로그인 실패 제한 초과; `Retry-After` 포함 |
 | 502 | `provider_failed` | 모의 제공자 실패가 저장됨; 이력 재조회 |
 | 504 | `provider_timeout` | 모의 제공자 시간 초과가 중단 상태로 저장됨 |
 | 503 | `temporarily_unavailable` | 저장 전 서비스·DB 실패 |
 
-## 인증 팀과 공유할 가짜 형식
+## 인증 API — 후속 구현 기준
 
-S01 fixture는 이메일·비밀번호 가입/로그인의 **입력과 공개 사용자 결과**를 아래처럼 맞춘다. 실제 HTTP 인증 성공 응답, 세션 전달, 토큰·쿠키·만료·logout·Google 경로는 보안 결정 후 별도로 확정한다. 이 형식만으로 로그인 기능이 제공되는 것은 아니다.
+정책과 브라우저 절차는 [인증 구현 기준](authentication.md)을 따른다. 현재 이 경로들은 동작하지 않는다. 예시 계정·토큰·시각은 fixture 전용이다. 모든 인증 오류도 위의 `error`/`fields`/`trace_id` 형식을 쓴다. 비밀번호 오류는 없는 계정과 틀린 비밀번호 모두 같은 `401 unauthenticated` 문구다. 로컬 가입·로그인 및 refresh·logout `POST`는 정확한 허용 `Origin`이 필요하다. Google의 top-level 시작·callback `GET`은 state·nonce·PKCE로 검증한다.
+
+| 메서드·경로 | 입력·헤더 | 성공 | 주요 실패 |
+| --- | --- | --- | --- |
+| `POST /api/auth/register` | JSON `email`, `password`; `Origin` | `201`, 공개 `user`, 메모리용 `access_token`, `expires_in: 900`; refresh·CSRF `Set-Cookie`, 본문 `csrf_token` | 422 입력, 409 로컬 이메일 중복, 403 Origin |
+| `POST /api/auth/login` | 같은 JSON·`Origin` | `200`, 같은 인증 본문·쿠키 | 401 동일 로그인 실패, 429 실패 제한, 403 Origin |
+| `GET /api/me` | `Authorization: Bearer <access>` | `200`, 공개 `user` | 401 access 실패 |
+| `GET /api/auth/csrf` | refresh 쿠키; credentials 포함 | `200`, `csrf_token` | 401 refresh 실패 |
+| `POST /api/auth/refresh` | refresh·CSRF 쿠키, `Origin`, `X-CSRF-Token`; 본문 없음 | `200`, 새 access·CSRF 본문과 회전된 쿠키 | 401 만료·재사용·계보 한도, 403 Origin/CSRF, 409 경합, 503 손상 계보 |
+| `POST /api/auth/logout` | refresh·CSRF 쿠키, `Origin`, `X-CSRF-Token`; 본문 없음 | `204`, refresh·CSRF 쿠키 만료 | 401 refresh 실패, 403 Origin/CSRF, 503 손상 계보 |
+| `GET /api/auth/google/start` | top-level 이동; 선택 `return_to`는 허용 목록의 상대 경로 | Google authorization endpoint로 `302`; 트랜잭션 쿠키 | 422 복귀 경로, 503 설정·제공자 실패 |
+| `GET /api/auth/google/callback` | 제공자의 `code`, `state`; 트랜잭션 쿠키 | 허용된 상대 경로로 `302`; refresh·CSRF 쿠키 | 401 검증 실패, 503 제공자·설정 실패; 실패 시 세션 없음 |
+
+로컬 이메일은 앞뒤 공백 제거, 유효한 형식과 최대 320자이며 로컬 계정에서만 `lower(email)`로 중복 판정한다. 비밀번호는 정규화 없이 Unicode 코드 포인트 12~128자와 UTF-8 1024바이트 이하를 모두 만족해야 한다. 두 값 모두 필수 문자열이다. 가입 중복의 `409` 코드는 `local_email_exists`이며 Google과 이메일이 같아도 중복이 아니다. 미인증 이메일은 소유 증명이 아니다.
+
+`POST /api/auth/register` 요청 예시 (`/login`도 같은 입력):
 
 ```json
 {
@@ -52,21 +71,27 @@ S01 fixture는 이메일·비밀번호 가입/로그인의 **입력과 공개 �
 }
 ```
 
+가입·로그인 성공 본문 예시 (가입 201, 로그인 200):
+
 ```json
 {
   "user": {
     "id": "101",
     "email": "a@example.test",
     "created_at": "2026-01-02T03:04:05Z"
-  }
+  },
+  "access_token": "fixture.access.jwt",
+  "token_type": "Bearer",
+  "expires_in": 900,
+  "csrf_token": "fixture-csrf-value"
 }
 ```
 
-S01은 검증된 사용자 ID `101`을 채팅 fixture에 전달하고, 사용자 `202`는 다른 계정으로 둔다. 이메일 일치로 로컬·Google 계정을 합치지 않는다. 실제 가입·로그인의 오류 매핑과 인증 수단은 D1 보안 결정에 속한다.
+`access_token`은 화면 메모리 전용이며 URL·쿠키·브라우저 저장소에 넣지 않는다. 로그인·가입의 refresh 쿠키는 `HttpOnly; SameSite=Lax; Path=/api/auth`, CSRF도 별도의 같은 속성 쿠키다. 둘 다 호스트 전용(`Domain` 없음)이며 운영에서는 `Secure`다. refresh는 최초 로그인부터 절대 14일로 만료된다. refresh 쿠키의 `Expires`는 그 절대 시각, 회전 `Max-Age`는 남은 초다. 로컬 HTTP `localhost` 개발 설정에 한해 `Secure=false`를 허용한다. CORS credentials는 정확한 프론트 Origin에만 허용한다.
 
 ### 현재 사용자 — `GET /api/me`
 
-인증 필요. 본문과 쿼리는 없다. 검증된 principal로 찾은 공개 사용자만 반환한다. `200 OK`:
+본문과 쿼리는 없다. 검증된 access principal의 공개 사용자만 반환한다. `200 OK`:
 
 ```json
 {
@@ -78,7 +103,33 @@ S01은 검증된 사용자 ID `101`을 채팅 fixture에 전달하고, 사용자
 }
 ```
 
-비인증 `401 Unauthorized`:
+인증 실패는 `401 unauthenticated`다. 채팅 보호 경로도 같은 Bearer access를 요구한다.
+
+### 브라우저 복구·로그아웃
+
+1. 가입·로그인 뒤 `csrf_token`과 access를 메모리에 둔다. 화면 새로고침 뒤에는 refresh 쿠키를 직접 읽지 않고 credentials를 포함해 `GET /api/auth/csrf`를 호출한다. 성공 `200`:
+
+```json
+{
+  "csrf_token": "fixture-csrf-value"
+}
+```
+
+2. 받은 값을 `X-CSRF-Token`에 싣고 정확한 `Origin`과 credentials로 `POST /api/auth/refresh`를 보낸다. 성공 `200`에는 새 refresh·CSRF 쿠키도 포함된다:
+
+```json
+{
+  "access_token": "fixture.new.access.jwt",
+  "token_type": "Bearer",
+  "expires_in": 900,
+  "csrf_token": "fixture-new-csrf-value"
+}
+```
+
+3. 낡은 refresh와 짝 CSRF가 5초 안에 다시 오면 `409 refresh_race`, `Retry-After: 1`, `Set-Cookie` 없음이다. 새 refresh 쿠키에 낡은 CSRF 헤더가 붙으면 `403 csrf_failed`이며 재사용 폐기로 취급하지 않는다. 화면은 잠시 기다려 `/csrf`를 다시 읽고 refresh를 한 번만 재시도한다. 실패하면 재로그인을 안내한다.
+4. `POST /api/auth/logout` 성공은 `204 No Content`와 두 쿠키 만료다. 화면 메모리의 access·CSRF를 지운다. 다른 로그인 계보는 유지되고 이미 발급된 access는 최대 15분 유효할 수 있다.
+
+일반 인증 오류 예시 (`401`; 403·409·429도 같은 외피와 각각 위 코드):
 
 ```json
 {
@@ -86,10 +137,16 @@ S01은 검증된 사용자 ID `101`을 채팅 fixture에 전달하고, 사용자
     "code": "unauthenticated",
     "message": "로그인이 필요합니다.",
     "fields": {},
-    "trace_id": "trace-demo-002"
+    "trace_id": "trace-demo-auth-001"
   }
 }
 ```
+
+손상된 계보는 `503 temporarily_unavailable`로 운영 경보를 남긴다. 4095개 정상 발급 상한에 도달하면 활성 계보를 폐기하고 쿠키 만료·401을 반환한다. 폐기 커밋 실패 시 성공 또는 새 토큰을 반환하지 않는다.
+
+### Google에서 돌아온 화면
+
+`/api/auth/google/start`는 state·nonce·PKCE(S256)를 서버에서 시작한다. callback은 Google의 서명과 필수 claim, 검증된 `(issuer, subject)`를 확인하고 같은 이메일의 로컬 사용자와 합치지 않는다. callback 성공은 허용 목록의 상대 경로로만 redirect한다. 그 화면이 `/api/auth/csrf` → `/api/auth/refresh`를 호출해 access를 메모리에 넣는다. access는 redirect URL이나 쿠키에 실리지 않는다. 외부 URL과 `//`로 시작하는 프로토콜 상대 URL은 `return_to`로 허용하지 않는다. Google 트랜잭션 쿠키는 시작과 callback을 모두 포함하는 `Path=/api/auth`이며 짧은 수명·호스트 전용·`HttpOnly; SameSite=Lax`, 운영 `Secure`다.
 
 ## 대화
 
@@ -267,7 +324,7 @@ S01은 검증된 사용자 ID `101`을 채팅 fixture에 전달하고, 사용자
 
 1. PM이 이 형식과 미결 경계를 공유한다. S01 인증 담당은 가짜 principal·공개 사용자 fixture를, S07 채팅 담당은 사용자 `101`·`202`의 분리된 이력 fixture를 만든다.
 2. S09 채팅 담당은 소유권 조회를 구현하고, S10에서 짧은 트랜잭션에 질문+`pending` 답변을 만든 뒤 트랜잭션 밖에서 모의 제공자를 호출한다. 완료 결과만 저장한다.
-3. S17 화면 담당은 이 형식으로 목록·전송·새로고침 재조회를 연결한다. 실제 인증 통합은 인증 보안 계약이 확정된 후 검증한다.
+3. S17 화면 담당은 이 형식으로 목록·전송·새로고침 재조회를 연결한다. 실제 인증 통합은 위 인증 계약에 따라 별도로 검증한다.
 
 - [ ] 두 사용자에게 대화·메시지가 섞이지 않고, 비인증 401과 타인 대화 404가 구분된다.
 - [ ] `bigint` ID를 문자열로 유지하고 목록 페이지에 누락·중복이 없다.
@@ -275,4 +332,4 @@ S01은 검증된 사용자 ID `101`을 채팅 fixture에 전달하고, 사용자
 - [ ] 성공 답변은 저장 후 재조회되며 실패·중단 답변은 완료나 다음 문맥으로 취급하지 않는다.
 - [ ] 모의 제공자 호출 중 DB 트랜잭션을 열어 두지 않는다. 오래된 `pending`의 유한 회복값은 구현 전에 D4에서 정한다.
 
-이 문서는 실제 라우트, 마이그레이션, 인증 보안 동작의 구현 완료를 뜻하지 않는다. Google 로그인 전송 방식, 스트리밍, 수동 재시도, 실제 제공자와 비용·회원 한도는 후속 결정이다.
+이 문서는 실제 라우트, 마이그레이션, 인증 보안 동작의 구현 완료를 뜻하지 않는다. 스트리밍, 수동 재시도, 실제 제공자와 비용·회원 한도는 후속 결정이다.
