@@ -6,24 +6,20 @@
 
 초기 앱과 macOS·Windows 수동 실행 명령은 루트 [README](../README.md)에 있다. macOS Colima의 DB 런타임은 검증했으며 Windows 실행은 아직 검증하지 않았다.
 
-
 ### Node.js·npm
 
 - **채택 기준:** Node.js 24.21.0 LTS와 함께 제공되는 npm 11.19.0
-- **구현 단계에서 고정할 것:** `frontend/package-lock.json`
-
+- **현재 잠금 파일:** `frontend/package-lock.json`
 
 ### Python·uv
 
 - **채택 기준:** Python 3.13.15 안정판과 uv 0.11.19
-- **구현 단계에서 고정할 것:** `backend/uv.lock`
-
+- **현재 잠금 파일:** `backend/uv.lock`
 
 ### PostgreSQL
 
 - **채택 기준:** 지원 중인 17.11 안정판
-- **구현 단계에서 고정할 것:** `compose.yaml`의 개발·테스트 DB 구성
-
+- **현재 구성:** `compose.yaml`의 개발·테스트 DB 서비스
 
 버전 확인은 macOS 터미널과 Windows PowerShell에서 각각 Node.js, npm, Python, uv, Docker/Compose, PostgreSQL 서버의 실제 버전을 출력해 기록한다. 설치된 버전이 저장소의 고정 버전과 다르면 설치를 멈추고 안내에 맞춘다. npm은 잠금 파일을 따르는 깨끗한 설치, uv는 잠금 파일의 변경을 막는 동기화를 기본으로 한다.
 

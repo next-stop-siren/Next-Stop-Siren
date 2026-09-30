@@ -14,7 +14,7 @@ erDiagram
 
 각 테이블의 기본키 `id`는 `bigint GENERATED ALWAYS AS IDENTITY`이며 FK 컬럼도 `bigint`다. `users.id`가 인증과 채팅의 공통 사용자 ID다. Google과 이메일·비밀번호 계정은 이메일이 같아도 별도 `users` 행이며 자동 연결하지 않는다. Google 로그인 키는 **검증된** `(issuer, subject)`이고 이메일은 식별 키가 아니다.
 
-DB의 `bigint`는 JavaScript 안전 정수 범위를 넘을 수 있다. API에서 ID를 어떤 형식으로 전송할지는 다음 API 계약 단계에서 정한다. 화면이 숫자로 변환해 정밀도를 잃지 않도록 그 전에 확인한다.
+DB의 `bigint`는 JavaScript 안전 정수 범위를 넘을 수 있다. [공통 API 형식](api.md)은 ID를 JSON 십진 문자열로 전송한다. 화면에서 숫자로 변환하지 않는다.
 
 ## 테이블과 컬럼
 
