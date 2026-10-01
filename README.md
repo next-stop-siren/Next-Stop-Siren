@@ -1,90 +1,76 @@
-# B7-1 개발 환경과 실행
+# Next-Stop-Siren
 
-React·TypeScript·Vite 화면, FastAPI 서버, PostgreSQL 개발·테스트 DB의 초기 구성입니다. 현재 화면은 API와 DB 연결 상태만 확인하며 로그인·채팅·AI 호출은 아직 제공하지 않습니다. [문서 목록](docs/README.md)에서 환경, 역할, 협업과 품질 안내를 찾을 수 있습니다.
+Next-Stop-Siren은 사용자 질문에 답하는 챗봇을 만들기 위한 프로젝트입니다. 현재 구현은 화면에서 API와 PostgreSQL 연결 상태를 확인하는 준비 단계입니다. 로그인, 채팅, AI 호출은 아직 구현되지 않았습니다.
 
-처음 맡을 이슈는 [팀 작업 인계](docs/team-handoff.md)를 보세요. 처음 참여한다면 [공통 환경](docs/environment.md)을 읽고 [실행 체크리스트](docs/onboarding.md)를 따르세요. Git 작업은 [협업 흐름](docs/workflow.md), 검사 범위는 [품질 지침](docs/quality.md)을 확인하세요.
+제품 범위와 향후 계획은 [서비스 범위](docs/service-scope.md), [API 기준](docs/api.md), [DB 설계](docs/database.md), [인증 기준](docs/authentication.md)를 참고하세요. 팀 작업은 [처음 맡을 작업과 인계](docs/team-handoff.md), 실행 세부사항은 [온보딩](docs/onboarding.md)과 [품질·테스트 지침](docs/quality.md)에 있습니다.
 
-Git과 실행 중인 Docker 엔진·Compose를 먼저 준비하세요. `setup`이 Node.js 24.21.0/npm 11.19.0, Python 3.13.15, uv 0.11.19를 검증된 배포물에서 저장소의 `.cache/host-tools/`에 설치합니다. Windows PowerShell 실제 실행은 **NOT RUN**입니다.
+## 빠른 시작
 
-Windows 팀원은 Docker Desktop daemon을 시작한 뒤 저장소 루트에서 `.\windows-check.ps1`을 실행하세요. 이 명령은 도구 버전부터 빌드까지 순서대로 확인하며 첫 실패에서 종료합니다. 결과 요약은 Git에서 제외되는 `.cache/windows-check/report.json`에 남습니다. 자세한 전제는 [Windows 체크리스트](docs/onboarding.md)에 있습니다. 실제 Windows 실행은 **NOT RUN**입니다.
+저장소는 비공개이므로 GitHub 저장소 접근 권한과 인증이 필요합니다. Git, 실행 중인 Docker 엔진 및 Compose는 먼저 준비하세요. `setup`은 Node.js·npm·Python·uv를 프로젝트 캐시에 설치하거나 재사용하고, 잠금 파일 기준으로 React/FastAPI 의존성을 설치합니다. PostgreSQL은 Compose로 실행합니다. 화면과 API는 호스트에서 실행합니다.
 
-## 준비
+### macOS 터미널
 
-1. Git을 설치하고 저장소를 받으세요. macOS에서는 Colima 또는 Docker Desktop, Windows에서는 Docker Desktop의 Docker daemon과 Compose를 실행하세요.
-2. macOS에서 `./local.sh setup`, Windows PowerShell에서 `.\local.ps1 setup`을 실행하세요. 네트워크가 필요합니다. PostgreSQL **17.11** 이미지는 Compose가 가져옵니다.
-3. 이미 준비한 도구를 쓰려면 `B71_NODE`, `B71_NPM`, `B71_PYTHON`, `B71_UV`로 경로를 지정하세요. `B71_DOCKER`는 별도로 준비한 Docker CLI의 경로입니다.
+```sh
+git clone https://github.com/next-stop-siren/Next-Stop-Siren.git
+cd Next-Stop-Siren
+./local.sh setup
+./local.sh dev
+```
 
-도구 다운로드가 실패하면 검증되지 않은 후보는 설치되지 않습니다. 다시 `setup`을 실행하세요. 설치된 도구는 `clean` 명령 후에도 남습니다. 제거하려면 사용 중인 프로세스를 종료한 뒤 `.cache/host-tools/`만 지우세요. `.env`와 DB 볼륨은 보존됩니다.
+### Windows PowerShell
 
-## 명령
+```powershell
+git clone https://github.com/next-stop-siren/Next-Stop-Siren.git
+Set-Location Next-Stop-Siren
+.\local.ps1 setup
+.\local.ps1 dev
+```
 
-저장소 루트에서 macOS는 `./local.sh <명령>`, Windows PowerShell은 `.\local.ps1 <명령>`을 사용합니다. macOS에서 필요하면 먼저 `chmod +x local.sh`를 실행하세요.
+`setup`은 환경과 의존성을 준비하고 DB 및 기본 검사를 확인한 뒤 끝납니다. `dev`는 실행 상태로 계속 대기합니다. 첫 터미널에서 `Ctrl+C`를 누르면 `dev`가 시작한 API와 화면 프로세스가 종료됩니다. DB 컨테이너는 별도로 실행 중이므로 필요하면 `stop` 명령으로 중지하세요.
 
-### `setup`
+화면은 [http://127.0.0.1:5173](http://127.0.0.1:5173), API 문서는 [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)입니다. 화면에는 현재 API·DB 준비 상태가 표시됩니다. API의 `/api/health`는 정상일 때 `{"status":"ok"}`, `/api/ready`는 DB 연결 성공 시 `{"status":"ready"}`를 반환합니다.
 
-- 프로젝트 전용 도구를 설치·재사용하고 정확한 버전과 Docker daemon을 확인한 뒤 `.env`가 없을 때만 예시를 복사합니다. 이어 `npm ci`와 잠금된 `uv sync`, 프로젝트 캐시의 Playwright Chromium 설치를 실행합니다.
-- 개발·테스트 DB를 시작하고 두 DB에서 `SELECT 1`, 실제 API `/api/ready`, 기본 검사를 확인합니다.
-- 재실행해도 기존 `.env`와 DB 볼륨을 보존합니다.
+## Swagger로 API 확인
 
-### `dev`
+`dev`가 실행 중일 때 [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)를 여세요. 현재 애플리케이션은 `GET /api/health`와 `GET /api/ready` 두 경로만 등록합니다. 경로를 펼치고 **Try it out**을 누른 뒤 **Execute**를 선택하면 요청을 보낼 수 있습니다. 정상 응답은 각각 HTTP 200과 `{"status":"ok"}`, `{"status":"ready"}`입니다. DB를 사용할 수 없으면 `/api/ready`는 HTTP 503을 반환합니다. OpenAPI 스키마는 [http://127.0.0.1:8000/openapi.json](http://127.0.0.1:8000/openapi.json)에서 확인할 수 있습니다.
 
-- 개발·테스트 DB를 다시 시작하고 준비 상태를 확인한 뒤 API 자동 재시작과 Vite를 로컬에서 실행합니다.
-- `Ctrl+C`는 이 명령이 시작한 프로세스만 종료합니다.
-- 화면 `http://127.0.0.1:5173`, API 문서 `http://127.0.0.1:8000/docs`.
+Swagger 화면은 FastAPI에 등록된 경로와 요청·응답 모델을 보여 줍니다. 개발자가 구현을 추가해 FastAPI에 등록하면 문서에도 반영됩니다. 현재 가입, 인증, 채팅 경로는 없으며 Swagger만으로 사용자 소유권이나 인증을 검증할 수 없습니다. 향후 Bearer 인증 설정도 아직 없습니다.
 
-### `check`
+## 저장소 구조
 
-- 프런트엔드 타입 검사, 백엔드 DB 없는 API·보호 검사, Compose 정적 구성을 검사합니다.
+- `frontend/`: React·TypeScript·Vite 화면과 브라우저 검사
+- `backend/app/`: FastAPI 애플리케이션
+- `backend/tests/`: API 및 DB 안전성 검사
+- `scripts/`, `local.sh`, `local.ps1`: macOS·Windows 개발 명령
+- `compose.yaml`: 개발·테스트 PostgreSQL 서비스
+- `docs/`: 제품 범위, API·DB·인증 기준, 온보딩 및 팀 지침
 
-### `quality`
+현재 Compose에는 DB만 있습니다. 프런트엔드와 API는 위 명령으로 호스트에서 실행합니다. AWS 배포는 목표 환경이지만 구체적인 구성은 미정이고 배포는 구현되지 않았습니다. `build`는 프런트엔드 산출물만 만듭니다.
 
-- 저장소에 설치된 도구로 프런트엔드 형식·린트·타입 검사와 백엔드 Ruff·mypy 검사를 실행합니다.
+## 명령어
 
-### `build`
+저장소 루트에서 macOS는 `./local.sh <명령>`, Windows PowerShell은 `.\local.ps1 <명령>`을 사용합니다. `setup` 전에는 Git과 Docker/Compose가 준비되어 있어야 합니다.
 
-- 프런트엔드 빌드를 생성합니다.
+| 명령 | 동작 |
+| --- | --- |
+| `setup` | 프로젝트 도구·잠금 의존성과 Playwright Chromium을 준비하고 개발·테스트 DB 및 기본 검사를 확인 |
+| `dev` | DB를 시작하고 API와 화면을 호스트에서 실행, `Ctrl+C`로 자식 프로세스 종료 |
+| `check` | 프런트엔드 타입 검사, DB 없는 API·보호 검사, Compose 설정 검사 |
+| `quality` | 프런트엔드 포맷·린트·타입 검사와 백엔드 Ruff·mypy 검사 |
+| `build` | 프런트엔드 빌드 |
+| `test-unit` | DB 없이 백엔드 API·주소 보호와 프런트엔드 단위 검사 |
+| `test-db` | 전용 테스트 DB에서 읽기 전용 `SELECT 1` |
+| `test-e2e` | 전용 테스트 DB·API·화면을 연결한 Chromium 검사 |
+| `test` | `test-unit`, `test-db`, `test-e2e` 순서로 실행 |
+| `stop` | 이 프로젝트의 개발·테스트 DB 컨테이너만 중지, 데이터 보존 |
+| `clean` | 프런트엔드 빌드/Vite 캐시와 알려진 Python 캐시 정리 |
 
-### `stop`
+`test-db`, `test-e2e`, `test`에는 실제 테스트 DB 주소를 `TEST_DATABASE_URL`에 지정해야 합니다. macOS에서 URL을 만드는 명령과 자세한 테스트 절차는 [온보딩 §4 테스트와 품질 검사](docs/onboarding.md#4-테스트와-품질-검사)를 따르세요. Windows에서는 `windows-check.ps1`이 테스트 URL을 자체 구성·검증합니다.
 
-- 이 프로젝트의 `db-dev`, `db-test` Compose 서비스만 중지합니다.
-- DB 데이터와 볼륨은 유지합니다.
+Windows 전체 환경 검사는 저장소 루트에서 `.\windows-check.ps1`을 실행합니다. 첫 실패에서 멈추며 결과 요약은 `.cache/windows-check/report.json`에 기록됩니다. Windows 실제 실행은 아직 **NOT RUN**입니다.
 
-### `clean`
+`test-e2e`는 8000과 5173 포트를 사용하므로 `dev`를 먼저 중지해야 합니다. `.env`, DB 볼륨·데이터, 프로젝트 도구 캐시는 유지됩니다. `setup`은 기존 `.env`를 덮어쓰지 않습니다. 자격 증명이나 `.env`를 Git에 추가하지 마세요.
 
-- 프런트엔드 `dist`·Vite 캐시와 알려진 Python 캐시만 제거합니다.
-- `.env`, DB·볼륨, `node_modules`, `.venv`, 잠금 파일은 유지합니다.
+## 확인 범위
 
-### `test-unit`
-
-- DB 없이 pytest API·DB 주소 보호 검사와 Vitest 화면 검사를 실행합니다.
-
-### `test-db`
-
-- 명시적 `TEST_DATABASE_URL`을 검증한 뒤 전용 테스트 DB에서 읽기 전용 `SELECT 1`을 실행합니다.
-
-### `test-e2e`
-
-- 전용 테스트 DB·API·화면을 연결한 Chromium 검사를 실행합니다.
-- 8000/5173 포트가 비어 있어야 합니다.
-
-### `test`
-
-- `test-unit`, `test-db`, `test-e2e`를 순서대로 실행합니다.
-
-CI와 동일한 정적 검사는 `./local.sh quality` 또는 `.\local.ps1 quality`로 실행합니다. 잠금 파일 설치 후 실행하세요. CI 설정과 수동 리뷰 준비 단계는 [품질 지침](docs/quality.md)에 있습니다.
-
-`setup`은 프로젝트 전용 언어 도구를 먼저 준비한 뒤 버전과 Docker daemon을 검사합니다. 사전 검사가 실패하면 프로젝트 의존성 설치, `.env` 복사와 컨테이너 시작 전에 종료합니다. `dev`도 Docker daemon이 필요합니다. 종료 코드 2는 도구/버전 또는 준비 조건, 3은 실행 명령 실패, 4는 준비 시간 초과 또는 개발 프로세스 종료를 뜻합니다.
-
-`.env.example`의 자격 증명은 로컬 예시입니다. 기존 `.env`는 자동 명령이 바꾸거나 출력하지 않습니다.
-
-`test-unit`은 DB 없이 실행합니다. `test-db`, `test-e2e`, `test`는 실행 전에 `TEST_DATABASE_URL`을 환경 변수로 명시해야 합니다. URL은 `.env`의 `TEST_DB_USER`, `TEST_DB_PASSWORD`, `TEST_DB_NAME`과 정확히 일치하는 `postgresql://사용자:URL인코딩된암호@127.0.0.1:55433/DB이름` 형식입니다.
-
-macOS에서는 `export TEST_DATABASE_URL='...'` 후 `./local.sh test`, PowerShell에서는 `$env:TEST_DATABASE_URL='...'` 후 `.\local.ps1 test`를 실행하세요. 개발 DB(55432), 원격 주소, `.env`의 테스트 설정과 다른 URL은 연결 전에 거부합니다. E2E는 비어 있는 8000/5173 포트에서 소유 서버만 시작·종료하고 원래 중지되어 있던 테스트 DB는 다시 중지합니다. Windows의 실제 실행은 아직 검증하지 않았습니다.
-
-## 확인된 범위
-
-`GET /api/health`는 API 생존 상태를, `GET /api/ready`는 개발 DB의 `SELECT 1` 성공을 확인합니다. `setup`은 테스트 DB도 `SELECT 1`로 확인합니다.
-
-macOS Colima에서 프로젝트 전용 언어 도구 설치·재사용과 잠금 설치, 두 DB, API 및 기본 검사를 확인했습니다. Git과 Docker는 이미 준비된 호스트였습니다. 새 OS 전체 설치나 Windows 실제 실행은 검증하지 않았습니다.
-
-Colima의 이미지 가져오기에서 `docker-credential-osxkeychain` 부재 오류가 나오면 [온보딩 문제 해결](docs/onboarding.md#문제-해결)을 확인하세요.
+macOS Colima 환경에서 프로젝트 도구 설치·재사용, 잠금 의존성 설치, DB 준비와 기본 검사를 확인했습니다. Git과 Docker는 이미 준비된 호스트였습니다. Windows PowerShell의 실제 실행은 **NOT RUN**입니다. [온보딩 문서](docs/onboarding.md)에서 확인된 조건과 Windows 체크 결과를 확인하세요.

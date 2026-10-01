@@ -21,13 +21,17 @@
 - **채택 기준:** 지원 중인 17.11 안정판
 - **현재 구성:** `compose.yaml`의 개발·테스트 DB 서비스
 
-버전 확인은 macOS 터미널과 Windows PowerShell에서 각각 Node.js, npm, Python, uv, Docker/Compose, PostgreSQL 서버의 실제 버전을 출력해 기록한다. 설치된 버전이 저장소의 고정 버전과 다르면 설치를 멈추고 안내에 맞춘다. npm은 잠금 파일을 따르는 깨끗한 설치, uv는 잠금 파일의 변경을 막는 동기화를 기본으로 한다.
+macOS 터미널과 Windows PowerShell에서 Node.js, npm, Python, uv, Docker/Compose, PostgreSQL 서버의 실제 버전을 출력해 기록한다. 설치된 버전이 저장소의 고정 버전과 다르면 설치를 멈추고 안내에 맞춘다.
+
+npm은 잠금 파일을 따르는 깨끗한 설치, uv는 잠금 파일의 변경을 막는 동기화를 기본으로 한다.
 
 Python 3.13.15는 Astral의 고정된 독립 배포본을 프로젝트 전용 경로에 설치한다. 다운로드 파일의 SHA-256과 실행 버전을 확인한다.
 
 ## 공통 초기 준비 절차
 
-macOS에는 Git과 실행 중인 Docker 엔진·Compose(Colima 또는 Docker Desktop)가 필요하다. Windows에는 Git과 Docker Desktop·Compose가 필요하다. `setup`은 언어 도구를 `.cache/host-tools/`에 설치·재사용하고 버전과 Docker daemon을 확인한 뒤 잠금 파일에 따른 프로젝트 의존성·브라우저를 설치한다. 전역 PATH나 셸 설정은 변경하지 않는다.
+macOS에는 Git과 실행 중인 Docker 엔진·Compose(Colima 또는 Docker Desktop)가 필요하다. Windows에는 Git과 Docker Desktop·Compose가 필요하다.
+
+`setup`은 언어 도구를 `.cache/host-tools/`에 설치·재사용하고 버전과 Docker daemon을 확인한 뒤 잠금 파일에 따른 프로젝트 의존성·브라우저를 설치한다. 전역 PATH나 셸 설정은 변경하지 않는다.
 
 실제 명령과 기대 결과는 [실행 체크리스트](onboarding.md)에 있다. macOS 프로젝트 전용 언어 도구와 잠금 설치는 기존 Git·Docker가 있는 환경에서 확인했다. 새 OS 전체 설치 검증은 아니다. Windows 실제 실행은 **NOT RUN**이다.
 
