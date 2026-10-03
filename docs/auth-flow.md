@@ -8,8 +8,8 @@
 
 ```mermaid
 flowchart TD
-  N2["#2 인증 가짜 예시"]
-  N3["#3 인증 테이블"]
+  N2["#2 재사용 인증 테스트 값"]
+  N3["#3 인증 ORM 모델"]
   N4["#4 이메일 가입"]
   N5["#5 비밀번호 로그인"]
   N6["#6 Google 로그인"]
@@ -19,6 +19,7 @@ flowchart TD
   N17["#17 가입·로그인 화면<br/>외부: 화면 / gittul-123"]
   N18["#18 완성 답변 채팅 화면<br/>외부: 화면 / gittul-123"]
   N19["#19 인증·채팅·화면 연동"]
+  PM["PM 공통 ORM 준비<br/>외부: PM / xifoxy-ru"] --> N3
   N2 --> N3
   N3 --> N4
   N4 --> N5
@@ -29,7 +30,8 @@ flowchart TD
   N17 --> N19
   N18 --> N19
   classDef external stroke-dasharray:5 4;
-  class N10,N11,N17,N18 external;
+  class PM,N10,N11,N17,N18 external;
+  click PM "stack.md#개발과-초기-db" "공통 ORM 준비 보기"
   click N2 "https://github.com/next-stop-siren/Next-Stop-Siren/issues/2" "이슈 #2 열기"
   click N3 "https://github.com/next-stop-siren/Next-Stop-Siren/issues/3" "이슈 #3 열기"
   click N4 "https://github.com/next-stop-siren/Next-Stop-Siren/issues/4" "이슈 #4 열기"
@@ -47,8 +49,8 @@ flowchart TD
 
 | 이슈 | 작업 |
 | --- | --- |
-| [#2](https://github.com/next-stop-siren/Next-Stop-Siren/issues/2) | 인증 가짜 예시 |
-| [#3](https://github.com/next-stop-siren/Next-Stop-Siren/issues/3) | 인증 테이블 |
+| [#2](https://github.com/next-stop-siren/Next-Stop-Siren/issues/2) | 재사용 인증 테스트 값 |
+| [#3](https://github.com/next-stop-siren/Next-Stop-Siren/issues/3) | 인증 ORM 모델 |
 | [#4](https://github.com/next-stop-siren/Next-Stop-Siren/issues/4) | 이메일 가입 |
 | [#5](https://github.com/next-stop-siren/Next-Stop-Siren/issues/5) | 비밀번호 로그인 |
 | [#6](https://github.com/next-stop-siren/Next-Stop-Siren/issues/6) | Google 로그인 |
@@ -57,7 +59,7 @@ flowchart TD
 
 ## 인계와 참고 문서
 
-- **#3 → #9:** 인증 테이블을 검증·병합해 채팅 담당에게 스키마를 인계한다. 채팅의 #9는 인증 기능 전체 완료를 기다릴 필요가 없다.
+- **#3 → #9:** PM 공통 ORM 준비와 #2 테스트 값을 받은 뒤 인증 ORM 모델을 검증·병합해 채팅 담당에게 인계한다. 채팅의 #9는 인증 기능 전체 완료를 기다릴 필요가 없다.
 - **#5·#6·#7 → #17:** 세 로그인 결과를 화면 담당에게 인계한다. #17은 #16까지 포함한 네 선행 조건을 따른다.
 - **#10·#11·#17·#18 → #19:** 네 결과가 모두 준비되면 인증·채팅·화면을 연동한다. 화면 작업을 기다리는 동안 승인된 형식의 연동 검사를 준비할 수 있다.
 

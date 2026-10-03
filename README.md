@@ -2,9 +2,9 @@
 
 Next-Stop-Siren은 사용자 질문에 답하는 챗봇을 만들기 위한 프로젝트입니다. 현재 구현은 화면에서 API와 PostgreSQL 연결 상태를 확인하는 준비 단계입니다. 로그인, 채팅, AI 호출은 아직 구현되지 않았습니다.
 
-제품 범위와 향후 계획은 [서비스 범위](docs/service-scope.md), [API 기준](docs/api.md), [DB 설계](docs/database.md), [인증 기준](docs/authentication.md)를 참고하세요. 팀 작업은 [처음 맡을 작업과 인계](docs/team-handoff.md), 실행 세부사항은 [온보딩](docs/onboarding.md)과 [품질·테스트 지침](docs/quality.md)에 있습니다.
+제품 범위와 향후 계획은 [서비스 범위](docs/service-scope.md), [기술 구성](docs/stack.md), [API 기준](docs/api.md), [DB 설계](docs/database.md), [인증 기준](docs/authentication.md)를 참고하세요. 팀 작업은 [처음 맡을 작업과 인계](docs/team-handoff.md), 실행 세부사항은 [온보딩](docs/onboarding.md)과 [품질·테스트 지침](docs/quality.md)에 있습니다.
 
-이슈의 전체 작업 순서와 직접 선행 조건은 [공정진행도](docs/development-flow.md)를, 담당별 인증·채팅·화면 흐름은 [팀 개발 문서 안내](docs/README.md)를 참고하세요.
+인증 #2와 화면 #16은 시작 가능하며, 채팅은 PM 공통 ORM 준비 → #3 인증 모델 → #9 대화 모델 → #8 조회 함수 → #10 API 순서입니다. 현재 `setup`은 ORM 테이블을 만들지 않습니다. 이슈의 전체 작업 순서와 직접 선행 조건은 [공정진행도](docs/development-flow.md)를, 담당별 인증·채팅·화면 흐름은 [팀 개발 문서 안내](docs/README.md)를 참고하세요.
 
 ## 빠른 시작
 
@@ -47,7 +47,7 @@ Swagger 화면은 FastAPI에 등록된 경로와 요청·응답 모델을 보여
 - `compose.yaml`: 개발·테스트 PostgreSQL 서비스
 - `docs/`: 제품 범위, API·DB·인증 기준, 온보딩 및 팀 지침
 
-현재 Compose에는 DB만 있습니다. 프런트엔드와 API는 위 명령으로 호스트에서 실행합니다. AWS 배포는 목표 환경이지만 구체적인 구성은 미정이고 배포는 구현되지 않았습니다. `build`는 프런트엔드 산출물만 만듭니다.
+현재 Compose에는 개발·테스트 DB만 있습니다. 프런트엔드와 API는 위 명령으로 호스트에서 실행합니다. 운영 대상은 [단일 AWS EC2의 Nginx·백엔드·PostgreSQL Compose 구성](docs/stack.md#선택한-배포-구성)으로 정했으며, 배포는 아직 구현되지 않았습니다. `build`는 프런트엔드 산출물만 만듭니다.
 
 ## 명령어
 

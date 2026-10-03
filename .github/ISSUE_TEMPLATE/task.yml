@@ -5,7 +5,7 @@ labels: []
 body:
   - type: markdown
     attributes:
-      value: "한 이슈에 한 결과를 적어 주세요. 미정 정책은 결정 대기로 표시하세요."
+      value: "제목에는 만들 결과를 적어 주세요. 한 이슈에 한 결과를 담고, 실제로 남은 PM 결정만 적어 주세요."
   - type: textarea
     id: purpose
     attributes:
@@ -15,11 +15,19 @@ body:
     validations:
       required: true
   - type: textarea
-    id: scope
+    id: prerequisites
     attributes:
-      label: 변경 범위
-      description: 이번 이슈에서 바꿀 범위를 적어 주세요.
-      placeholder: "포함: …\n제외: …"
+      label: 시작 조건
+      description: 직접 선행 이슈와 공통 준비 작업을 링크하고, 필요한 PM 결정을 구분해 주세요.
+      placeholder: "- 선행: #…\n- 공통 준비: …\n- PM 결정: 없음 또는 구체적인 값"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 구현 순서와 범위
+      description: 담당자가 바로 시작할 수 있는 코드·문서 작업과 제외할 범위를 적어 주세요.
+      placeholder: "1. …\n2. …\n제외: …"
     validations:
       required: true
   - type: textarea
@@ -36,6 +44,13 @@ body:
       label: 확인 방법
       description: 실행할 명령과 확인할 결과를 적어 주세요.
       placeholder: 실행 명령, 수동 확인 절차 또는 검토할 항목
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: 남길 결과
+      description: PR에 남길 코드·테스트·검사 기록을 적어 주세요.
     validations:
       required: true
   - type: textarea
