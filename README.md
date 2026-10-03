@@ -4,6 +4,8 @@ Next-Stop-Siren은 사용자 질문에 답하는 챗봇을 만들기 위한 프�
 
 제품 범위와 향후 계획은 [서비스 범위](docs/service-scope.md), [API 기준](docs/api.md), [DB 설계](docs/database.md), [인증 기준](docs/authentication.md)를 참고하세요. 팀 작업은 [처음 맡을 작업과 인계](docs/team-handoff.md), 실행 세부사항은 [온보딩](docs/onboarding.md)과 [품질·테스트 지침](docs/quality.md)에 있습니다.
 
+이슈의 전체 작업 순서와 직접 선행 조건은 [공정진행도](docs/development-flow.md)를, 담당별 인증·채팅·화면 흐름은 [팀 개발 문서 안내](docs/README.md)를 참고하세요.
+
 ## 빠른 시작
 
 저장소는 비공개이므로 GitHub 저장소 접근 권한과 인증이 필요합니다. Git, 실행 중인 Docker 엔진 및 Compose는 먼저 준비하세요. `setup`은 Node.js·npm·Python·uv를 프로젝트 캐시에 설치하거나 재사용하고, 잠금 파일 기준으로 React/FastAPI 의존성을 설치합니다. PostgreSQL은 Compose로 실행합니다. 화면과 API는 호스트에서 실행합니다.

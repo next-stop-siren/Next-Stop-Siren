@@ -7,13 +7,17 @@
 읽는 순서는 다음과 같다.
 
 1. [공통 환경](environment.md)과 [실행 체크리스트](onboarding.md)로 현재 앱을 실행한다.
-2. [역할](roles.md)과 [처음 맡을 작업](team-handoff.md)에서 담당 범위와 첫 이슈를 확인한다.
+2. [역할](roles.md)과 [처음 맡을 작업](team-handoff.md)에서 담당 범위와 첫 이슈를 확인하고, [공정진행도](development-flow.md)에서 전체 선행 조건과 후속 인계를 본다. 담당 작업의 그림은 [인증 공정](auth-flow.md), [채팅·데이터·AI 공정](chat-flow.md), [화면 공정](frontend-flow.md)에 있다.
 3. [서비스 범위](service-scope.md)를 읽고 담당 분야의 [화면](frontend.md) 또는 [서버](backend.md) 지침을 따른다.
 4. 구현 전에 [API](api.md)·[DB](database.md)·[인증](authentication.md) 기준을 확인하고, PR 전에는 [협업 흐름](workflow.md)과 [품질 지침](quality.md)을 확인한다.
 
 문서를 고칠 때는 한 문단에 한 주제를 두고 긴 절은 짧은 제목과 목록으로 나눈다. 필드 설명 표는 한 필드에 한 행을 쓰며, 현재 동작과 앞으로 구현할 기준을 구분한다.
 
 - [처음 맡을 작업과 인계](team-handoff.md)
+- [공정진행도와 이슈별 선행 작업](development-flow.md)
+- [인증 담당 공정](auth-flow.md)
+- [채팅·데이터·AI 담당 공정](chat-flow.md)
+- [화면 담당 공정](frontend-flow.md)
 - [서비스 범위와 첫 작업](service-scope.md)
 - [데이터베이스 설계](database.md)
 - [공통 API 형식과 모의 응답](api.md)
