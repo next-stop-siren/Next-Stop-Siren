@@ -1,6 +1,6 @@
 # S08 대화·메시지 마이그레이션 검사 기록
 
-`conversations`와 `messages` 마이그레이션 초안과, 로컬 테스트 DB에서 적용·제약 검사·되돌림을 실행한 기록이다. 테이블 구조는 [DB 설계](../database.md)와 [DDL 참고안](../database-reference.sql)을 따른다.
+`conversations`와 `messages` 마이그레이션 초안과, 로컬 테스트 DB에서 적용·제약 검사·되돌림을 실행한 기록이다. 테이블 구조는 [DB 설계](../../database.md)와 [DDL 참고안](../../database-reference.sql)을 따른다.
 
 **S02의 실제 `users` 마이그레이션은 아직 없다.** 아래 결과는 시험 전용 임시 `users`로 얻었다. S02 → S08 실제 적용과 S08 → S02 되돌림은 **NOT RUN**이다.
 
@@ -8,8 +8,8 @@
 
 | 파일 | 역할 |
 | --- | --- |
-| [0002_conversations_messages.up.sql](../../backend/migrations/0002_conversations_messages.up.sql) | 적용: `conversations` → `messages` |
-| [0002_conversations_messages.down.sql](../../backend/migrations/0002_conversations_messages.down.sql) | 되돌림: `messages` → `conversations` |
+| [0002_conversations_messages.up.sql](../../../backend/migrations/0002_conversations_messages.up.sql) | 적용: `conversations` → `messages` |
+| [0002_conversations_messages.down.sql](../../../backend/migrations/0002_conversations_messages.down.sql) | 되돌림: `messages` → `conversations` |
 | [s08-stub-users.sql](s08-stub-users.sql) | 시험 전용 임시 `users`. 마이그레이션이 아니다 |
 | [s08-constraint-checks.sql](s08-constraint-checks.sql) | 가짜 행 입력과 거부 검사 |
 | [s08-rollback-checks.sql](s08-rollback-checks.sql) | 되돌림 뒤 테이블 상태 검사 |
@@ -18,7 +18,7 @@
 
 ## S02와 맞출 약속
 
-S08 마이그레이션은 아래 네 가지를 전제로 한다. 모두 [DB 설계](../database.md)에 이미 있는 기준이거나 그 기준에서 나온 값이다. 4번의 파일 위치와 번호만 이 작업에서 새로 제안한다.
+S08 마이그레이션은 아래 네 가지를 전제로 한다. 모두 [DB 설계](../../database.md)에 이미 있는 기준이거나 그 기준에서 나온 값이다. 4번의 파일 위치와 번호만 이 작업에서 새로 제안한다.
 
 1. 테이블 이름은 `users`다.
 2. `users.id`는 `bigint` 기본키다. `conversations.user_id`도 `bigint`다.
@@ -87,9 +87,9 @@ S08 마이그레이션은 아래 네 가지를 전제로 한다. 모두 [DB 설�
 docker exec b7-1-db-test-1 mkdir -p /tmp/s08
 docker cp backend/migrations/0002_conversations_messages.up.sql b7-1-db-test-1:/tmp/s08/up.sql
 docker cp backend/migrations/0002_conversations_messages.down.sql b7-1-db-test-1:/tmp/s08/down.sql
-docker cp docs/examples/s08-stub-users.sql b7-1-db-test-1:/tmp/s08/stub.sql
-docker cp docs/examples/s08-constraint-checks.sql b7-1-db-test-1:/tmp/s08/checks.sql
-docker cp docs/examples/s08-rollback-checks.sql b7-1-db-test-1:/tmp/s08/rollback.sql
+docker cp docs/examples/s08/s08-stub-users.sql b7-1-db-test-1:/tmp/s08/stub.sql
+docker cp docs/examples/s08/s08-constraint-checks.sql b7-1-db-test-1:/tmp/s08/checks.sql
+docker cp docs/examples/s08/s08-rollback-checks.sql b7-1-db-test-1:/tmp/s08/rollback.sql
 docker exec b7-1-db-test-1 sh -c 'cd /tmp/s08 && psql -U $POSTGRES_USER -d $POSTGRES_DB -v ON_ERROR_STOP=1 -q -c BEGIN -f stub.sql -f up.sql -f checks.sql -f down.sql -f rollback.sql -f up.sql -f down.sql -f rollback.sql -c ROLLBACK'
 ```
 
