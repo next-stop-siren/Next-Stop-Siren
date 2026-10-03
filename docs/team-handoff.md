@@ -2,11 +2,13 @@
 
 현재 앱은 화면에서 API·DB 연결 상태를 확인하는 단계입니다. 로그인, 채팅, AI 호출은 아직 동작하지 않습니다. 아래 세 이슈는 각 담당자가 먼저 시작할 수 있는 작은 작업입니다. 작업 전에 실제 이슈 본문과 PM이 확인한 저장소의 최신 문서를 확인하세요.
 
-| 담당 | 첫 이슈 | 이번에 남길 결과 |
-| --- | --- | --- |
-| `yejoo0310` | [S01 · #2](https://github.com/next-stop-siren/Next-Stop-Siren/issues/2) | 가짜 사용자와 인증 요청·응답 테스트 예시 |
-| `davekim-dev` | [S07 · #8](https://github.com/next-stop-siren/Next-Stop-Siren/issues/8) | 두 가짜 사용자의 대화 조회 SQL과 예상 결과 |
-| `gittul-123` | [S15 · #16](https://github.com/next-stop-siren/Next-Stop-Siren/issues/16) | 비회원 소개와 사람이 작성한 고정 예시 화면 |
+전체 직접 선행·후속 이슈는 [공정진행도](development-flow.md)에, 각 담당자의 작업과 외부 인계는 아래 담당 공정에 있습니다. 실제 진행·차단·검토 상태는 연결된 GitHub 이슈와 PR에서 확인하세요.
+
+| 담당 | 첫 이슈 | 담당 공정 | 이번에 남길 결과 |
+| --- | --- | --- | --- |
+| `yejoo0310` | [S01 · #2](https://github.com/next-stop-siren/Next-Stop-Siren/issues/2) | [인증](auth-flow.md) | 가짜 사용자와 인증 요청·응답 테스트 예시 |
+| `davekim-dev` | [S07 · #8](https://github.com/next-stop-siren/Next-Stop-Siren/issues/8) | [채팅·데이터·AI](chat-flow.md) | 두 가짜 사용자의 대화 조회 SQL과 예상 결과 |
+| `gittul-123` | [S15 · #16](https://github.com/next-stop-siren/Next-Stop-Siren/issues/16) | [화면](frontend-flow.md) | 비회원 소개와 사람이 작성한 고정 예시 화면 |
 
 ## 함께 읽을 기준
 
