@@ -34,8 +34,8 @@
 
 담당자별 실제 이슈 번호와 시작 순서는 [팀 작업 인계](team-handoff.md)에 있다.
 
-1. 인증 백엔드 `yejoo0310`: 가짜 사용자 ID와 인증 응답 예시를 정리한다. 실제 토큰 발급은 포함하지 않는다.
-2. 채팅·데이터 백엔드 `davekim-dev`: 가짜 사용자 둘의 대화 조회와 완료 답변 문맥 예시를 정리한다. 실제 AI 호출은 포함하지 않는다.
-3. 프론트엔드 `gittul-123`: 비회원 소개와 고정 예시 화면을 만든다. 실제 질문 전송과 기록은 제공하지 않는다.
+1. 인증 백엔드 `yejoo0310`: [#2](https://github.com/next-stop-siren/Next-Stop-Siren/issues/2)에서 후속 검사에 재사용할 pytest fixture를 만들고 인증 없는 요청의 401 응답을 확인한다.
+2. 채팅·데이터 백엔드 `davekim-dev`: 공통 ORM 준비가 main에 병합됐다. [#3](https://github.com/next-stop-siren/Next-Stop-Siren/issues/3)의 검증·병합 뒤 [#9](https://github.com/next-stop-siren/Next-Stop-Siren/issues/9)에서 대화·메시지 ORM 모델을 만들고 DB 제약을 검사한다. #9 검증·병합 뒤 [#8](https://github.com/next-stop-siren/Next-Stop-Siren/issues/8)의 소유권 조회 함수와 pytest 검사를 맡는다.
+3. 프론트엔드 `gittul-123`: [#16](https://github.com/next-stop-siren/Next-Stop-Siren/issues/16)에서 비회원 소개와 사람이 작성한 고정 예시 화면을 만든다.
 
 담당 역할은 [역할과 인계](roles.md)를, 구현과 검증 흐름은 [협업 안내](workflow.md)를 확인한다.
