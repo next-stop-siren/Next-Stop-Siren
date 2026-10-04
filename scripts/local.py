@@ -571,6 +571,72 @@ def test_db():
     with_test_database(check)
 
 
+def db_init():
+    """Initialize registered application tables in the configured local development DB."""
+    preflight(backend=True)
+    settings = read_settings(ENV)
+    url = settings.get("DATABASE_URL")
+    if not url or url != os.environ.get("DATABASE_URL", url):
+        raise Failure("DATABASE_URL must match this checkout's .env", 2)
+    from urllib.parse import unquote, urlsplit
+    try:
+        parsed = urlsplit(url)
+        target = (unquote(parsed.username or ""), unquote(parsed.password or ""),
+                  unquote(parsed.path.removeprefix("/")))
+        expected = (settings["DEV_DB_USER"], settings["DEV_DB_PASSWORD"], settings["DEV_DB_NAME"])
+        if (parsed.scheme not in {"postgres", "postgresql", "postgresql+psycopg"}
+                or parsed.hostname != "127.0.0.1" or parsed.port != 55432
+                or target != expected or parsed.query or parsed.fragment):
+            raise ValueError("unexpected development target")
+    except (KeyError, ValueError) as exc:
+        raise Failure("DATABASE_URL must match the dedicated local development service", 2) from exc
+    ensure_dev_container()
+    code = ("import os; from app.db_init import initialize_schema; "
+            "count = initialize_schema(os.environ['DATABASE_URL']); "
+            "print(f'Registered application tables: {count}; missing tables created, existing tables preserved')")
+    run(tool("uv", "run", "--no-sync", "python", "-c", code),
+        cwd=BACKEND, env={**command_env(), "DATABASE_URL": url})
+
+
+def db_init_test():
+    def initialize(url):
+        code = ("import os; from app.db_init import initialize_schema; "
+                "count = initialize_schema(os.environ['TEST_DATABASE_URL']); "
+                "print(f'Registered application tables: {count}; missing tables created, existing tables preserved')")
+        run(tool("uv", "run", "--no-sync", "python", "-c", code),
+            cwd=BACKEND, env={**command_env(), "TEST_DATABASE_URL": url})
+    with_test_database(initialize)
+
+
+def ensure_dev_container():
+    """Refuse another checkout's development container before schema creation."""
+    ensure_local_docker()
+    try:
+        raw = compose("ps", "--all", "--format", "json", "db-dev", capture=True, test=True)
+        records = [json.loads(line) for line in raw.splitlines() if line.strip()]
+        ids = [record.get("ID") for record in records
+               if record.get("Service") == "db-dev" and record.get("State") == "running"]
+        if len(ids) != 1 or not ids[0]:
+            raise ValueError("development service unavailable")
+        details, = json.loads(run(tool("docker", "inspect", "--type", "container", ids[0]),
+                                  capture=True, timeout=15))
+        labels = details["Config"]["Labels"]
+        expected_port = [{"HostIp": "127.0.0.1", "HostPort": "55432"}]
+        mount, = details["Mounts"]
+        if (not details["State"]["Running"]
+                or labels["com.docker.compose.project"] != "b7-1"
+                or labels["com.docker.compose.service"] != "db-dev"
+                or labels["com.docker.compose.project.working_dir"] != str(ROOT)
+                or labels["com.docker.compose.project.config_files"] != str(ROOT / "compose.yaml")
+                or mount["Type"] != "volume" or mount["Name"] != "b7-1_db-dev-data"
+                or mount["Destination"] != "/var/lib/postgresql/data"
+                or details["NetworkSettings"]["Ports"] != {"5432/tcp": expected_port}
+                or details["HostConfig"]["PortBindings"] != {"5432/tcp": expected_port}):
+            raise ValueError("unexpected development container")
+    except (Failure, IndexError, KeyError, TypeError, ValueError) as exc:
+        raise Failure("Cannot verify this checkout owns the dedicated development container", 2) from exc
+
+
 def require_free_ports():
     for port in (8000, 5173):
         with socket.socket() as probe:
@@ -638,12 +704,13 @@ def main():
         signal.signal(signal.SIGTERM, interrupted)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("setup", "dev", "check", "quality", "build", "stop", "clean",
-                                            "test", "test-unit", "test-db", "test-e2e"))
+                                            "test", "test-unit", "test-db", "test-e2e", "db-init", "db-init-test"))
     args = parser.parse_args()
     try:
         {"setup": setup, "dev": dev, "check": checks, "quality": quality, "build": build,
          "stop": stop, "clean": clean, "test": test_all, "test-unit": test_unit,
-         "test-db": test_db, "test-e2e": test_e2e}[args.command]()
+         "test-db": test_db, "test-e2e": test_e2e,
+         "db-init": db_init, "db-init-test": db_init_test}[args.command]()
     except Failure as exc:
         print(f"error: {exc}", file=sys.stderr)
         return exc.code

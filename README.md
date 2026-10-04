@@ -4,7 +4,7 @@ Next-Stop-Siren은 사용자 질문에 답하는 챗봇을 만들기 위한 프�
 
 제품 범위와 향후 계획은 [서비스 범위](docs/service-scope.md), [기술 구성](docs/stack.md), [API 기준](docs/api.md), [DB 설계](docs/database.md), [인증 기준](docs/authentication.md)를 참고하세요. 팀 작업은 [처음 맡을 작업과 인계](docs/team-handoff.md), 실행 세부사항은 [온보딩](docs/onboarding.md)과 [품질·테스트 지침](docs/quality.md)에 있습니다.
 
-인증 #2와 화면 #16은 시작 가능하며, 채팅은 PM 공통 ORM 준비 → #3 인증 모델 → #9 대화 모델 → #8 조회 함수 → #10 API 순서입니다. 현재 `setup`은 ORM 테이블을 만들지 않습니다. 이슈의 전체 작업 순서와 직접 선행 조건은 [공정진행도](docs/development-flow.md)를, 담당별 인증·채팅·화면 흐름은 [팀 개발 문서 안내](docs/README.md)를 참고하세요.
+인증 #2와 화면 #16은 시작 가능하며, 채팅은 PM 공통 ORM 준비 → #3 인증 모델 → #9 대화 모델 → #8 조회 함수 → #10 API 순서입니다. ORM 공통 코드와 초기화 명령은 이 변경에 포함되지만 PM 준비 게이트는 독립 검토와 병합 후 완료됩니다. `setup`은 ORM 테이블을 만들지 않습니다. 이슈의 전체 작업 순서와 직접 선행 조건은 [공정진행도](docs/development-flow.md)를, 담당별 인증·채팅·화면 흐름은 [팀 개발 문서 안내](docs/README.md)를 참고하세요.
 
 ## 빠른 시작
 
@@ -61,13 +61,15 @@ Swagger 화면은 FastAPI에 등록된 경로와 요청·응답 모델을 보여
 | `quality` | 프런트엔드 포맷·린트·타입 검사와 백엔드 Ruff·mypy 검사 |
 | `build` | 프런트엔드 빌드 |
 | `test-unit` | DB 없이 백엔드 API·주소 보호와 프런트엔드 단위 검사 |
-| `test-db` | 전용 테스트 DB에서 읽기 전용 `SELECT 1` |
+| `test-db` | 전용 테스트 DB에서 `SELECT 1`과 롤백되는 ORM 테이블·세션 검사 |
+| `db-init` | 등록된 앱 모델의 누락 테이블만 개발 DB에 생성 |
+| `db-init-test` | 전용 테스트 DB 보호 검사 후 누락 테이블만 생성 |
 | `test-e2e` | 전용 테스트 DB·API·화면을 연결한 Chromium 검사 |
 | `test` | `test-unit`, `test-db`, `test-e2e` 순서로 실행 |
 | `stop` | 이 프로젝트의 개발·테스트 DB 컨테이너만 중지, 데이터 보존 |
 | `clean` | 프런트엔드 빌드/Vite 캐시와 알려진 Python 캐시 정리 |
 
-`test-db`, `test-e2e`, `test`에는 실제 테스트 DB 주소를 `TEST_DATABASE_URL`에 지정해야 합니다. macOS에서 URL을 만드는 명령과 자세한 테스트 절차는 [온보딩 §4 테스트와 품질 검사](docs/onboarding.md#4-테스트와-품질-검사)를 따르세요. Windows에서는 `windows-check.ps1`이 테스트 URL을 자체 구성·검증합니다.
+`test-db`, `test-e2e`, `test`, `db-init-test`에는 실제 테스트 DB 주소를 `TEST_DATABASE_URL`에 지정해야 합니다. macOS에서 URL을 만드는 명령과 자세한 테스트 절차는 [온보딩 §4 테스트와 품질 검사](docs/onboarding.md#4-테스트와-품질-검사)를 따르세요. Windows에서는 `windows-check.ps1`이 테스트 URL을 자체 구성·검증합니다.
 
 Windows 전체 환경 검사는 저장소 루트에서 `.\windows-check.ps1`을 실행합니다. 첫 실패에서 멈추며 결과 요약은 `.cache/windows-check/report.json`에 기록됩니다. Windows 실제 실행은 아직 **NOT RUN**입니다.
 

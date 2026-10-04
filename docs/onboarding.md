@@ -55,12 +55,13 @@ curl -f http://127.0.0.1:8000/api/ready    # {"status":"ready"}
 export TEST_DATABASE_URL="$(backend/.venv/bin/python -c 'import sys; from pathlib import Path; from urllib.parse import quote; sys.path.insert(0, "backend/tests"); from db_guard import read_settings; s=read_settings(Path(".env")); print("postgresql://"+quote(s["TEST_DB_USER"],safe="")+":"+quote(s["TEST_DB_PASSWORD"],safe="")+"@127.0.0.1:55433/"+quote(s["TEST_DB_NAME"],safe=""))')"
 ./local.sh test-unit
 ./local.sh test-db
+./local.sh db-init-test  # 등록된 앱 모델만; 현재는 0개
 ./local.sh test-e2e
 ./local.sh quality
 ./local.sh build
 ```
 
-첫 실패에서는 다음 명령으로 넘어가지 않는다. 기대 결과는 백엔드 단위 검사 15개·프런트엔드 2개, 테스트 DB 검사 1개, Chromium E2E 1개, 정적 검사 정상 종료와 Vite 빌드 성공이다. 전체 테스트 묶음은 `./local.sh test`로도 실행할 수 있다.
+첫 실패에서는 다음 명령으로 넘어가지 않는다. 기대 결과는 백엔드 단위 검사·프런트엔드 2개, 테스트 DB의 `SELECT 1` 및 ORM 롤백 검사, Chromium E2E 1개, 정적 검사 정상 종료와 Vite 빌드 성공이다. 전체 테스트 묶음은 `./local.sh test`로도 실행할 수 있다.
 
 ### 5. 정리와 중지
 
