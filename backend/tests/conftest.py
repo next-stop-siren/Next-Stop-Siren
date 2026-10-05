@@ -1,4 +1,7 @@
-"""Reusable guarded ORM integration fixture for feature model tests."""
+"""Reusable authentication data and guarded ORM integration fixtures."""
+
+from copy import deepcopy
+from typing import Any
 
 import pytest
 from sqlalchemy import Integer, String, create_engine, inspect
@@ -6,7 +9,44 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base, psycopg_url
 from app.db_init import initialize_with_engine
+from auth_helpers import load_auth_cases
 from db_guard import guarded_live_url
+
+
+@pytest.fixture
+def auth_cases() -> dict[str, Any]:
+    """Provide fresh authentication inputs and expectations for each test."""
+    return load_auth_cases()
+
+
+@pytest.fixture
+def auth_user_a(auth_cases: dict[str, Any]) -> dict[str, Any]:
+    """User 101: inputs, public responses and a mock verified principal."""
+    return deepcopy(auth_cases["users"]["a"])
+
+
+@pytest.fixture
+def auth_user_b(auth_cases: dict[str, Any]) -> dict[str, Any]:
+    """User 202: inputs, public responses and a mock verified principal."""
+    return deepcopy(auth_cases["users"]["b"])
+
+
+@pytest.fixture(params=["a", "b"], ids=["user-101", "user-202"])
+def auth_user(request: pytest.FixtureRequest, auth_cases: dict[str, Any]) -> dict[str, Any]:
+    """Run a consuming test once per user without manually duplicating it."""
+    return deepcopy(auth_cases["users"][request.param])
+
+
+@pytest.fixture
+def unauthenticated_case(auth_cases: dict[str, Any]) -> dict[str, Any]:
+    """No principal or credentials, with the expected 401 response example."""
+    return deepcopy(auth_cases["unauthenticated"])
+
+
+@pytest.fixture(params=[0, 1], ids=["a-body-b", "b-body-a"])
+def principal_body_mismatch_case(request: pytest.FixtureRequest, auth_cases: dict[str, Any]) -> dict[str, Any]:
+    """Run both attempts to substitute a different user ID in a request body."""
+    return deepcopy(auth_cases["principal_body_mismatch_cases"][request.param])
 
 
 class OrmProbe(Base):
