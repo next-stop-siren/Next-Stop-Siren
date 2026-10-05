@@ -2,7 +2,7 @@
 
 PM은 GitHub 이슈에 목적·변경 범위·완료 기준·담당자를 적어 관리한다. 진행 상태는 이슈와 PR에서 확인하며, Projects 보드를 사용하게 되면 PM이 연결 방법을 안내한다.
 
-기존 팀 작업 이슈 #2–#21의 제목 형식은 `[작업] Sxx <설명 제목>`이다. 예를 들어 이슈 #3은 `S02`이며 제목은 `[작업] S02 사용자·Google 계정·로그인 세션 ORM 모델 만들기`다. `S01`–`S20`은 이 스무 작업의 고정 식별자다. 식별자 번호로 구현 순서나 완료 상태를 판단하지 말고 [공정진행도](development-flow.md)의 직접 선행 조건과 해당 이슈·PR을 확인한다.
+기존 팀 작업 이슈 #2–#21의 제목 형식은 `[작업] Sxx <설명 제목>`이다. 예를 들어 이슈 #3은 `S02`이며 제목은 `[작업] S02 사용자·Google 계정·로그인 세션 ORM 모델 만들기`다. `S01`–`S20`은 이 스무 작업의 고정 식별자다. 식별자 번호로 구현 순서나 완료 상태를 판단하지 말고 [공정진행도](../02-team/development-flow.md)의 직접 선행 조건과 해당 이슈·PR을 확인한다.
 
 작업자는 최신 `main`에서 `docs/환경-안내`, `fix/입력-검사`처럼 종류와 내용을 드러내는 이슈 브랜치를 만든다. `main`에 직접 개발하지 않는다.
 
@@ -33,7 +33,7 @@ git switch main
 git pull --ff-only origin main
 git switch -c docs/환경-안내
 # 문서 수정 후
-git add README.md docs/onboarding.md
+git add README.md docs/01-start/onboarding.md
 git commit -m "docs: 개발 안내 보완"
 git push -u origin docs/환경-안내
 ```

@@ -1,6 +1,6 @@
 # 인증 구현 기준
 
-이 문서는 승인된 D1 A·B·C 정책의 팀 구현 기준이다. 앱 JWT는 PyJWT, Google OAuth/OIDC는 Authlib, 비밀번호 해시는 `argon2-cffi`를 선택했다. 이 라이브러리는 아직 프로젝트 의존성에 추가되지 않았다. [기술 구성](stack.md)에 현재 상태를 정리했다. 경로별 요청·응답은 [공통 API 형식](api.md), 저장 제약은 [DB 설계](database.md)를 따른다. 현재 앱의 인증 경로는 아직 구현되지 않았으며 운영 Origin·키·Google 자격 증명과 공유 로그인 제한 방식은 배포 전에 정한다.
+이 문서는 승인된 D1 A·B·C 정책의 팀 구현 기준이다. 앱 JWT는 PyJWT, Google OAuth/OIDC는 Authlib, 비밀번호 해시는 `argon2-cffi`를 선택했다. 이 라이브러리는 아직 프로젝트 의존성에 추가되지 않았다. [기술 구성](../01-start/stack.md)에 현재 상태를 정리했다. 경로별 요청·응답은 [공통 API 형식](api.md), 저장 제약은 [DB 설계](database.md)를 따른다. 현재 앱의 인증 경로는 아직 구현되지 않았으며 운영 Origin·키·Google 자격 증명과 공유 로그인 제한 방식은 배포 전에 정한다.
 
 여기서 **확인된 사용자 정보(principal)**는 서버가 로그인 자격을 검사해 얻은 사용자 ID다. **계보(lineage)**는 한 번의 로그인에서 시작해 refresh 토큰을 교체하며 이어진 세션들의 연결이다.
 

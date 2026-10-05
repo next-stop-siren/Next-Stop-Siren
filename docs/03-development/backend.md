@@ -1,6 +1,6 @@
 # 백엔드 작업 지침
 
-FastAPI에서는 라우터가 HTTP 입력·출력을, 서비스가 업무 처리를, 저장소 계층이 SQLAlchemy 2.x ORM을 통한 PostgreSQL 접근을 맡는다. 요청·응답의 Pydantic 모델은 ORM 모델과 분리한다. 공통 동기 엔진·세션·모델 등록은 `app.db`와 `app.models`에 있다. 현재의 상태 확인 경로는 기존 `psycopg` 연결을 사용한다. [기술 구성](stack.md)에 현재와 선택한 구성을 구분했다. 외부 AI 호출은 별도 모듈에 모아 시간 제한과 실패 처리를 둔다. `app/api/`, `app/services/`, `app/repositories/`, `app/integrations/`처럼 책임이 드러나는 구조를 기본으로 한다.
+FastAPI에서는 라우터가 HTTP 입력·출력을, 서비스가 업무 처리를, 저장소 계층이 SQLAlchemy 2.x ORM을 통한 PostgreSQL 접근을 맡는다. 요청·응답의 Pydantic 모델은 ORM 모델과 분리한다. 공통 동기 엔진·세션·모델 등록은 `app.db`와 `app.models`에 있다. 현재의 상태 확인 경로는 기존 `psycopg` 연결을 사용한다. [기술 구성](../01-start/stack.md)에 현재와 선택한 구성을 구분했다. 외부 AI 호출은 별도 모듈에 모아 시간 제한과 실패 처리를 둔다. `app/api/`, `app/services/`, `app/repositories/`, `app/integrations/`처럼 책임이 드러나는 구조를 기본으로 한다.
 
 ## 코드와 인증
 
@@ -38,7 +38,7 @@ Python 모듈·함수·변수는 `snake_case`, 클래스는 `PascalCase`를 쓴�
 
 같은 이메일의 Google 계정과 로컬 계정은 별개다. 이메일 일치만으로 계정을 연결하지 않는다. 계정 연결 기능은 이번 범위에 없다.
 
-승인된 비밀번호 해시·로그인 제한, JWT 종류·서명·절대 만료, refresh 교체·재사용·CSRF·logout 규칙은 [인증 구현 기준](authentication.md)을 따른다. 같은 사용자의 로그인·refresh·logout은 사용자 행을 잠가 순서대로 처리한다. 쿠키·토큰은 DB 변경을 저장한 뒤에만 발급한다. logout 뒤 이미 발급한 access는 최대 15분 유효하다.
+승인된 비밀번호 해시·로그인 제한, JWT 종류·서명·절대 만료, refresh 교체·재사용·CSRF·logout 규칙은 [인증 구현 기준](../04-reference/authentication.md)을 따른다. 같은 사용자의 로그인·refresh·logout은 사용자 행을 잠가 순서대로 처리한다. 쿠키·토큰은 DB 변경을 저장한 뒤에만 발급한다. logout 뒤 이미 발급한 access는 최대 15분 유효하다.
 
 보호된 요청과 사용자별 대화 조회·변경에서는 서버에서 확인한 사용자 ID와 소유권을 검사한다.
 
@@ -50,9 +50,9 @@ Python 모듈·함수·변수는 `snake_case`, 클래스는 `PascalCase`를 쓴�
 
 ## API·DB 변경과 검사
 
-백엔드 형식 정리와 린트에는 이미 구성된 Ruff 명령을 사용한다. 실행 명령과 검사 범위는 루트 [README](../README.md)와 `backend/pyproject.toml`을 확인하고 PR 검사 결과에 포함한다.
+백엔드 형식 정리와 린트에는 이미 구성된 Ruff 명령을 사용한다. 실행 명령과 검사 범위는 루트 [README](../../README.md)와 `backend/pyproject.toml`을 확인하고 PR 검사 결과에 포함한다.
 
-API 요청·응답 형식에는 메서드·경로, 인증 필요 여부, 요청·성공 응답, 필드 제약, 오류 상태와 예시를 적는다. 잘못된 입력은 4xx, 서버·외부 의존성 실패는 5xx로 구분한다. 첫 모의 응답의 구체적인 형식은 [공통 API 형식](api.md)에 있다. 후속 경로는 실제 구현 전에 화면 담당자와 함께 검토한다.
+API 요청·응답 형식에는 메서드·경로, 인증 필요 여부, 요청·성공 응답, 필드 제약, 오류 상태와 예시를 적는다. 잘못된 입력은 4xx, 서버·외부 의존성 실패는 5xx로 구분한다. 첫 모의 응답의 구체적인 형식은 [공통 API 형식](../04-reference/api.md)에 있다. 후속 경로는 실제 구현 전에 화면 담당자와 함께 검토한다.
 
 API 탐색은 FastAPI가 제공하는 Swagger UI를 기본으로 하고 Postman은 선택 도구로 쓴다.
 
