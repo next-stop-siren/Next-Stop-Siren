@@ -95,6 +95,24 @@ class LocalAutomationTest(unittest.TestCase):
                 local.test_db()
             compose.assert_not_called()
 
+    def test_rejected_test_schema_initialization_never_runs_sql_or_compose(self):
+        with patch.object(local, "checked_test_url", side_effect=local.Failure("unsafe target", 2)), \
+             patch.object(local, "compose") as compose, patch.object(local, "run") as command:
+            with self.assertRaises(local.Failure):
+                local.db_init_test()
+            compose.assert_not_called()
+            command.assert_not_called()
+
+    def test_dev_schema_initialization_refuses_foreign_container_before_sql(self):
+        settings = {"DATABASE_URL": "postgresql://dev:secret@127.0.0.1:55432/dev",
+                    "DEV_DB_USER": "dev", "DEV_DB_PASSWORD": "secret", "DEV_DB_NAME": "dev"}
+        with patch.object(local, "preflight"), patch.object(local, "read_settings", return_value=settings), \
+             patch.object(local, "ensure_dev_container", side_effect=local.Failure("foreign", 2)), \
+             patch.object(local, "run") as command:
+            with self.assertRaises(local.Failure):
+                local.db_init()
+            command.assert_not_called()
+
     def test_test_database_restores_initially_stopped_service(self):
         calls = []
         with patch.object(local, "checked_test_url", return_value="validated"), \
