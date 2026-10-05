@@ -1,7 +1,7 @@
 -- PostgreSQL 17 DB 설계 참고안. 실행/적용되지 않았음.
 -- 초기 빈 개발·테스트 DB 테이블은 SQLAlchemy ORM metadata.create_all()로 만든다.
 -- 이 SQL은 bigint·유일성·복합 FK·RESTRICT·CHECK 제약의 비교 자료이며 앱 초기화 명령은 아니다.
--- digest 산출법과 토큰 수명·회전·재사용 정책은 승인된 docs/authentication.md를 따른다.
+-- digest 산출법과 토큰 수명·회전·재사용 정책은 승인된 docs/04-reference/authentication.md를 따른다.
 -- 초기 계정/대화 삭제 기능 없음. 모든 FK는 ON DELETE RESTRICT.
 
 CREATE TABLE users (

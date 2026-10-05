@@ -4,7 +4,7 @@
 
 이 저장소의 구현 기준은 React·TypeScript·Vite 화면, FastAPI 서버, PostgreSQL이다. 선택한 ORM·인증 라이브러리와 현재 의존성의 차이는 [기술 구성](stack.md)에 정리했다. 공통 설정은 PM이 검토한다. 팀원은 같은 저장소와 잠금 파일을 사용하며 개인별로 프로젝트를 다시 초기화하지 않는다.
 
-초기 앱과 macOS·Windows 수동 실행 명령은 루트 [README](../README.md)에 있다. macOS Colima의 DB 런타임은 검증했으며 Windows 실행은 아직 검증하지 않았다.
+초기 앱과 macOS·Windows 수동 실행 명령은 루트 [README](../../README.md)에 있다. macOS Colima의 DB 런타임은 검증했으며 Windows 실행은 아직 검증하지 않았다.
 
 ### Node.js·npm
 
@@ -43,7 +43,7 @@ macOS에는 Git과 실행 중인 Docker 엔진·Compose(Colima 또는 Docker Des
 
 개발 DB는 Compose의 별도 서비스·볼륨으로 유지한다. 테스트는 개발 DB와 다른 이름·접속 정보·볼륨의 전용 PostgreSQL을 쓴다. 테스트 시작 전 대상 DB가 테스트 전용인지 확인하고, 개발 DB를 가리키면 즉시 실패시킨다.
 
-[공통 ORM 초기 준비](stack.md#개발과-초기-db)는 이 변경에서 구현 중이다. `setup`은 테이블을 생성하지 않는다. `db-init`·`db-init-test`는 등록된 앱 모델의 누락 테이블만 생성하며 현재 등록 모델이 없어 정상적으로 0개를 보고한다. `test-db`는 별도 테스트 전용 모델을 검사한다. #3·#9는 독립 검토와 병합을 거친 공통 준비 게이트 뒤 시작한다.
+[공통 ORM 초기 준비](stack.md#개발과-초기-db)는 현재 `main`에 구현되어 있다. `setup`은 테이블을 생성하지 않는다. `db-init`·`db-init-test`는 등록된 앱 모델의 누락 테이블만 생성하며 현재 등록 모델이 없어 정상적으로 0개를 보고한다. `test-db`는 별도 테스트 전용 모델을 검사한다. #3·#9는 공통 준비와 각 이슈의 직접 선행 조건을 확인한 뒤 시작한다.
 
 운영 대상은 [단일 AWS EC2의 Compose 구성](stack.md#선택한-배포-구성)이다. 운영 컨테이너 구성과 배포 검증은 아직 구현되지 않았다.
 

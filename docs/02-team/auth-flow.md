@@ -31,7 +31,7 @@ flowchart TD
   N18 --> N19
   classDef external stroke-dasharray:5 4;
   class PM,N10,N11,N17,N18 external;
-  click PM "stack.md#개발과-초기-db" "공통 ORM 준비 보기"
+  click PM "../01-start/stack.md#개발과-초기-db" "공통 ORM 준비 보기"
   click N2 "https://github.com/next-stop-siren/Next-Stop-Siren/issues/2" "이슈 #2 열기"
   click N3 "https://github.com/next-stop-siren/Next-Stop-Siren/issues/3" "이슈 #3 열기"
   click N4 "https://github.com/next-stop-siren/Next-Stop-Siren/issues/4" "이슈 #4 열기"
@@ -63,4 +63,4 @@ flowchart TD
 - **#5·#6·#7 → #17:** 세 로그인 결과를 화면 담당에게 인계한다. #17은 #16까지 포함한 네 선행 조건을 따른다.
 - **#10·#11·#17·#18 → #19:** 네 결과가 모두 준비되면 인증·채팅·화면을 연동한다. 화면 작업을 기다리는 동안 승인된 형식의 연동 검사를 준비할 수 있다.
 
-[인증 기준](authentication.md) · [API 형식](api.md) · [DB 설계](database.md)
+[인증 기준](../04-reference/authentication.md) · [API 형식](../04-reference/api.md) · [DB 설계](../04-reference/database.md)

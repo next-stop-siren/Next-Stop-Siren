@@ -17,14 +17,14 @@
 
 데이터의 논리 구조는 `users`, `auth_identities`, `refresh_sessions`, `conversations`, `messages` 다섯 테이블이다. 사용자 소유권은 서버에서 확인한 사용자 정보(서버가 로그인 자격을 확인해 얻은 사용자 ID)를 기준으로 검사한다.
 
-컬럼·관계·담당 순서와 구현 전 결정 경계는 [데이터베이스 설계](database.md)에 있다. 초기 범위에는 계정·대화 삭제 기능이 없고, FK `ON DELETE RESTRICT`는 참조되는 행의 삭제를 막는다.
+컬럼·관계·담당 순서와 구현 전 결정 경계는 [데이터베이스 설계](../04-reference/database.md)에 있다. 초기 범위에는 계정·대화 삭제 기능이 없고, FK `ON DELETE RESTRICT`는 참조되는 행의 삭제를 막는다.
 
 가짜 테스트 데이터는 가짜 사용자와 응답만 사용한다.
 
 다음 결정과 구현 검증이 남아 있다.
 
 - 초기 ORM 모델·빈 개발/테스트 DB 초기화 검증, 이후 스키마 변경 절차와 데이터 보존 기간·일괄 삭제·백업 처리
-- 승인된 [인증 구현 기준](authentication.md)의 실제 구현과 검증, 배포 Origin·키·Google client 및 로그인 제한 방식
+- 승인된 [인증 구현 기준](../04-reference/authentication.md)의 실제 구현과 검증, 배포 Origin·키·Google client 및 로그인 제한 방식
 - AI 제공자, 시험 비용, 회원 한도
 - 스트리밍과 수동 재시도 규칙
 
@@ -32,10 +32,10 @@
 
 ## 처음 맡을 수 있는 작업
 
-담당자별 실제 이슈 번호와 시작 순서는 [팀 작업 인계](team-handoff.md)에 있다.
+담당자별 실제 이슈 번호와 시작 순서는 [팀 작업 인계](../02-team/team-handoff.md)에 있다.
 
 1. 인증 백엔드 `yejoo0310`: [#2](https://github.com/next-stop-siren/Next-Stop-Siren/issues/2)에서 후속 검사에 재사용할 pytest fixture를 만들고 인증 없는 요청의 401 응답을 확인한다.
 2. 채팅·데이터 백엔드 `davekim-dev`: 공통 ORM 준비가 main에 병합됐다. [#3](https://github.com/next-stop-siren/Next-Stop-Siren/issues/3)의 검증·병합 뒤 [#9](https://github.com/next-stop-siren/Next-Stop-Siren/issues/9)에서 대화·메시지 ORM 모델을 만들고 DB 제약을 검사한다. #9 검증·병합 뒤 [#8](https://github.com/next-stop-siren/Next-Stop-Siren/issues/8)의 소유권 조회 함수와 pytest 검사를 맡는다.
 3. 프론트엔드 `gittul-123`: [#16](https://github.com/next-stop-siren/Next-Stop-Siren/issues/16)에서 비회원 소개와 사람이 작성한 고정 예시 화면을 만든다.
 
-담당 역할은 [역할과 인계](roles.md)를, 구현과 검증 흐름은 [협업 안내](workflow.md)를 확인한다.
+담당 역할은 [역할과 인계](../02-team/roles.md)를, 구현과 검증 흐름은 [협업 안내](../03-development/workflow.md)를 확인한다.
