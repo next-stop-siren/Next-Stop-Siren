@@ -1,6 +1,6 @@
 # 기술 구성과 실행 경계
 
-현재 앱은 화면에서 API와 PostgreSQL 연결 상태를 확인한다. 아래의 **선택한 구성** 중 로그인·채팅·운영 배포는 아직 구현되지 않았다. 각 기능의 요청·응답과 처리 규칙은 [API](api.md), [DB](database.md), [인증](authentication.md) 기준을 따른다.
+현재 앱은 화면에서 API와 PostgreSQL 연결 상태를 확인한다. 아래의 **선택한 구성** 중 로그인·채팅·운영 배포는 아직 구현되지 않았다. 각 기능의 요청·응답과 처리 규칙은 [API](../04-reference/api.md), [DB](../04-reference/database.md), [인증](../04-reference/authentication.md) 기준을 따른다.
 
 | 영역 | 현재 저장소 | 선택한 구현 기준 |
 | --- | --- | --- |
@@ -17,10 +17,10 @@
 
 로컬 개발에서는 Vite와 Uvicorn을 호스트에서 실행하고 Compose의 분리된 개발·테스트 PostgreSQL을 사용한다. 기존 localhost 포트와 테스트 DB 보호 규칙은 [공통 환경](environment.md)과 [실행 체크리스트](onboarding.md)를 따른다.
 
-- **공통 준비:** `app.db`의 Base·동기 Session, `app.models.register_models`, `db-init`·`db-init-test`, 보호된 테스트 DB 명령이 구현되어 있다. PM 완료 게이트는 독립 검토·병합 후 확인한다. 공통 준비 완료 조건은 잠금 의존성·엔진·세션(한 작업의 DB 읽기·쓰기를 묶는 객체)·모델 등록, `local.sh`·`local.ps1` 연동, 빈 DB 초기화, 개발/테스트 DB 보호, 재사용 테스트 세션, 자동 삭제 없이 반복 검증하는 방법을 확인하는 것이다.
+- **공통 준비:** `app.db`의 Base·동기 Session, `app.models.register_models`, `db-init`·`db-init-test`, 보호된 테스트 DB 명령이 구현되어 있다. 이 공통 코드와 명령은 현재 `main`에 병합되어 있다. 엔진·세션(한 작업의 DB 읽기·쓰기를 묶는 객체)·모델 등록과 두 OS용 명령, 개발/테스트 DB 보호 및 테스트 세션의 사용법은 [온보딩](onboarding.md)에 정리했다.
 - **초기 생성:** 빈 개발·테스트 DB의 테이블은 ORM 모델 메타데이터에 `create_all()`을 적용해 만든다. 요청마다 테이블을 만들지 않는다.
 - **기존 DB 변경:** `create_all()`은 기존 스키마를 `ALTER`하지 않는다. 데이터 삭제·재생성은 자동으로 하지 않는다. 이후 변경에는 적용·복구 및 데이터 영향을 검토한 절차가 먼저 필요하며 도구는 아직 선택하지 않았다.
-- **참고 SQL:** [DDL 참고안](database-reference.sql)은 제약 설계 자료이며 손으로 작성해야 하는 애플리케이션 DDL은 아니다.
+- **참고 SQL:** [DDL 참고안](../04-reference/database-reference.sql)은 제약 설계 자료이며 손으로 작성해야 하는 애플리케이션 DDL은 아니다.
 
 ## 선택한 배포 구성
 

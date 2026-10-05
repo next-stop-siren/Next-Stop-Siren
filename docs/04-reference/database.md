@@ -1,6 +1,6 @@
 # 데이터베이스 설계
 
-현재 앱에는 아래 테이블과 채팅 기능이 아직 없다. 이 문서는 PostgreSQL 17에서 구현할 **5개 테이블의 설계 기준**이다. ORM(테이블과 Python 클래스를 연결하는 모델)인 SQLAlchemy 2.x로 초기 스키마를 정의하며, [DDL 참고안](database-reference.sql)은 제약의 참고 자료이지 실행된 스키마나 필수 수기 DDL이 아니다. 현재 ORM 모델과 초기화 명령은 없다. [기술 구성](stack.md)에 구현 경계를 정리했다.
+현재 앱에는 아래 테이블과 채팅 기능이 아직 없다. 이 문서는 PostgreSQL 17에서 구현할 **5개 테이블의 설계 기준**이다. ORM(테이블과 Python 클래스를 연결하는 모델)인 SQLAlchemy 2.x로 초기 스키마를 정의하며, [DDL 참고안](database-reference.sql)은 제약의 참고 자료이지 실행된 스키마나 필수 수기 DDL이 아니다. 현재 제품 ORM 모델은 없지만 SQLAlchemy Base·세션·모델 등록 지점과 `db-init`·`db-init-test` 명령은 구현되어 있다. [기술 구성](../01-start/stack.md)에 구현 경계를 정리했다.
 
 ```mermaid
 erDiagram
@@ -114,8 +114,8 @@ ORDER BY m.id;
 
 ## 소유자와 초기 적용
 
-1. PM이 기존 `local.sh`·`local.ps1`의 `setup` 흐름과 잠금 파일을 유지하면서 공통 엔진·세션·모델 등록, 개발·테스트 DB 분리, 재사용 가능한 테스트 세션과 초기화 명령을 제공할 계획이다. 명령은 아직 구현되지 않았다. 초기 빈 개발·테스트 DB에서 ORM 메타데이터의 `create_all()`로 테이블을 만든다. 테이블 간 FK 순서는 모델 등록과 메타데이터가 다룬다.
-2. 인증 담당은 `users`, `auth_identities`, `refresh_sessions` ORM 모델과 DB 검사를 맡는다. 채팅 담당은 인증 모델을 인계받아 `conversations`, `messages` ORM 모델과 DB 검사를 맡는다. 직접 선행 관계는 [공정진행도](development-flow.md)의 #3 → #9 → #8 → #10을 따른다.
+1. PM 공통 엔진·세션·모델 등록, 개발·테스트 DB 분리, 테스트 세션과 초기화 명령은 현재 `main`에 구현되어 있다. 제품 모델 등록 지점은 비어 있어 현재 초기화할 제품 테이블은 없다. 초기 빈 개발·테스트 DB에서 ORM 메타데이터의 `create_all()`로 테이블을 만든다. 테이블 간 FK 순서는 모델 등록과 메타데이터가 다룬다.
+2. 인증 담당은 `users`, `auth_identities`, `refresh_sessions` ORM 모델과 DB 검사를 맡는다. 채팅 담당은 인증 모델을 인계받아 `conversations`, `messages` ORM 모델과 DB 검사를 맡는다. 직접 선행 관계는 [공정진행도](../02-team/development-flow.md)의 #3 → #9 → #8 → #10을 따른다.
 3. 조회 함수는 사용자 소유권 조건을 포함하고, API 요청·응답의 Pydantic 모델과 ORM 모델을 분리한다. 실제 JWT/Google 보호와 사용자 간 격리는 통합 때 확인한다.
 
 `create_all()`은 기존 테이블을 `ALTER`하지 않는다. 기존 데이터나 스키마를 자동 삭제·재생성하지 않고 요청마다 테이블을 만들지 않는다. 이후 기존 스키마 변경은 적용·복구와 데이터 영향을 검토한 명시적 절차를 먼저 정한다. 도구는 아직 선택하지 않았다.

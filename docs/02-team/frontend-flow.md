@@ -63,4 +63,4 @@ flowchart TD
 - **#10·#11·#17 → #18:** 대화 API와 모의 답변 저장·재조회 결과를 받아 완성 답변 화면에 연결한다. #17·#18 결과는 #19 공동 연동에 인계한다.
 - **#13·#18 → #20, #14·#18 → #21:** 서버의 스트리밍·재시도 결과와 화면 동작을 함께 확인한다. 관련 규칙은 PM 결정 후 구현한다.
 
-[화면 지침](frontend.md) · [API 형식](api.md) · [인증 기준](authentication.md)
+[화면 지침](../03-development/frontend.md) · [API 형식](../04-reference/api.md) · [인증 기준](../04-reference/authentication.md)
