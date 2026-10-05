@@ -57,3 +57,21 @@ def validate_test_database(url: str | None, settings: dict[str, str]) -> str:
 def guarded_url() -> str:
     root = Path(__file__).resolve().parents[2]
     return validate_test_database(os.environ.get("TEST_DATABASE_URL"), read_settings(root / ".env"))
+
+
+def guarded_live_url() -> str:
+    """Check URL, Compose ownership, container, port and volume before connecting."""
+    import sys
+
+    root = Path(__file__).resolve().parents[2]
+    sys.path.insert(0, str(root / "scripts"))
+    import local
+
+    url = local.checked_test_url()
+    local.ensure_test_compose_target()
+    container_id = local.test_db_state()
+    if not container_id:
+        raise UnsafeTestDatabase("Dedicated local db-test container is not running")
+    container_id = local.inspect_test_container(container_id)
+    local.verify_host_database(url, container_id)
+    return url

@@ -2,11 +2,17 @@
 
 Next-Stop-Siren은 사용자 질문에 답하는 챗봇을 만들기 위한 프로젝트입니다. 현재 구현은 화면에서 API와 PostgreSQL 연결 상태를 확인하는 준비 단계입니다. 로그인, 채팅, AI 호출은 아직 구현되지 않았습니다.
 
-제품 범위와 향후 계획은 [서비스 범위](docs/service-scope.md), [API 기준](docs/api.md), [DB 설계](docs/database.md), [인증 기준](docs/authentication.md)를 참고하세요. 팀 작업은 [처음 맡을 작업과 인계](docs/team-handoff.md), 실행 세부사항은 [온보딩](docs/onboarding.md)과 [품질·테스트 지침](docs/quality.md)에 있습니다.
+제품 범위와 향후 계획은 [서비스 범위](docs/01-start/service-scope.md), [기술 구성](docs/01-start/stack.md), [API 기준](docs/04-reference/api.md), [DB 설계](docs/04-reference/database.md), [인증 기준](docs/04-reference/authentication.md)를 참고하세요. 팀 작업은 [처음 맡을 작업과 인계](docs/02-team/team-handoff.md), 실행 세부사항은 [온보딩](docs/01-start/onboarding.md)과 [품질·테스트 지침](docs/03-development/quality.md)에 있습니다.
+
+공통 SQLAlchemy Base·세션·초기화 명령은 `main`에 포함되어 있습니다. 현재 등록된 제품 ORM 모델은 없어 `db-init`으로 만들 제품 테이블은 없습니다. 인증·채팅 구현의 직접 선행 작업은 [공정진행도](docs/02-team/development-flow.md)를 참고하세요.
+
+## 문서 안내
+
+[문서 지도](docs/README.md)에서 시작하세요. 실행은 [온보딩](docs/01-start/onboarding.md), 담당별 작업은 [팀 인계](docs/02-team/team-handoff.md), API·DB·인증 정책은 [참조 문서](docs/README.md)를 확인하세요.
 
 ## 빠른 시작
 
-저장소는 비공개이므로 GitHub 저장소 접근 권한과 인증이 필요합니다. Git, 실행 중인 Docker 엔진 및 Compose는 먼저 준비하세요. `setup`은 Node.js·npm·Python·uv를 프로젝트 캐시에 설치하거나 재사용하고, 잠금 파일 기준으로 React/FastAPI 의존성을 설치합니다. PostgreSQL은 Compose로 실행합니다. 화면과 API는 호스트에서 실행합니다.
+공개 저장소 복제에는 GitHub 인증이 필요하지 않습니다. 변경 사항을 원격 저장소에 올리려면 별도 쓰기 권한이 필요합니다. Git, 실행 중인 Docker 엔진 및 Compose는 먼저 준비하세요. `setup`은 Node.js·npm·Python·uv를 프로젝트 캐시에 설치하거나 재사용하고, 잠금 파일 기준으로 React/FastAPI 의존성을 설치합니다. PostgreSQL은 Compose로 실행합니다. 화면과 API는 호스트에서 실행합니다.
 
 ### macOS 터미널
 
@@ -45,7 +51,7 @@ Swagger 화면은 FastAPI에 등록된 경로와 요청·응답 모델을 보여
 - `compose.yaml`: 개발·테스트 PostgreSQL 서비스
 - `docs/`: 제품 범위, API·DB·인증 기준, 온보딩 및 팀 지침
 
-현재 Compose에는 DB만 있습니다. 프런트엔드와 API는 위 명령으로 호스트에서 실행합니다. AWS 배포는 목표 환경이지만 구체적인 구성은 미정이고 배포는 구현되지 않았습니다. `build`는 프런트엔드 산출물만 만듭니다.
+현재 Compose에는 개발·테스트 DB만 있습니다. 프런트엔드와 API는 위 명령으로 호스트에서 실행합니다. 운영 대상은 [단일 AWS EC2의 Nginx·백엔드·PostgreSQL Compose 구성](docs/01-start/stack.md#선택한-배포-구성)으로 정했으며, 배포는 아직 구현되지 않았습니다. `build`는 프런트엔드 산출물만 만듭니다.
 
 ## 명령어
 
@@ -59,13 +65,15 @@ Swagger 화면은 FastAPI에 등록된 경로와 요청·응답 모델을 보여
 | `quality` | 프런트엔드 포맷·린트·타입 검사와 백엔드 Ruff·mypy 검사 |
 | `build` | 프런트엔드 빌드 |
 | `test-unit` | DB 없이 백엔드 API·주소 보호와 프런트엔드 단위 검사 |
-| `test-db` | 전용 테스트 DB에서 읽기 전용 `SELECT 1` |
+| `test-db` | 전용 테스트 DB에서 `SELECT 1`과 롤백되는 ORM 테이블·세션 검사 |
+| `db-init` | 등록된 앱 모델의 누락 테이블만 개발 DB에 생성 |
+| `db-init-test` | 전용 테스트 DB 보호 검사 후 누락 테이블만 생성 |
 | `test-e2e` | 전용 테스트 DB·API·화면을 연결한 Chromium 검사 |
 | `test` | `test-unit`, `test-db`, `test-e2e` 순서로 실행 |
 | `stop` | 이 프로젝트의 개발·테스트 DB 컨테이너만 중지, 데이터 보존 |
 | `clean` | 프런트엔드 빌드/Vite 캐시와 알려진 Python 캐시 정리 |
 
-`test-db`, `test-e2e`, `test`에는 실제 테스트 DB 주소를 `TEST_DATABASE_URL`에 지정해야 합니다. macOS에서 URL을 만드는 명령과 자세한 테스트 절차는 [온보딩 §4 테스트와 품질 검사](docs/onboarding.md#4-테스트와-품질-검사)를 따르세요. Windows에서는 `windows-check.ps1`이 테스트 URL을 자체 구성·검증합니다.
+`test-db`, `test-e2e`, `test`, `db-init-test`에는 실제 테스트 DB 주소를 `TEST_DATABASE_URL`에 지정해야 합니다. macOS에서 URL을 만드는 명령과 자세한 테스트 절차는 [온보딩 §4 테스트와 품질 검사](docs/01-start/onboarding.md#4-테스트와-품질-검사)를 따르세요. Windows에서는 `windows-check.ps1`이 테스트 URL을 자체 구성·검증합니다.
 
 Windows 전체 환경 검사는 저장소 루트에서 `.\windows-check.ps1`을 실행합니다. 첫 실패에서 멈추며 결과 요약은 `.cache/windows-check/report.json`에 기록됩니다. Windows 실제 실행은 아직 **NOT RUN**입니다.
 
@@ -73,4 +81,4 @@ Windows 전체 환경 검사는 저장소 루트에서 `.\windows-check.ps1`을 
 
 ## 확인 범위
 
-macOS Colima 환경에서 프로젝트 도구 설치·재사용, 잠금 의존성 설치, DB 준비와 기본 검사를 확인했습니다. Git과 Docker는 이미 준비된 호스트였습니다. Windows PowerShell의 실제 실행은 **NOT RUN**입니다. [온보딩 문서](docs/onboarding.md)에서 확인된 조건과 Windows 체크 결과를 확인하세요.
+macOS Colima 환경에서 프로젝트 도구 설치·재사용, 잠금 의존성 설치, DB 준비와 기본 검사를 확인했습니다. Git과 Docker는 이미 준비된 호스트였습니다. Windows PowerShell의 실제 실행은 **NOT RUN**입니다. [온보딩 문서](docs/01-start/onboarding.md)에서 확인된 조건과 Windows 체크 결과를 확인하세요.

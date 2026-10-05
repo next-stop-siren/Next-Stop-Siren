@@ -1,27 +1,12 @@
-# 팀 개발 문서 안내
+# 문서 지도
 
-이 저장소는 React·TypeScript·Vite 화면, FastAPI 서버, PostgreSQL을 사용하는 챗봇 프로젝트의 공통 개발 규칙을 담는다. 현재 앱은 API·DB 연결 확인 단계다. 초기 앱, 의존성 잠금 파일과 로컬 실행 명령은 루트 [README](../README.md)에 있다.
+현재 앱은 React 화면에서 FastAPI와 PostgreSQL의 준비 상태를 확인합니다. 제품 로그인·채팅·AI와 운영 배포는 아직 구현되지 않았습니다. 실행 명령과 현재 기능은 루트 [README](../README.md)에 있습니다.
 
-처음 참여한다면 [공통 환경](environment.md)에서 설치 전제를 확인하고 [실행 체크리스트](onboarding.md)를 따른다. 변경 작업은 [협업 흐름](workflow.md)과 [품질 지침](quality.md)을 확인한다. 아래 문서의 로그인·채팅 계획은 후속 단계의 기준이며 현재 동작을 설명하지 않는다.
+| 폴더 | 문서 |
+| --- | --- |
+| [01-start/](01-start/) | [서비스 범위](01-start/service-scope.md) · [기술 구성](01-start/stack.md) · [환경](01-start/environment.md) · [온보딩](01-start/onboarding.md) |
+| [02-team/](02-team/) | [역할](02-team/roles.md) · [팀 인계](02-team/team-handoff.md) · [공정진행도](02-team/development-flow.md) · [인증 공정](02-team/auth-flow.md) · [채팅 공정](02-team/chat-flow.md) · [화면 공정](02-team/frontend-flow.md) |
+| [03-development/](03-development/) | [협업 흐름](03-development/workflow.md) · [품질](03-development/quality.md) · [서버](03-development/backend.md) · [화면](03-development/frontend.md) |
+| [04-reference/](04-reference/) | [API](04-reference/api.md) · [DB](04-reference/database.md) · [인증](04-reference/authentication.md) · [DDL 참고안](04-reference/database-reference.sql) |
 
-읽는 순서는 다음과 같다.
-
-1. [공통 환경](environment.md)과 [실행 체크리스트](onboarding.md)로 현재 앱을 실행한다.
-2. [역할](roles.md)과 [처음 맡을 작업](team-handoff.md)에서 담당 범위와 첫 이슈를 확인한다.
-3. [서비스 범위](service-scope.md)를 읽고 담당 분야의 [화면](frontend.md) 또는 [서버](backend.md) 지침을 따른다.
-4. 구현 전에 [API](api.md)·[DB](database.md)·[인증](authentication.md) 기준을 확인하고, PR 전에는 [협업 흐름](workflow.md)과 [품질 지침](quality.md)을 확인한다.
-
-문서를 고칠 때는 한 문단에 한 주제를 두고 긴 절은 짧은 제목과 목록으로 나눈다. 필드 설명 표는 한 필드에 한 행을 쓰며, 현재 동작과 앞으로 구현할 기준을 구분한다.
-
-- [처음 맡을 작업과 인계](team-handoff.md)
-- [서비스 범위와 첫 작업](service-scope.md)
-- [데이터베이스 설계](database.md)
-- [공통 API 형식과 모의 응답](api.md)
-- [인증 구현 기준](authentication.md)
-- [공통 환경과 초기 준비 절차](environment.md)
-- [macOS·Windows 실행 체크리스트](onboarding.md)
-- [프론트엔드](frontend.md)
-- [백엔드와 API](backend.md)
-- [품질·테스트·비밀값](quality.md)
-- [협업 흐름](workflow.md)
-- [역할과 인계](roles.md)
+처음 참여하는 사람은 기술 구성 → 환경 → 온보딩 순서로 읽습니다. 담당자는 팀 인계에서 시작해 공정진행도와 자기 담당 공정을 봅니다. 구현자는 관련 API·DB·인증 기준을 확인하고, PR 전에는 협업 흐름과 품질 지침을 확인합니다. 참조 문서는 후속 구현 기준이며 DDL 참고안은 실행된 스키마가 아닙니다.
