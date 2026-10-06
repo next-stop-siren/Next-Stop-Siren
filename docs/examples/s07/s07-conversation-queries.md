@@ -2,7 +2,7 @@
 
 가짜 사용자 둘로 대화 소유권 조회, 페이지 처리, 다음 AI 문맥에 들어갈 메시지를 확인한 예시다. 테이블 구조와 소유권 기준은 [DB 설계](../../04-reference/database.md), 정렬과 커서는 [공통 API 형식](../../04-reference/api.md)을 따른다. 가짜 행과 SQL 전문은 [s07-conversation-queries.sql](s07-conversation-queries.sql)에 있다.
 
-이 예시는 [#8](https://github.com/next-stop-siren/Next-Stop-Siren/issues/8)의 ORM 조회 함수와 pytest가 따라야 할 기대 결과를 설명하는 참고 자료이며, 그 함수와 검사를 대신하지 않는다. ORM 함수와 pytest는 선행 [#9](https://github.com/next-stop-siren/Next-Stop-Siren/issues/9)의 ORM 모델이 병합된 뒤 같은 브랜치에 추가한다.
+이 예시는 [#8](https://github.com/next-stop-siren/Next-Stop-Siren/issues/8)의 ORM 조회 함수와 pytest가 따르는 기대 결과를 설명하는 참고 자료이며, 그 함수와 검사를 대신하지 않는다. 함수와 검사의 위치는 [ORM 조회 함수와 pytest](#orm-조회-함수와-pytest)에 있다.
 
 이 예시는 마이그레이션이 아니며 실제 AI를 호출하지 않는다. 테이블은 확인할 때만 트랜잭션 안에서 임시로 만들고 되돌린다. 모든 사용자·대화·본문은 가짜다.
 
@@ -143,17 +143,28 @@ ORDER BY m.id;
 (4 rows)
 ```
 
-## pytest로 옮길 검증
+## ORM 조회 함수와 pytest
 
-위 예상 결과는 #9 병합 뒤 main의 공통 테스트 fixture(`orm_test_connection`)를 쓰는 DB pytest로 옮긴다. 조회 함수는 [#10](https://github.com/next-stop-siren/Next-Stop-Siren/issues/10)의 API가 그대로 호출할 수 있게 세션과 서버가 확인한 사용자 ID를 받는다.
+위 SQL은 `backend/app/repositories/conversations.py`의 ORM 조회 함수로 구현했다. 함수는 [#10](https://github.com/next-stop-siren/Next-Stop-Siren/issues/10)의 API가 그대로 호출할 수 있게 세션과 서버가 확인한 사용자 ID를 받는다.
 
-| 검증 | 근거가 되는 예시 |
-| --- | --- |
-| 사용자별 데이터 격리 | A의 `101`·`202` 목록, B의 `502` |
-| 없는 대화와 남의 대화가 같은 결과 | O의 `202`→`501`, `101`→`999` |
-| 본인 소유의 빈 대화는 빈 목록 | O와 B의 `503` |
-| 여러 대화의 정렬·페이지 처리 | A의 두 페이지, B의 두 페이지 |
-| 실패·중단 답변의 AI 문맥 제외 | C |
+| 조회 | 함수 | 결과 |
+| --- | --- | --- |
+| A | `list_conversations` | 대화 목록 |
+| O | `owns_conversation` | 내 대화면 `True` |
+| O 뒤 B | `list_messages` | 찾을 수 없으면 `None`, 내 빈 대화면 빈 목록 |
+| O 뒤 C | `list_context_messages` | 찾을 수 없으면 `None`, 아니면 완료된 메시지 |
+
+예상 결과는 main의 공통 테스트 fixture(`orm_test_connection`)를 쓰는 `backend/tests/test_conversation_queries_db.py`가 검사한다. ID는 DB가 생성하므로 검사는 위 표의 고정 ID 대신 같은 구조의 행을 넣고 돌려받은 ID와 비교한다.
+
+| 검증 | 근거가 되는 예시 | 테스트 |
+| --- | --- | --- |
+| 사용자별 데이터 격리 | A의 `101`·`202` 목록, B의 `502` | `test_each_user_sees_only_their_own_conversations_and_messages` |
+| 없는 대화와 남의 대화가 같은 결과 | O의 `202`→`501`, `101`→`999` | `test_missing_and_another_users_conversation_are_the_same_not_found` |
+| 본인 소유의 빈 대화는 빈 목록 | O와 B의 `503` | `test_own_conversation_without_messages_is_an_empty_list` |
+| 여러 대화의 정렬·페이지 처리 | A의 두 페이지, B의 두 페이지 | `test_conversations_are_paged_by_descending_id`, `test_messages_are_paged_by_ascending_id` |
+| 실패·중단 답변의 AI 문맥 제외 | C | `test_failed_and_interrupted_answers_are_left_out_of_the_context` |
+
+검사는 저장소 루트에서 `./local.sh test-db`(Windows는 `.\local.ps1 test-db`)로 실행한다.
 
 ## PM 결정 대기: 답변이 실패한 질문
 
