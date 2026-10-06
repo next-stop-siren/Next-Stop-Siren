@@ -1,0 +1,58 @@
+name: PR issue metadata
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Existing PR number to refresh
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: write
+
+concurrency:
+  group: pr-issue-metadata-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  inherit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inherit linked issue metadata
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            let trustedRef;
+            if (context.eventName === 'pull_request_target') {
+              trustedRef = context.payload.pull_request.base.sha;
+            } else {
+              const { data: repository } = await github.rest.repos.get({ owner, repo });
+              const { data: branch } = await github.rest.repos.getBranch({ owner, repo, branch: repository.default_branch });
+              trustedRef = branch.commit.sha;
+            }
+            if (!/^[a-f0-9]{40}$/.test(trustedRef)) throw new Error('Invalid trusted base commit.');
+            const { data: file } = await github.rest.repos.getContent({
+              owner, repo, ref: trustedRef, path: '.github/scripts/pr-issue-metadata.cjs'
+            });
+            if (Array.isArray(file) || file.type !== 'file' || file.encoding !== 'base64') {
+              throw new Error('Expected a trusted base helper file.');
+            }
+            const source = Buffer.from(file.content, 'base64').toString('utf8');
+            const helper = { exports: {} };
+            new Function('module', source)(helper);
+            const prNumber = helper.exports.validatePrNumber(
+              context.eventName === 'pull_request_target' ? context.payload.pull_request.number : context.payload.inputs.pr_number
+            );
+            try {
+              const result = await helper.exports.syncMetadata({ github, owner, repo, prNumber });
+              core.info(result);
+              await core.summary.addRaw(result).write();
+            } catch (error) {
+              core.setFailed(`Metadata sync failed; earlier additive updates may have succeeded. ${error.message}`);
+            }
