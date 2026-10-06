@@ -25,6 +25,15 @@ test('fences close only on same sufficiently long marker with whitespace suffix'
     assert.deepEqual(parse(`${marker}\nFixes #3\n${marker}${marker[0]}\nCloses #4`), [4]);
   }
 });
+test('LF, CRLF and lone CR preserve fence exclusion and visible closing references', () => {
+  for (const newline of ['\n', '\r\n', '\r']) {
+    for (const marker of ['```', '~~~']) {
+      assert.deepEqual(parse([marker, 'Closes #3', marker].join(newline)), []);
+      assert.deepEqual(parse([marker, `${marker}example`, 'Closes #3', marker].join(newline)), []);
+      assert.deepEqual(parse([marker, 'Closes #3', `${marker} \t`, 'Fixes #4'].join(newline)), [4]);
+    }
+  }
+});
 test('closing references and lists do not cross lines', () => {
   assert.deepEqual(parse('Fixes\n#1\nCloses #2,\n#3'), [2]);
 });

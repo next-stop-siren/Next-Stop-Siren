@@ -3,7 +3,7 @@
 // Intentionally conservative: only visible, line-local closing references.
 function parseClosingIssues(body, owner, repo) {
   let fence = null;
-  const visible = String(body ?? '').replace(/<!--[\s\S]*?(?:-->|$)/g, '').split('\n').map((line) => {
+  const visible = String(body ?? '').replace(/\r\n?/g, '\n').replace(/<!--[\s\S]*?(?:-->|$)/g, '').split('\n').map((line) => {
     const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
     if (marker) {
       if (!fence) fence = marker[1];
