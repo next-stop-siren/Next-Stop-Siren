@@ -1,0 +1,150 @@
+"""Real PostgreSQL checks for the owner-limited conversation queries.
+
+The rows mirror docs/examples/s07/s07-conversation-queries.md. IDs are generated
+by the database, so the tests compare against the IDs returned when seeding.
+"""
+
+from datetime import UTC, datetime
+from types import SimpleNamespace
+
+import pytest
+from sqlalchemy.orm import Session
+
+from app.models.conversation import Conversation, Message
+from app.models.user import User
+from app.repositories import conversations as repository
+
+pytestmark = pytest.mark.db
+
+NOW = datetime(2026, 1, 2, 3, 6, tzinfo=UTC)
+LATER = datetime(2026, 1, 2, 6, 0, tzinfo=UTC)
+ERROR_CODES = {"failed": "provider_failed", "interrupted": "outcome_unknown"}
+
+
+@pytest.fixture
+def session(orm_test_connection):
+    with Session(orm_test_connection, join_transaction_mode="create_savepoint") as session:
+        yield session
+
+
+def save(session, row):
+    session.add(row)
+    session.flush()
+    return row.id
+
+
+def add_exchange(session, conversation_id, request_key, content, status="completed"):
+    """A question and its first answer; returns both IDs."""
+    question = save(
+        session,
+        Message(
+            conversation_id=conversation_id,
+            role="user",
+            status="completed",
+            content=content,
+            request_key=request_key,
+            completed_at=NOW,
+        ),
+    )
+    if status == "completed":
+        values = dict(content="안녕하세요.", completed_at=NOW)
+    else:
+        values = dict(error_code=ERROR_CODES[status])
+    answer = save(
+        session,
+        Message(
+            conversation_id=conversation_id,
+            role="assistant",
+            status=status,
+            reply_to_message_id=question,
+            attempt_no=1,
+            **values,
+        ),
+    )
+    return question, answer
+
+
+@pytest.fixture
+def seeded(session):
+    """Two users with the same email; the second user's conversation sits between the first user's."""
+    local = save(session, User(email="a@example.test", password_hash="fake-hash"))
+    google = save(session, User(email="a@example.test"))
+    first = save(session, Conversation(user_id=local))
+    other = save(session, Conversation(user_id=google))
+    empty = save(session, Conversation(user_id=local))
+    last = save(session, Conversation(user_id=local))
+    greeting = add_exchange(session, first, "q-demo-1", "안녕?")
+    todo = add_exchange(session, first, "q-demo-2", "오늘 할 일을 정리해 줘.", "failed")
+    again = add_exchange(session, first, "q-demo-3", "방금 질문 다시 답해 줘.", "interrupted")
+    # The same request key is allowed in another conversation.
+    theirs = add_exchange(session, other, "q-demo-1", "다른 사용자의 질문이야.")
+    add_exchange(session, last, "q-demo-1", "새 대화야.")
+    # The oldest conversation was changed most recently; lists must still follow the ID.
+    session.get(Conversation, first).updated_at = LATER
+    session.flush()
+    return SimpleNamespace(
+        local=local,
+        google=google,
+        first=first,
+        other=other,
+        empty=empty,
+        last=last,
+        first_messages=[*greeting, *todo, *again],
+        other_messages=list(theirs),
+        completed_pair=list(greeting),
+        unfinished_answers=[todo[1], again[1]],
+    )
+
+
+def ids(rows):
+    return [row.id for row in rows]
+
+
+def test_each_user_sees_only_their_own_conversations_and_messages(session, seeded):
+    mine = repository.list_conversations(session, seeded.local, limit=20, before_id=None)
+    theirs = repository.list_conversations(session, seeded.google, limit=20, before_id=None)
+    assert ids(mine) == [seeded.last, seeded.empty, seeded.first]
+    assert ids(theirs) == [seeded.other]
+    messages = repository.list_messages(session, seeded.google, seeded.other, limit=20, after_id=None)
+    assert ids(messages) == seeded.other_messages
+
+
+def test_missing_and_another_users_conversation_are_the_same_not_found(session, seeded):
+    missing = seeded.last + 1000
+    for user_id, conversation_id in [(seeded.google, seeded.first), (seeded.local, missing)]:
+        assert repository.owns_conversation(session, user_id, conversation_id) is False
+        assert repository.list_messages(session, user_id, conversation_id, limit=20, after_id=None) is None
+        assert repository.list_context_messages(session, user_id, conversation_id) is None
+
+
+def test_own_conversation_without_messages_is_an_empty_list(session, seeded):
+    assert repository.owns_conversation(session, seeded.local, seeded.empty) is True
+    assert repository.list_messages(session, seeded.local, seeded.empty, limit=20, after_id=None) == []
+    assert repository.list_context_messages(session, seeded.local, seeded.empty) == []
+
+
+def test_conversations_are_paged_by_descending_id(session, seeded):
+    first_page = repository.list_conversations(session, seeded.local, limit=2, before_id=None)
+    assert ids(first_page) == [seeded.last, seeded.empty]
+    second_page = repository.list_conversations(session, seeded.local, limit=2, before_id=first_page[-1].id)
+    assert ids(second_page) == [seeded.first]
+    assert repository.list_conversations(session, seeded.local, limit=2, before_id=seeded.first) == []
+
+
+def test_messages_are_paged_by_ascending_id(session, seeded):
+    first_page = repository.list_messages(session, seeded.local, seeded.first, limit=4, after_id=None)
+    assert ids(first_page) == seeded.first_messages[:4]
+    second_page = repository.list_messages(session, seeded.local, seeded.first, limit=4, after_id=first_page[-1].id)
+    assert ids(second_page) == seeded.first_messages[4:]
+    last_id = seeded.first_messages[-1]
+    assert repository.list_messages(session, seeded.local, seeded.first, limit=4, after_id=last_id) == []
+
+
+def test_failed_and_interrupted_answers_are_left_out_of_the_context(session, seeded):
+    """Whether a question whose answer failed stays is an open PM decision, so it is not pinned here."""
+    context = repository.list_context_messages(session, seeded.local, seeded.first)
+    assert ids(context) == sorted(ids(context))
+    assert ids(context)[:2] == seeded.completed_pair
+    assert not set(seeded.unfinished_answers) & set(ids(context))
+    assert {row.status for row in context} == {"completed"}
+    assert all(row.content for row in context)
