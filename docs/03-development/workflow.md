@@ -44,12 +44,10 @@ CODEOWNERS 파일이나 CI 정의만으로 병합 차단이 생기지 않는다.
 
 ## PR 메타데이터 자동 연결
 
-PR 본문에 `Closes #3`, `Fixes #4, #5` 또는 `Resolves https://github.com/next-stop-siren/Next-Stop-Siren/issues/6`처럼 종료 참조를 적으면 연결 이슈의 라벨을 PR에 추가한다. 기존 라벨은 유지한다. 모든 연결 이슈가 동일한 비어 있지 않은 마일스톤을 가지면 PR에 그 마일스톤을 적용하며, 서로 다르거나 없는 경우 기존 마일스톤을 유지한다. 재실행은 동일 결과를 유지한다.
+- PR 본문에 `Closes #3` 또는 `Fixes #4, #5`를 적는다. 같은 저장소의 전체 이슈 URL도 지원한다.
+- PR 열기·수정·재열기·커밋 갱신 때 연결 이슈 라벨을 추가하고 기존 라벨은 유지한다. 모든 연결 이슈가 동일한 비어 있지 않은 마일스톤을 가지면 적용하며, 다르거나 없으면 기존 마일스톤을 유지한다. 재실행은 같은 결과를 유지한다.
+- 이슈 라벨 변경 후에는 Actions의 **PR issue metadata → Run workflow**에서 양의 정수 `pr_number`로 다시 적용한다. 참조 제거로 라벨·마일스톤을 삭제하지 않는다.
+- 일반 언급, 다른 저장소·PR URL, 주석·인용·코드는 제외한다. 복잡한 Markdown 중첩, 여러 줄 참조 목록, 링크 표시 문법은 지원하지 않는다. 연결이 없으면 변경하지 않는다.
+- 접근·권한 오류는 작업 실패로 표시한다. 실패 전 일부 라벨 추가가 성공했을 수 있으며, 사람이 동시에 수정한 마일스톤은 자동 적용으로 덮어쓸 수 있다.
 
-PR 열기·본문 수정·재열기·커밋 갱신 때 현재 본문을 읽는다. Actions의 **PR issue metadata → Run workflow**에서 양의 정수 `pr_number`를 입력하면 기존 PR에 다시 적용할 수 있다. 이슈 라벨 변경만으로는 실행되지 않는다. 참조 제거로 라벨이나 마일스톤을 삭제하지 않는다.
-
-파서는 같은 저장소의 명시적인 종료 참조와 쉼표/`and` 목록을 줄 단위로 인식한다. 일반 언급, 다른 저장소·PR URL, HTML 주석, 인용 줄, 코드 블록·인라인 코드·들여쓴 코드를 제외한다. 복잡한 Markdown 중첩, 줄을 넘는 참조 목록, 링크 표시 문법은 지원하지 않는다. 링크가 없으면 아무것도 변경하지 않는다. 접근 불가능한 이슈나 권한 오류는 작업 실패로 표시하며, 오류 전 일부 라벨 추가가 성공했을 수 있다.
-
-권한 있는 작업은 PR 코드를 체크아웃하지 않는다. 고정 SHA의 `github-script`가 PR의 신뢰된 base 커밋에서 helper를 읽으며 수동 실행은 기본 브랜치의 현재 커밋에서 읽는다. `contents: read`는 helper 읽기, `issues: read`는 이슈 조회, `pull-requests: write`는 PR 라벨·마일스톤 갱신에 사용한다. fork·draft PR도 같은 경계를 적용한다. 새 워크플로와 helper가 기본 브랜치에 병합되어야 동작한다. 자동 작업 간 동시 실행은 PR별로 직렬화하지만 사람이 동시에 메타데이터를 수정하면 마지막 마일스톤 갱신이 적용될 수 있다.
-
-로컬 focused 검사는 `node --test .github/scripts/pr-issue-metadata.test.cjs`로 실행하며 외부 API 쓰기 없이 모의 응답을 사용한다.
+워크플로와 helper가 기본 브랜치에 병합되어야 동작한다. PR 코드를 체크아웃하지 않고 고정 SHA 액션으로 신뢰된 base 커밋의 helper를 읽는다(수동 실행은 현재 기본 브랜치). 최소 권한은 helper 읽기 `contents: read`, 이슈 조회 `issues: read`, PR 갱신 `pull-requests: write`다. 로컬 검사는 `node --test .github/scripts/pr-issue-metadata.test.cjs`이며 모의 API만 사용한다.

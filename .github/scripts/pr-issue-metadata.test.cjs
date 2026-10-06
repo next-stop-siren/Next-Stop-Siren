@@ -14,6 +14,17 @@ test('plain mentions, foreign issues, PR URLs, malformed numbers and reference s
 test('comments, quotes, inline, fenced, unclosed fenced and indented code excluded', () => {
   assert.deepEqual(parse('<!-- Fixes #1 -->\n> Closes #2\n`Fixes #3`\n```md\nCloses #4\n```\n    Fixes #5\nResolves #6\n~~~\nCloses #7'), [6]);
 });
+test('fences close only on same sufficiently long marker with whitespace suffix', () => {
+  for (const marker of ['```', '~~~']) {
+    const other = marker[0] === '`' ? '~~~' : '```';
+    for (const falseClose of [`${marker}example`, marker.slice(1), other]) {
+      assert.deepEqual(parse(`${marker}\n${falseClose}\nCloses #3\n${marker}`), []);
+    }
+    assert.deepEqual(parse(`${marker}${marker[0]}\n${marker}\nCloses #3\n${marker}${marker[0]}`), []);
+    assert.deepEqual(parse(`${marker}\nFixes #3\n  ${marker} \t\nCloses #4`), [4]);
+    assert.deepEqual(parse(`${marker}\nFixes #3\n${marker}${marker[0]}\nCloses #4`), [4]);
+  }
+});
 test('closing references and lists do not cross lines', () => {
   assert.deepEqual(parse('Fixes\n#1\nCloses #2,\n#3'), [2]);
 });
