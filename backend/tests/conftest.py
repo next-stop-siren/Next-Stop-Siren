@@ -4,11 +4,12 @@ from copy import deepcopy
 from typing import Any
 
 import pytest
-from sqlalchemy import Integer, String, create_engine, inspect
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Integer, String, create_engine, func, inspect, select
+from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.db import Base, psycopg_url
 from app.db_init import initialize_with_engine
+from app.models import register_models
 from auth_helpers import load_auth_cases
 from db_guard import guarded_live_url
 
@@ -61,7 +62,14 @@ def orm_test_connection():
     """A verified test connection whose DDL, savepoints and data all roll back."""
     url = guarded_live_url()
     engine = create_engine(psycopg_url(url), connect_args={"connect_timeout": 3})
-    existed = inspect(engine).has_table(OrmProbe.__tablename__)
+    register_models()
+    before = set(inspect(engine).get_table_names())
+    managed = set(Base.metadata.tables)
+    with engine.connect() as reader:
+        counts_before = {
+            name: reader.scalar(select(func.count()).select_from(Base.metadata.tables[name]))
+            for name in before & managed
+        }
     connection = engine.connect()
     transaction = connection.begin()
     try:
@@ -70,6 +78,18 @@ def orm_test_connection():
     finally:
         transaction.rollback()
         connection.close()
-        if not existed:
-            assert not inspect(engine).has_table(OrmProbe.__tablename__)
-        engine.dispose()
+        try:
+            after = set(inspect(engine).get_table_names())
+            assert after & managed == before & managed
+            with engine.connect() as reader:
+                for name, count in counts_before.items():
+                    assert reader.scalar(select(func.count()).select_from(Base.metadata.tables[name])) == count
+        finally:
+            engine.dispose()
+
+
+@pytest.fixture
+def orm_test_session(orm_test_connection):
+    """Allow model tests to commit without committing the outer transaction."""
+    with Session(orm_test_connection, join_transaction_mode="create_savepoint") as session:
+        yield session
