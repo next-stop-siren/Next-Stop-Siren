@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import delete, inspect, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.schema import CreateSchema
 
 from app.db_init import initialize_with_engine
 from app.models.auth_identity import AuthIdentity
@@ -314,3 +315,38 @@ def test_repeated_initialization_preserves_product_rows_and_savepoint_rollback(o
         rolled_back_id = rolled_back.id
         other.rollback()
     assert orm_test_session.scalar(select(RefreshSession).where(RefreshSession.id == rolled_back_id)) is None
+
+
+def test_empty_schema_initialization_preserves_existing_tables(orm_test_connection, auth_user_a):
+    """Exercise first creation without deleting or altering an existing schema."""
+    engine = orm_test_connection.engine
+    schema = f"s02_test_{uuid4().hex}"
+    public_before = set(inspect(engine).get_table_names(schema="public"))
+    with engine.connect() as connection:
+        transaction = connection.begin()
+        try:
+            connection.execute(CreateSchema(schema))
+            assert inspect(connection).get_table_names(schema=schema) == []
+            translated = connection.execution_options(schema_translate_map={None: schema})
+            initialize_with_engine(translated)
+            product_tables = {"users", "auth_identities", "refresh_sessions"}
+            assert product_tables <= set(inspect(connection).get_table_names(schema=schema))
+            with Session(translated, join_transaction_mode="create_savepoint") as session:
+                user = User(email=auth_user_a["register_input"]["email"], password_hash="fixture-only-hash")
+                session.add(user)
+                session.flush()
+                record = identity(user.id)
+                token = refresh(user.id)
+                session.add_all([record, token])
+                session.commit()
+                initialize_with_engine(translated)
+                assert session.get(AuthIdentity, record.id).user_id == user.id
+                assert session.get(RefreshSession, token.id).token_digest == token.token_digest
+                with rejected(session, "23505", "users_local_email_uq"):
+                    session.add(User(email=user.email.upper(), password_hash="fixture-only-hash"))
+                with rejected(session, "23514", "refresh_sessions_digest_length_check"):
+                    session.add(refresh(user.id, token_digest=b"short"))
+        finally:
+            transaction.rollback()
+    assert schema not in inspect(engine).get_schema_names()
+    assert set(inspect(engine).get_table_names(schema="public")) == public_before
