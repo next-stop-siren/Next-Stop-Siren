@@ -1,9 +1,9 @@
-"""Import application model modules here so initialization sees their tables.
+"""Register application models for schema initialization."""
 
-Product models are introduced by their owning issues; this registry is empty now.
-"""
+from importlib import import_module
 
 
 def register_models() -> None:
-    """Import model modules here as they are added to the application."""
-    from app.models import conversation  # noqa: F401
+    """Import product models; repeated calls reuse the same metadata."""
+    for module in ("user", "auth_identity", "refresh_session", "conversation"):
+        import_module(f"app.models.{module}")
