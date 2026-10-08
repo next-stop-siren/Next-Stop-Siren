@@ -39,7 +39,7 @@ def test_product_registry_is_repeatable_without_test_models():
         check=True,
         timeout=10,
     )
-    assert json.loads(result.stdout) == ["auth_identities", "refresh_sessions", "users"]
+    assert json.loads(result.stdout) == ["auth_identities", "conversations", "messages", "refresh_sessions", "users"]
 
 
 def test_empty_application_registry_needs_no_connection(monkeypatch):
