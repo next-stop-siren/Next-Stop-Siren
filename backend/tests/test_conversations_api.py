@@ -2,14 +2,22 @@
 
 Every user, ID, body and time is fake. The stand-in applies the owner limit and the
 ordering that the repository contract requires; real queries are checked with #8.
+
+Authentication is mocked: the users and the 401 example come from the shared
+authentication fixtures, and a test injects an already verified user ID. No test
+here performs a login or verifies a token.
 """
 
 import asyncio
+import logging
+import re
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import httpx
 import pytest
+from sqlalchemy.exc import InterfaceError, OperationalError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
 from app.api.auth import current_user_id
 from app.db import get_session
@@ -44,14 +52,14 @@ def message(message_id: int, role: str, status: str, created: datetime, **fields
 
 
 class FakeStore:
-    def __init__(self) -> None:
+    def __init__(self, owner: int, other: int) -> None:
         self.commits = 0
         self.calls = 0
         self.conversations = [
-            conversation(501, 101, at(5), at(7)),
-            conversation(502, 202, at(20), at(21)),
-            conversation(503, 101, at(30), at(30)),
-            conversation(BIG_ID, 101, at(40), at(40)),
+            conversation(501, owner, at(5), at(7)),
+            conversation(502, other, at(20), at(21)),
+            conversation(503, owner, at(30), at(30)),
+            conversation(BIG_ID, owner, at(40), at(40)),
         ]
         self.messages = {
             501: [
@@ -122,8 +130,20 @@ class FakeStore:
 
 
 @pytest.fixture
-def store(monkeypatch):
-    fake = FakeStore()
+def owner(auth_user_a) -> int:
+    """The mock verified ID of shared fixture user 101, who owns conversations 501, 503 and BIG_ID."""
+    return auth_user_a["principal"]["user_id"]
+
+
+@pytest.fixture
+def other(auth_user_b) -> int:
+    """The mock verified ID of shared fixture user 202, who owns conversation 502."""
+    return auth_user_b["principal"]["user_id"]
+
+
+@pytest.fixture
+def store(monkeypatch, owner, other):
+    fake = FakeStore(owner, other)
     for name in ("create_conversation", "list_conversations", "list_messages"):
         monkeypatch.setattr(repository, name, getattr(fake, name))
     app.dependency_overrides[get_session] = lambda: fake
@@ -167,37 +187,46 @@ def ids(response: httpx.Response) -> list[str]:
         ("GET", "/api/conversations/abc/messages", {}),
     ],
 )
-def test_unauthenticated_requests_get_401_before_anything_else(store, method, path, kwargs):
-    response = call(method, path, **kwargs)
-    assert response.status_code == 401
-    assert error_of(response) == {"code": "unauthenticated", "message": "로그인이 필요합니다.", "fields": {}}
+def test_unauthenticated_requests_get_401_before_anything_else(store, unauthenticated_case, method, path, kwargs):
+    expected = unauthenticated_case["expected_response"]["error"]
+    response = call(method, path, headers=unauthenticated_case["request_headers"], **kwargs)
+    assert response.status_code == unauthenticated_case["expected_status"]
+    assert error_of(response) == {name: value for name, value in expected.items() if name != "trace_id"}
     assert (store.calls, store.commits) == (0, 0)
 
 
-def test_create_stores_a_conversation_for_the_verified_user(store):
-    sign_in(101)
+def test_create_stores_a_conversation_for_the_verified_user(store, owner):
+    sign_in(owner)
     response = call("POST", "/api/conversations", json={})
     assert response.status_code == 201
     assert response.json() == {
         "conversation": {"id": "601", "created_at": "2026-01-02T03:50:00Z", "updated_at": "2026-01-02T03:50:00Z"}
     }
-    assert store.conversations[-1].user_id == 101
+    assert store.conversations[-1].user_id == owner
     assert store.commits == 1
+
+
+def test_create_rejects_another_users_id_in_the_body(store, principal_body_mismatch_case):
+    """The shared mismatch cases: a body cannot substitute the verified user."""
+    sign_in(principal_body_mismatch_case["expected_principal_user_id"])
+    response = call("POST", "/api/conversations", json=principal_body_mismatch_case["request_body"])
+    assert response.status_code == 422
+    assert set(error_of(response)["fields"]) == {"user_id"}
+    assert (store.calls, store.commits) == (0, 0)
 
 
 @pytest.mark.parametrize(
     ("kwargs", "field"),
     [
-        ({"json": {"user_id": "202"}}, "user_id"),
         ({"json": {"title": "x"}}, "title"),
         ({"json": []}, "body"),
         ({"content": b"{", "headers": {"Content-Type": "application/json"}}, "body"),
         ({}, "body"),
     ],
-    ids=["user_id field", "unknown field", "not an object", "malformed JSON", "no body"],
+    ids=["unknown field", "not an object", "malformed JSON", "no body"],
 )
-def test_create_rejects_any_body_except_an_empty_object(store, kwargs, field):
-    sign_in(101)
+def test_create_rejects_any_body_except_an_empty_object(store, owner, kwargs, field):
+    sign_in(owner)
     response = call("POST", "/api/conversations", **kwargs)
     assert response.status_code == 422
     error = error_of(response)
@@ -206,8 +235,8 @@ def test_create_rejects_any_body_except_an_empty_object(store, kwargs, field):
     assert (store.calls, store.commits) == (0, 0)
 
 
-def test_list_returns_only_my_conversations_newest_first(store):
-    sign_in(101)
+def test_list_returns_only_my_conversations_newest_first(store, owner, other):
+    sign_in(owner)
     response = call("GET", "/api/conversations")
     assert response.status_code == 200
     assert response.json() == {
@@ -218,12 +247,12 @@ def test_list_returns_only_my_conversations_newest_first(store):
         ],
         "next_cursor": None,
     }
-    sign_in(202)
+    sign_in(other)
     assert ids(call("GET", "/api/conversations")) == ["502"]
 
 
-def test_list_pages_by_before_id_without_gaps_or_repeats(store):
-    sign_in(101)
+def test_list_pages_by_before_id_without_gaps_or_repeats(store, owner):
+    sign_in(owner)
     first = call("GET", "/api/conversations?limit=2")
     assert ids(first) == [str(BIG_ID), "503"]
     assert first.json()["next_cursor"] == "503"
@@ -241,8 +270,8 @@ def test_list_is_empty_for_a_user_without_conversations(store):
     assert response.json() == {"items": [], "next_cursor": None}
 
 
-def test_history_returns_messages_in_order_with_the_public_fields(store):
-    sign_in(101)
+def test_history_returns_messages_in_order_with_the_public_fields(store, owner):
+    sign_in(owner)
     response = call("GET", "/api/conversations/501/messages")
     assert response.status_code == 200
     body = response.json()
@@ -286,8 +315,8 @@ def test_history_returns_messages_in_order_with_the_public_fields(store):
     assert "retry_key" not in failed and "conversation_id" not in failed
 
 
-def test_history_pages_by_after_id_without_gaps_or_repeats(store):
-    sign_in(101)
+def test_history_pages_by_after_id_without_gaps_or_repeats(store, owner):
+    sign_in(owner)
     first = call("GET", "/api/conversations/501/messages?limit=3")
     assert ids(first) == ["9001", "9002", "9003"]
     assert first.json()["next_cursor"] == "9003"
@@ -297,14 +326,14 @@ def test_history_pages_by_after_id_without_gaps_or_repeats(store):
     assert call("GET", "/api/conversations/503/messages").json() == {"items": [], "next_cursor": None}
 
 
-def test_another_users_conversation_looks_exactly_like_a_missing_one(store):
-    sign_in(202)
+def test_another_users_conversation_looks_exactly_like_a_missing_one(store, owner, other):
+    sign_in(other)
     others = call("GET", "/api/conversations/501/messages")
     missing = call("GET", "/api/conversations/999/messages")
     assert others.status_code == missing.status_code == 404
     assert error_of(others) == error_of(missing) == {"code": "not_found", "message": "찾을 수 없습니다.", "fields": {}}
     assert call("GET", "/api/conversations/502/messages").status_code == 200
-    sign_in(101)
+    sign_in(owner)
     assert call("GET", "/api/conversations/502/messages").status_code == 404
 
 
@@ -326,8 +355,8 @@ def test_another_users_conversation_looks_exactly_like_a_missing_one(store):
         ("/api/conversations/9223372036854775808/messages", "conversation_id"),
     ],
 )
-def test_invalid_ids_and_page_inputs_get_422(store, path, field):
-    sign_in(101)
+def test_invalid_ids_and_page_inputs_get_422(store, owner, path, field):
+    sign_in(owner)
     response = call("GET", path)
     assert response.status_code == 422
     error = error_of(response)
@@ -336,6 +365,76 @@ def test_invalid_ids_and_page_inputs_get_422(store, path, field):
     assert store.calls == 0
 
 
-def test_the_largest_bigint_id_is_accepted(store):
-    sign_in(101)
+def test_the_largest_bigint_id_is_accepted(store, owner):
+    sign_in(owner)
     assert call("GET", "/api/conversations/9223372036854775807/messages").status_code == 404
+
+
+UNAVAILABLE = {"code": "temporarily_unavailable", "message": "잠시 후 다시 시도해 주세요.", "fields": {}}
+# Details a database error carries and a response must never repeat.
+SECRETS = ("fixture-secret", "secret_table", "db.internal")
+DATABASE_FAILURES = [
+    OperationalError("SELECT * FROM secret_table", {}, Exception("password=fixture-secret host=db.internal")),
+    InterfaceError("SELECT * FROM secret_table", {}, Exception("connection to db.internal is closed")),
+    PoolTimeoutError("pool of db.internal exhausted, fixture-secret"),
+]
+
+
+def failing(error):
+    def fail(*_args, **_kwargs):
+        raise error
+
+    return fail
+
+
+def assert_safe_503(response: httpx.Response, caplog) -> None:
+    """The common 503 body without database details, and a server log entry found by its trace ID."""
+    assert response.status_code == 503
+    trace_id = response.json()["error"]["trace_id"]
+    assert error_of(response) == UNAVAILABLE
+    assert not any(secret in response.text for secret in SECRETS)
+    assert trace_id in caplog.text
+
+
+@pytest.mark.parametrize("error", DATABASE_FAILURES, ids=["operational", "interface", "pool timeout"])
+@pytest.mark.parametrize("path", ["/api/conversations", "/api/conversations/501/messages"], ids=["list", "history"])
+def test_database_failure_while_reading_is_a_safe_503(store, owner, monkeypatch, caplog, path, error):
+    for name in ("list_conversations", "list_messages"):
+        monkeypatch.setattr(repository, name, failing(error))
+    sign_in(owner)
+    with caplog.at_level(logging.ERROR):
+        assert_safe_503(call("GET", path), caplog)
+
+
+@pytest.mark.parametrize("error", DATABASE_FAILURES, ids=["operational", "interface", "pool timeout"])
+def test_failed_save_is_a_safe_503_and_never_a_created_response(store, owner, monkeypatch, caplog, error):
+    """The row is added, then the commit fails; removing the row is checked against PostgreSQL."""
+    monkeypatch.setattr(store, "commit", failing(error))
+    sign_in(owner)
+    with caplog.at_level(logging.ERROR):
+        response = call("POST", "/api/conversations", json={})
+        assert_safe_503(response, caplog)
+    assert "conversation" not in response.json()
+    assert (store.calls, store.commits) == (1, 0)
+
+
+def test_openapi_describes_id_inputs_as_decimal_strings_and_the_common_errors():
+    paths = app.openapi()["paths"]
+    listing = paths["/api/conversations"]["get"]
+    history = paths["/api/conversations/{conversation_id}/messages"]["get"]
+    schemas = {item["name"]: item["schema"] for operation in (listing, history) for item in operation["parameters"]}
+    for name in ("conversation_id", "before_id", "after_id"):
+        # An optional cursor is described as the ID schema or null.
+        schema = next(option for option in schemas[name].get("anyOf", [schemas[name]]) if option.get("type") != "null")
+        assert schema["type"] == "string"
+        assert re.fullmatch(schema["pattern"], "501") and re.fullmatch(schema["pattern"], "9223372036854775807")
+        assert not any(re.fullmatch(schema["pattern"], bad) for bad in ("0", "007", "-1", "1.0", "abc", ""))
+    error_body = {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorBody"}}}
+    assert set(paths["/api/conversations"]["post"]["responses"]) == {"201", "401", "422", "503"}
+    assert set(listing["responses"]) == {"200", "401", "422", "503"}
+    assert set(history["responses"]) == {"200", "401", "404", "422", "503"}
+    for operation, statuses in ((listing, ("401", "422", "503")), (history, ("401", "404", "422", "503"))):
+        assert all(operation["responses"][status]["content"] == error_body for status in statuses)
+    components = app.openapi()["components"]["schemas"]
+    assert components["ConversationOut"]["properties"]["id"]["type"] == "string"
+    assert components["MessageOut"]["properties"]["id"]["type"] == "string"

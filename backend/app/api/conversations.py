@@ -14,13 +14,17 @@ from app.api.schemas import (
     ConversationPage,
     DecimalId,
     EmptyBody,
+    ErrorBody,
     MessageOut,
     MessagePage,
 )
 from app.db import get_session
 from app.repositories import conversations as repository
 
-router = APIRouter(prefix="/api/conversations")
+router = APIRouter(
+    prefix="/api/conversations",
+    responses={401: {"model": ErrorBody}, 422: {"model": ErrorBody}, 503: {"model": ErrorBody}},
+)
 
 # The user ID comes first so that an unauthenticated request never opens a session.
 UserId = Annotated[int, Depends(current_user_id)]
@@ -57,7 +61,7 @@ def list_conversations(
     return ConversationPage(items=items, next_cursor=next_cursor(rows, limit))
 
 
-@router.get("/{conversation_id}/messages")
+@router.get("/{conversation_id}/messages", responses={404: {"model": ErrorBody}})
 def list_messages(
     conversation_id: Annotated[DecimalId, Path()],
     user_id: UserId,

@@ -3,9 +3,16 @@
 from datetime import datetime, timezone
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, PlainSerializer
+from pydantic import BaseModel, BeforeValidator, ConfigDict, PlainSerializer, WithJsonSchema
 
 MAX_ID = 2**63 - 1
+# What OpenAPI shows for an ID input; parse_decimal_id also enforces the bigint range.
+ID_INPUT_SCHEMA = {
+    "type": "string",
+    "pattern": "^[1-9][0-9]{0,18}$",
+    "description": "Decimal string of a positive bigint ID.",
+    "examples": ["501"],
+}
 
 
 def parse_decimal_id(value: object) -> int:
@@ -23,7 +30,7 @@ def utc_text(value: datetime) -> str:
 
 
 # A path or query ID received as a decimal string.
-DecimalId = Annotated[int, BeforeValidator(parse_decimal_id)]
+DecimalId = Annotated[int, BeforeValidator(parse_decimal_id), WithJsonSchema(ID_INPUT_SCHEMA)]
 # A bigint sent as a decimal string, because JavaScript numbers cannot hold every bigint.
 IdText = Annotated[str, BeforeValidator(lambda value: str(value) if isinstance(value, int) else value)]
 UtcTime = Annotated[datetime, PlainSerializer(utc_text, return_type=str)]
@@ -71,3 +78,16 @@ class MessageOut(BaseModel):
 class MessagePage(BaseModel):
     items: list[MessageOut]
     next_cursor: str | None
+
+
+class ErrorDetail(BaseModel):
+    code: str
+    message: str
+    fields: dict[str, str]
+    trace_id: str
+
+
+class ErrorBody(BaseModel):
+    """The common error body that app.api.errors returns, described for OpenAPI."""
+
+    error: ErrorDetail
