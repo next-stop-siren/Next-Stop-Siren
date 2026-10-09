@@ -1,4 +1,4 @@
-"""Owner-limited conversation queries that the conversation API calls.
+"""Owner-limited conversation storage that the conversation API calls.
 
 `user_id` is always the ID the server verified, never one sent by the screen.
 Messages have no user column, so every message query resolves the owner
@@ -11,6 +11,17 @@ from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
 from app.models.conversation import Conversation, Message
+
+
+def create_conversation(session: Session, user_id: int) -> Conversation:
+    """Add a conversation owned by the user and load its generated ID and times.
+
+    The caller commits.
+    """
+    conversation = Conversation(user_id=user_id)
+    session.add(conversation)
+    session.flush()
+    return conversation
 
 
 def list_conversations(session: Session, user_id: int, *, limit: int, before_id: int | None) -> Sequence[Conversation]:
