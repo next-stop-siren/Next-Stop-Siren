@@ -371,11 +371,14 @@ def test_the_largest_bigint_id_is_accepted(store, owner):
 
 
 UNAVAILABLE = {"code": "temporarily_unavailable", "message": "잠시 후 다시 시도해 주세요.", "fields": {}}
-# Details a database error carries and a response must never repeat.
-SECRETS = ("fixture-secret", "secret_table", "db.internal")
+# Details a database error carries and neither a response nor the server log may repeat.
+SECRETS = ("fixture-secret", "fixture-hash", "secret_table", "db.internal")
+# The statement and bound values an authentication route would have in flight.
+STATEMENT = "INSERT INTO secret_table (email, password_hash) VALUES (%(email)s, %(password_hash)s)"
+VALUES = {"email": "a@example.test", "password_hash": "fixture-hash"}
 DATABASE_FAILURES = [
-    OperationalError("SELECT * FROM secret_table", {}, Exception("password=fixture-secret host=db.internal")),
-    InterfaceError("SELECT * FROM secret_table", {}, Exception("connection to db.internal is closed")),
+    OperationalError(STATEMENT, VALUES, Exception("password=fixture-secret host=db.internal")),
+    InterfaceError(STATEMENT, VALUES, Exception("connection to db.internal is closed")),
     PoolTimeoutError("pool of db.internal exhausted, fixture-secret"),
 ]
 
@@ -387,13 +390,17 @@ def failing(error):
     return fail
 
 
-def assert_safe_503(response: httpx.Response, caplog) -> None:
-    """The common 503 body without database details, and a server log entry found by its trace ID."""
+def assert_safe_503(response: httpx.Response, caplog, error: Exception) -> None:
+    """The common 503 body, and one log entry with the trace ID and error class; no database details in either."""
     assert response.status_code == 503
     trace_id = response.json()["error"]["trace_id"]
     assert error_of(response) == UNAVAILABLE
     assert not any(secret in response.text for secret in SECRETS)
-    assert trace_id in caplog.text
+    (record,) = caplog.records
+    assert trace_id in record.getMessage() and type(error).__name__ in record.getMessage()
+    # caplog.text is what a log handler writes, including any attached traceback.
+    assert record.exc_info is None
+    assert not any(secret in caplog.text for secret in (*SECRETS, *VALUES.values()))
 
 
 @pytest.mark.parametrize("error", DATABASE_FAILURES, ids=["operational", "interface", "pool timeout"])
@@ -403,7 +410,7 @@ def test_database_failure_while_reading_is_a_safe_503(store, owner, monkeypatch,
         monkeypatch.setattr(repository, name, failing(error))
     sign_in(owner)
     with caplog.at_level(logging.ERROR):
-        assert_safe_503(call("GET", path), caplog)
+        assert_safe_503(call("GET", path), caplog, error)
 
 
 @pytest.mark.parametrize("error", DATABASE_FAILURES, ids=["operational", "interface", "pool timeout"])
@@ -413,7 +420,7 @@ def test_failed_save_is_a_safe_503_and_never_a_created_response(store, owner, mo
     sign_in(owner)
     with caplog.at_level(logging.ERROR):
         response = call("POST", "/api/conversations", json={})
-        assert_safe_503(response, caplog)
+        assert_safe_503(response, caplog, error)
     assert "conversation" not in response.json()
     assert (store.calls, store.commits) == (1, 0)
 

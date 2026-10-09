@@ -122,10 +122,12 @@ class CommitFails(Session):
 
     def commit(self) -> None:
         type(self).rows_before_commit = self.scalar(select(func.count()).select_from(Conversation))
-        raise OperationalError("COMMIT", {}, Exception("server closed the connection, password=fixture-secret"))
+        raise OperationalError(
+            "COMMIT", {"token": "fixture-secret"}, Exception("server closed the connection, password=fixture-secret")
+        )
 
 
-def test_failed_save_answers_503_and_leaves_no_conversation(session, seeded, orm_test_connection, monkeypatch):
+def test_failed_save_answers_503_and_leaves_no_conversation(session, seeded, orm_test_connection, monkeypatch, caplog):
     """The real request session dependency runs here, so its rollback is what removes the row."""
     session.commit()
     before = session.scalar(select(func.count()).select_from(Conversation))
@@ -143,6 +145,8 @@ def test_failed_save_answers_503_and_leaves_no_conversation(session, seeded, orm
         "fields": {},
     }
     assert "conversation" not in response.json() and "fixture-secret" not in response.text
+    # The failure is logged under the response's trace ID, without the statement's values.
+    assert response.json()["error"]["trace_id"] in caplog.text and "fixture-secret" not in caplog.text
     # The row existed inside the failed request and is gone after it.
     assert CommitFails.rows_before_commit == before + 1
     assert session.scalar(select(func.count()).select_from(Conversation)) == before

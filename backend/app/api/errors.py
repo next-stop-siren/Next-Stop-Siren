@@ -35,6 +35,22 @@ def not_found() -> ApiError:
     return ApiError(404, "not_found", "찾을 수 없습니다.")
 
 
+def loggable(exc: Exception) -> str:
+    """The error classes and SQLSTATE only.
+
+    A database error message quotes the failed statement and its bound values, which
+    can be password hashes or token digests, so the message never reaches the log.
+    """
+    names = [type(exc).__name__]
+    cause = getattr(exc, "orig", None)
+    if cause is not None:
+        names.append(type(cause).__name__)
+        sqlstate = getattr(cause, "sqlstate", None)
+        if isinstance(sqlstate, str):
+            names.append(sqlstate)
+    return "/".join(names)
+
+
 def error_response(
     status_code: int, code: str, message: str, fields: dict[str, str] | None = None, trace_id: str | None = None
 ) -> JSONResponse:
@@ -57,10 +73,10 @@ def register_error_handlers(app: FastAPI) -> None:
         return error_response(422, "validation_error", "요청을 확인해 주세요.", fields)
 
     def database_unavailable(_request: Request, exc: Exception) -> JSONResponse:
-        # The statement and connection details stay in the server log; the response
-        # carries only the trace ID that finds them.
+        # The response and the log entry share a trace ID. Neither carries the exception
+        # message or traceback.
         trace_id = uuid4().hex
-        logger.error("Database unavailable, trace_id=%s", trace_id, exc_info=exc)
+        logger.error("Database unavailable, trace_id=%s, error=%s", trace_id, loggable(exc))
         return error_response(503, "temporarily_unavailable", "잠시 후 다시 시도해 주세요.", trace_id=trace_id)
 
     for kind in DATABASE_UNAVAILABLE:
