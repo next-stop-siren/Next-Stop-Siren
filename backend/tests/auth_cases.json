@@ -1,0 +1,106 @@
+{
+  "users": {
+    "a": {
+      "register_input": {
+        "email": "a@example.test",
+        "password": "fixture-only-password-a"
+      },
+      "login_input": {
+        "email": "a@example.test",
+        "password": "fixture-only-password-a"
+      },
+      "public_user": {
+        "id": "101",
+        "email": "a@example.test",
+        "created_at": "2026-01-02T03:04:05Z"
+      },
+      "principal": {
+        "user_id": 101
+      },
+      "expected_auth_response": {
+        "user": {
+          "id": "101",
+          "email": "a@example.test",
+          "created_at": "2026-01-02T03:04:05Z"
+        },
+        "access_token": "fixture.access.a.jwt",
+        "token_type": "Bearer",
+        "expires_in": 900,
+        "csrf_token": "fixture-csrf-a"
+      },
+      "expected_me_response": {
+        "user": {
+          "id": "101",
+          "email": "a@example.test",
+          "created_at": "2026-01-02T03:04:05Z"
+        }
+      }
+    },
+    "b": {
+      "register_input": {
+        "email": "b@example.test",
+        "password": "fixture-only-password-b"
+      },
+      "login_input": {
+        "email": "b@example.test",
+        "password": "fixture-only-password-b"
+      },
+      "public_user": {
+        "id": "202",
+        "email": "b@example.test",
+        "created_at": "2026-01-02T03:04:06Z"
+      },
+      "principal": {
+        "user_id": 202
+      },
+      "expected_auth_response": {
+        "user": {
+          "id": "202",
+          "email": "b@example.test",
+          "created_at": "2026-01-02T03:04:06Z"
+        },
+        "access_token": "fixture.access.b.jwt",
+        "token_type": "Bearer",
+        "expires_in": 900,
+        "csrf_token": "fixture-csrf-b"
+      },
+      "expected_me_response": {
+        "user": {
+          "id": "202",
+          "email": "b@example.test",
+          "created_at": "2026-01-02T03:04:06Z"
+        }
+      }
+    }
+  },
+  "expected_success_statuses": {
+    "register": 201,
+    "login": 200,
+    "me": 200
+  },
+  "unauthenticated": {
+    "principal": null,
+    "request_headers": {},
+    "expected_status": 401,
+    "expected_response": {
+      "error": {
+        "code": "unauthenticated",
+        "message": "로그인이 필요합니다.",
+        "fields": {},
+        "trace_id": "trace-demo-auth-001"
+      }
+    }
+  },
+  "principal_body_mismatch_cases": [
+    {
+      "authenticated_user": "a",
+      "request_body": { "user_id": "202" },
+      "expected_principal_user_id": 101
+    },
+    {
+      "authenticated_user": "b",
+      "request_body": { "user_id": "101" },
+      "expected_principal_user_id": 202
+    }
+  ]
+}

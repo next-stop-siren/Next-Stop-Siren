@@ -1,5 +1,10 @@
 """Unit checks for URL selection and request transaction ownership."""
 
+import json
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
@@ -18,6 +23,23 @@ def test_psycopg_url_normalizes_standard_schemes(scheme):
 def test_other_driver_is_refused():
     with pytest.raises(ValueError):
         db.psycopg_url("postgresql+psycopg2://user:pass@localhost/name")
+
+
+def test_product_registry_is_repeatable_without_test_models():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import json; from app.db import Base; from app.models import register_models; "
+            "register_models(); register_models(); print(json.dumps(sorted(Base.metadata.tables)))",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=10,
+    )
+    assert json.loads(result.stdout) == ["auth_identities", "conversations", "messages", "refresh_sessions", "users"]
 
 
 def test_empty_application_registry_needs_no_connection(monkeypatch):
