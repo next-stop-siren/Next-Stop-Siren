@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+
 import { afterEach, expect, test, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -9,42 +10,28 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-test('shows loading and then successful database readiness', async () => {
-  let complete!: (response: Response) => void
-  const pending = new Promise<Response>((resolve) => {
-    complete = resolve
-  })
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(() => pending),
-  )
-  const user = userEvent.setup()
+test('비회원에게 서비스 소개와 고정 예시를 보여준다', () => {
   render(<App />)
 
-  await user.click(screen.getByRole('button', { name: 'DB 확인' }))
-  expect(screen.getByText('확인 중…')).toBeTruthy()
-  expect((screen.getByRole('button', { name: 'DB 확인' }) as HTMLButtonElement).disabled).toBe(true)
-  complete(new Response(JSON.stringify({ status: 'ready' }), { status: 200 }))
-  expect(await screen.findByText('데이터베이스에 연결되었습니다.')).toBeTruthy()
-  expect((screen.getByRole('button', { name: 'DB 확인' }) as HTMLButtonElement).disabled).toBe(false)
+  expect(screen.getByRole('heading', { name: '교통법이 궁금할 때 쉽게 확인해 보세요.' })).toBeTruthy()
+  expect(screen.getByText('이런 질문을 할 수 있어요')).toBeTruthy()
+  expect(screen.getByText('어린이 보호구역에서는 주정차를 어떻게 해야 하나요?')).toBeTruthy()
+  expect(screen.getByText('답변 예시')).toBeTruthy()
 })
 
-test('shows a sanitized failure and succeeds when retried', async () => {
-  const fetch = vi
-    .fn()
-    .mockResolvedValueOnce(
-      new Response(JSON.stringify({ code: 'database_unavailable', message: '데이터베이스에 연결할 수 없습니다.' }), {
-        status: 503,
-      }),
-    )
-    .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'ready' }), { status: 200 }))
+test('고정 예시를 열고 닫을 때 API를 호출하지 않는다', async () => {
+  const fetch = vi.fn()
   vi.stubGlobal('fetch', fetch)
+
   const user = userEvent.setup()
   render(<App />)
 
-  await user.click(screen.getByRole('button', { name: 'DB 확인' }))
-  expect(await screen.findByText('데이터베이스에 연결할 수 없습니다.')).toBeTruthy()
-  await user.click(screen.getByRole('button', { name: 'DB 확인' }))
-  expect(await screen.findByText('데이터베이스에 연결되었습니다.')).toBeTruthy()
-  expect(fetch).toHaveBeenCalledTimes(2)
+  await user.click(screen.getByRole('button', { name: '예시 숨기기' }))
+
+  expect(screen.queryByText('어린이 보호구역에서는 주정차를 어떻게 해야 하나요?')).toBeNull()
+
+  await user.click(screen.getByRole('button', { name: '예시 보기' }))
+
+  expect(screen.getByText('어린이 보호구역에서는 주정차를 어떻게 해야 하나요?')).toBeTruthy()
+  expect(fetch).not.toHaveBeenCalled()
 })
