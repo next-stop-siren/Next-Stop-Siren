@@ -1,4 +1,8 @@
-function Sidebar() {
+type SidebarProps = {
+  onLoginClick: () => void
+}
+
+function Sidebar({ onLoginClick }: SidebarProps) {
   return (
     <aside className="sidebar" aria-label="사이드바">
       <div className="sidebar-header">
@@ -6,7 +10,8 @@ function Sidebar() {
       </div>
 
       <button type="button" className="new-chat-button" disabled>
-        + 새 대화
+        <span>＋ 새 대화</span>
+        <span className="login-required">로그인 필요</span>
       </button>
 
       <div className="conversation-list">
@@ -15,7 +20,7 @@ function Sidebar() {
       </div>
 
       <div className="sidebar-footer">
-        <button type="button" className="login-button">
+        <button type="button" className="login-button" onClick={onLoginClick}>
           로그인
         </button>
       </div>
