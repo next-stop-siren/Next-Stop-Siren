@@ -1,50 +1,57 @@
 // @vitest-environment jsdom
-import { afterEach, expect, test, vi } from 'vitest'
+import { afterEach, expect, test } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from './App'
 
 afterEach(() => {
   cleanup()
-  vi.unstubAllGlobals()
 })
 
-test('shows loading and then successful database readiness', async () => {
-  let complete!: (response: Response) => void
-  const pending = new Promise<Response>((resolve) => {
-    complete = resolve
-  })
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(() => pending),
+test('비회원 소개와 질문·답변 예시를 보여준다', () => {
+  render(<App />)
+
+  expect(
+    screen.getByRole('heading', {
+      name: /복잡한 교통법/,
+    }),
+  ).toBeTruthy()
+
+  expect(
+    screen.getByRole('heading', {
+      name: '이런 질문도 많이 물어봐요',
+    }),
+  ).toBeTruthy()
+
+  expect(screen.getByText('AI 답변 예시')).toBeTruthy()
+
+  expect(screen.getByText('어린이 보호구역에서는 주정차를 어떻게 해야 하나요?')).toBeTruthy()
+})
+
+test('질문 입력 영역을 클릭하면 로그인 모달이 열린다', async () => {
+  const user = userEvent.setup()
+  render(<App />)
+
+  await user.click(
+    screen.getByRole('textbox', {
+      name: '질문하려면 로그인 또는 회원가입이 필요합니다',
+    }),
   )
-  const user = userEvent.setup()
-  render(<App />)
 
-  await user.click(screen.getByRole('button', { name: 'DB 확인' }))
-  expect(screen.getByText('확인 중…')).toBeTruthy()
-  expect((screen.getByRole('button', { name: 'DB 확인' }) as HTMLButtonElement).disabled).toBe(true)
-  complete(new Response(JSON.stringify({ status: 'ready' }), { status: 200 }))
-  expect(await screen.findByText('데이터베이스에 연결되었습니다.')).toBeTruthy()
-  expect((screen.getByRole('button', { name: 'DB 확인' }) as HTMLButtonElement).disabled).toBe(false)
+  expect(screen.getByRole('dialog')).toBeTruthy()
+
+  expect(screen.getByRole('button', { name: '회원가입' })).toBeTruthy()
 })
 
-test('shows a sanitized failure and succeeds when retried', async () => {
-  const fetch = vi
-    .fn()
-    .mockResolvedValueOnce(
-      new Response(JSON.stringify({ code: 'database_unavailable', message: '데이터베이스에 연결할 수 없습니다.' }), {
-        status: 503,
-      }),
-    )
-    .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'ready' }), { status: 200 }))
-  vi.stubGlobal('fetch', fetch)
+test('로그인 모달에서 회원가입 탭으로 전환할 수 있다', async () => {
   const user = userEvent.setup()
   render(<App />)
 
-  await user.click(screen.getByRole('button', { name: 'DB 확인' }))
-  expect(await screen.findByText('데이터베이스에 연결할 수 없습니다.')).toBeTruthy()
-  await user.click(screen.getByRole('button', { name: 'DB 확인' }))
-  expect(await screen.findByText('데이터베이스에 연결되었습니다.')).toBeTruthy()
-  expect(fetch).toHaveBeenCalledTimes(2)
+  await user.click(screen.getByRole('button', { name: '로그인' }))
+
+  await user.click(screen.getByRole('button', { name: '회원가입' }))
+
+  expect(screen.getByRole('heading', { name: '회원가입' })).toBeTruthy()
+
+  expect(screen.getByRole('textbox', { name: '이름' })).toBeTruthy()
 })
