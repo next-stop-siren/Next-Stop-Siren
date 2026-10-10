@@ -177,12 +177,12 @@ input:focus-visible {
   flex-direction: column;
   width: 100%;
   max-width: 760px;
-  height: auto;
   min-width: 0;
-  min-height: 0;
+  min-height: 100%;
   margin: 0 auto;
-  padding: 32px 24px 20px;
-  overflow-y: visible;
+  padding: 32px 24px 28px;
+  overflow: visible;
+  box-sizing: border-box;
 }
 
 .intro-header {
@@ -295,18 +295,29 @@ input:focus-visible {
 /* Guest question input */
 .prompt-area {
   position: sticky;
-  bottom: 0;
+  bottom: 20px;
   z-index: 2;
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   gap: 10px;
-  margin-top: auto;
+  margin: auto 0 20px;
   padding: 8px;
   border: 1px solid var(--color-border);
   border-radius: 16px;
   background: var(--color-surface);
   box-shadow: 0 4px 18px rgb(0 0 0 / 5%);
+}
+
+.prompt-area::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  height: 28px;
+  background: linear-gradient(to bottom, transparent, var(--color-surface) 85%);
+  pointer-events: none;
 }
 
 .prompt-area input {
@@ -545,7 +556,7 @@ input:focus-visible {
     height: auto;
     overflow-y: visible;
     min-height: 0;
-    padding: 24px 16px 16px;
+    padding: 24px 16px 24px;
   }
 
   .auth-modal {
@@ -555,7 +566,7 @@ input:focus-visible {
 
 @media (max-width: 480px) {
   .intro-page {
-    padding: 32px 16px 16px;
+    padding: 24px 16px 24px;
   }
 
   .intro-header h1 {
