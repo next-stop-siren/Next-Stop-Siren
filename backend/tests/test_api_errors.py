@@ -123,7 +123,7 @@ def test_malformed_json_and_wrong_body_shapes_are_safe(error_client, body: str) 
 def test_path_and_query_validation_use_same_envelope(error_client) -> None:
     response = error_client.get("/test/path/private-id?limit=private-limit")
     error = assert_error(response, 422, "validation_error")
-    assert set(error["fields"]) == {"path", "query"}
+    assert set(error["fields"]) == {"path", "limit"}
     assert "private" not in response.text
 
 

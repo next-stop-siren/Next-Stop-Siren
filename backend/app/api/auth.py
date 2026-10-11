@@ -8,7 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.cookies import AuthCookieError, set_auth_cookies
-from app.api.errors import ApiError
+from app.api.errors import ApiError, unauthenticated
 from app.db import get_session
 from app.schemas.auth import RegisterRequest, RegisterResponse
 from app.schemas.errors import ErrorResponse
@@ -75,3 +75,8 @@ def register(
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
     return RegisterResponse(user=result.user, access_token=result.access.token, csrf_token=csrf_token)
+
+
+def current_user_id() -> int:
+    """access 검증을 연결하기 전까지 보호된 요청을 거부한다."""
+    raise unauthenticated()

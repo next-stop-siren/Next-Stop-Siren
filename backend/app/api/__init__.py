@@ -1,1 +1,1 @@
-"""HTTP routes and shared error handling."""
+"""HTTP routers, request and response models, and the common error body."""
