@@ -6,7 +6,10 @@ import psycopg
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from app.api.errors import register_error_handlers
+
 app = FastAPI(title="B7-1 API")
+register_error_handlers(app)
 
 
 @app.get("/api/health")
