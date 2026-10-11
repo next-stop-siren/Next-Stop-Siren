@@ -1,3 +1,5 @@
+import styles from './NonmemberIntro.module.css'
+
 type NonmemberIntroProps = {
   onAuthRequired: () => void
 }
@@ -16,29 +18,29 @@ const popularQuestions = [
 
 function NonmemberIntro({ onAuthRequired }: NonmemberIntroProps) {
   return (
-    <section className="intro-page" aria-labelledby="service-title">
-      <header className="intro-header">
+    <section className={styles.introPage} aria-labelledby="service-title">
+      <header className={styles.introHeader}>
         <p className="eyebrow">교통법 안내 서비스</p>
         <h1 id="service-title">
           복잡한 교통법,
           <br />
           쉽게 확인해 보세요.
         </h1>
-        <p className="intro-description">교통법에 관한 궁금증을 질문하고 필요한 정보를 확인할 수 있어요.</p>
+        <p className={styles.introDescription}>교통법에 관한 궁금증을 질문하고 필요한 정보를 확인할 수 있어요.</p>
       </header>
 
-      <section className="chat-preview" aria-label="질문과 답변 예시">
-        <div className="user-message">
+      <section className={styles.chatPreview} aria-label="질문과 답변 예시">
+        <div className={styles.userMessage}>
           <p>{exampleQuestion}</p>
         </div>
 
-        <div className="ai-message">
-          <p className="answer-label">AI 답변 예시</p>
+        <div className={styles.aiMessage}>
+          <p className={styles.answerLabel}>AI 답변 예시</p>
           <p>{exampleAnswer}</p>
         </div>
       </section>
 
-      <section className="popular-questions" aria-labelledby="popular-title">
+      <section className={styles.popularQuestions} aria-labelledby="popular-title">
         <h2 id="popular-title">이런 질문도 많이 물어봐요</h2>
         <ul>
           {popularQuestions.map((question) => (
@@ -47,7 +49,7 @@ function NonmemberIntro({ onAuthRequired }: NonmemberIntroProps) {
         </ul>
       </section>
 
-      <div className="prompt-area">
+      <div className={styles.promptArea}>
         <label className="visually-hidden" htmlFor="guest-prompt">
           교통법 질문 입력
         </label>
@@ -60,7 +62,7 @@ function NonmemberIntro({ onAuthRequired }: NonmemberIntroProps) {
           onFocus={onAuthRequired}
           aria-label="질문하려면 로그인 또는 회원가입이 필요합니다"
         />
-        <button type="button" className="send-button" onClick={onAuthRequired} aria-label="로그인하고 질문하기">
+        <button type="button" className={styles.sendButton} onClick={onAuthRequired} aria-label="로그인하고 질문하기">
           ↑
         </button>
       </div>

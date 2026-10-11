@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import styles from './AuthModal.module.css'
 
 type AuthModalProps = {
   onClose: () => void
@@ -67,31 +68,31 @@ function AuthModal({ onClose }: AuthModalProps) {
   }, [])
 
   return (
-    <div className="modal-backdrop">
-      <button type="button" className="modal-backdrop-dismiss" onClick={onClose} aria-label="모달 닫기" />
+    <div className={styles.modalBackdrop}>
+      <button type="button" className={styles.modalBackdropDismiss} onClick={onClose} aria-label="모달 닫기" />
       <section
         ref={modalRef}
-        className="auth-modal"
+        className={styles.authModal}
         role="dialog"
         aria-modal="true"
         aria-labelledby="auth-title"
         tabIndex={-1}
         onMouseDown={(event) => event.stopPropagation()} // Prevent closing modal when clicking inside
       >
-        <button type="button" className="modal-close" onClick={onClose} aria-label="모달 닫기">
+        <button type="button" className={styles.modalClose} onClick={onClose} aria-label="모달 닫기">
           ×
         </button>
 
         <p className="eyebrow">NEXT-STOP-SIREN</p>
         <h2 id="auth-title">{isLogin ? '다시 만나서 반가워요' : '회원가입'}</h2>
-        <p className="auth-description">
+        <p className={styles.authDescription}>
           {isLogin ? '로그인하고 교통법 질문을 시작해 보세요.' : '계정을 만들고 교통법 정보를 확인해 보세요.'}
         </p>
 
-        <div className="auth-tabs">
+        <div className={styles.authTabs}>
           <button
             type="button"
-            className={isLogin ? 'active' : ''}
+            className={isLogin ? styles.active : ''}
             onClick={() => setMode('login')}
             aria-pressed={isLogin}
           >
@@ -99,7 +100,7 @@ function AuthModal({ onClose }: AuthModalProps) {
           </button>
           <button
             type="button"
-            className={!isLogin ? 'active' : ''}
+            className={!isLogin ? styles.active : ''}
             onClick={() => setMode('signup')}
             aria-pressed={!isLogin}
           >
@@ -135,12 +136,12 @@ function AuthModal({ onClose }: AuthModalProps) {
             />
           </label>
 
-          <button type="submit" className="auth-submit">
+          <button type="submit" className={styles.authSubmit}>
             {isLogin ? '로그인' : '회원가입'}
           </button>
         </form>
 
-        <p className="auth-notice">현재는 화면 시안이며 실제 인증 기능은 연결되지 않았습니다.</p>
+        <p className={styles.authNotice}>현재는 화면 시안이며 실제 인증 기능은 연결되지 않았습니다.</p>
       </section>
     </div>
   )
