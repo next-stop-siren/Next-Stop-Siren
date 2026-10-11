@@ -1,4 +1,4 @@
-"""Exercise safe error handling through HTTP without registering signup yet."""
+"""Exercise safe request validation and expected API error handling."""
 
 from typing import Any
 from uuid import UUID
@@ -79,7 +79,7 @@ def assert_error(response, status: int, code: str) -> dict[str, Any]:
 def test_handlers_are_installed_on_production_app() -> None:
     assert production_app.exception_handlers[ApiError] is api_error_handler
     assert production_app.exception_handlers[RequestValidationError] is validation_error_handler
-    assert "/api/auth/register" not in production_app.openapi()["paths"]
+    assert "/api/auth/register" in production_app.openapi()["paths"]
 
 
 def test_valid_input_passes_without_returning_password(error_client, auth_user_a) -> None:

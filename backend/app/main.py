@@ -4,15 +4,14 @@ import os
 
 import psycopg
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.auth import router as auth_router
 from app.api.errors import register_error_handlers
-
-app = FastAPI(title="B7-1 API")
-register_error_handlers(app)
+from app.security.settings import AuthSettings, AuthSettingsError, get_auth_settings
 
 
-@app.get("/api/health")
 def health() -> dict[str, str]:
     """Report whether the API process can answer requests."""
     return {"status": "ok"}
@@ -29,7 +28,6 @@ def _check_database() -> None:
                 raise RuntimeError("Database readiness query returned an unexpected result")
 
 
-@app.get("/api/ready", response_model=None)
 def ready() -> dict[str, str] | JSONResponse:
     """Report readiness only after a real bounded PostgreSQL query succeeds."""
     try:
@@ -40,3 +38,30 @@ def ready() -> dict[str, str] | JSONResponse:
             content={"code": "database_unavailable", "message": "데이터베이스에 연결할 수 없습니다."},
         )
     return {"status": "ready"}
+
+
+def create_app(auth_settings: AuthSettings | None = None) -> FastAPI:
+    """앱 생성 시 인증 설정을 고정하며, 잘못된 설정은 인증 요청을 차단한다."""
+    if auth_settings is None:
+        try:
+            auth_settings = get_auth_settings()
+        except AuthSettingsError:
+            # 인증 설정이 없어도 기존 상태 확인 경로는 사용할 수 있다.
+            auth_settings = None
+    application = FastAPI(title="B7-1 API")
+    application.state.auth_settings = auth_settings
+    register_error_handlers(application)
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(auth_settings.allowed_origins) if auth_settings else [],
+        allow_credentials=True,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type", "Authorization", "X-CSRF-Token"],
+    )
+    application.add_api_route("/api/health", health, methods=["GET"])
+    application.add_api_route("/api/ready", ready, methods=["GET"], response_model=None)
+    application.include_router(auth_router)
+    return application
+
+
+app = create_app()
