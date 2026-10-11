@@ -10,22 +10,6 @@ from app.security.settings import AuthSettings, AuthSettingsError, get_auth_sett
 KEY_NAMES = ("AUTH_ACCESS_KEY", "AUTH_REFRESH_KEY", "AUTH_REFRESH_DIGEST_KEY", "AUTH_CSRF_KEY")
 
 
-@pytest.fixture
-def auth_environment() -> dict[str, str]:
-    # Deterministic test-only bytes, never usable as production configuration.
-    return {
-        **{name: base64.b64encode(bytes([index]) * 32).decode() for index, name in enumerate(KEY_NAMES, start=1)},
-        "AUTH_ENV": "development",
-        "AUTH_ACCESS_KID": "test-access-v1",
-        "AUTH_REFRESH_KID": "test-refresh-v1",
-        "AUTH_JWT_ISSUER": "fixture-issuer",
-        "AUTH_JWT_AUDIENCE": "fixture-api",
-        "AUTH_API_ORIGIN": "http://localhost:8000",
-        "AUTH_ALLOWED_ORIGINS": "http://localhost:5173",
-        "AUTH_COOKIE_SECURE": "false",
-    }
-
-
 def test_development_settings_decode_keys_and_preserve_policy(auth_environment) -> None:
     settings = AuthSettings.from_env(auth_environment)
     assert settings.access_key == bytes([1]) * 32

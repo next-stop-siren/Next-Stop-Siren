@@ -1,6 +1,7 @@
 """Reusable authentication data and guarded ORM integration fixtures."""
 
 from copy import deepcopy
+import base64
 from typing import Any
 
 import pytest
@@ -10,8 +11,31 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 from app.db import Base, psycopg_url
 from app.db_init import initialize_with_engine
 from app.models import register_models
+from app.security.settings import AuthSettings
 from auth_helpers import load_auth_cases
 from db_guard import guarded_live_url
+
+
+@pytest.fixture
+def auth_environment() -> dict[str, str]:
+    """Independent, fake authentication keys and localhost settings."""
+    names = ("AUTH_ACCESS_KEY", "AUTH_REFRESH_KEY", "AUTH_REFRESH_DIGEST_KEY", "AUTH_CSRF_KEY")
+    return {
+        **{name: base64.b64encode(bytes([index]) * 32).decode() for index, name in enumerate(names, start=1)},
+        "AUTH_ENV": "development",
+        "AUTH_ACCESS_KID": "test-access-v1",
+        "AUTH_REFRESH_KID": "test-refresh-v1",
+        "AUTH_JWT_ISSUER": "fixture-issuer",
+        "AUTH_JWT_AUDIENCE": "fixture-api",
+        "AUTH_API_ORIGIN": "http://localhost:8000",
+        "AUTH_ALLOWED_ORIGINS": "http://localhost:5173",
+        "AUTH_COOKIE_SECURE": "false",
+    }
+
+
+@pytest.fixture
+def auth_settings(auth_environment: dict[str, str]) -> AuthSettings:
+    return AuthSettings.from_env(auth_environment)
 
 
 @pytest.fixture
