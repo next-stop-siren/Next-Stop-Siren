@@ -46,7 +46,83 @@ def test_register_request_rejects_extra_fields(field: str, auth_user_a: dict[str
 
 def test_register_request_preserves_unicode_and_whitespace() -> None:
     body = {"email": " a@example.test ", "password": "  e\u0301한글🔑 password  "}
-    assert RegisterRequest.model_validate(body).model_dump() == body
+    assert RegisterRequest.model_validate(body).model_dump() == {**body, "email": "a@example.test"}
+
+
+@pytest.mark.parametrize(
+    "email",
+    ["\t A.Name+tag@Example.TEST \n", "사용자@예시.한국", "a@sub.example.test"],
+)
+def test_register_email_trims_without_changing_case_or_unicode(email: str) -> None:
+    request = RegisterRequest(email=email, password="fixture-only-password")
+    assert request.email == email.strip()
+
+
+@pytest.mark.parametrize(
+    "email",
+    [
+        "",
+        "   ",
+        "missing-at.test",
+        "@example.test",
+        "a@",
+        "a@@example.test",
+        "a b@example.test",
+        "a@example .test",
+        "a@example",
+        ".a@example.test",
+        "a.@example.test",
+        "a..b@example.test",
+        "a@-example.test",
+        "a@example-.test",
+        "a@exam_ple.test",
+        "a@example..test",
+        "a@example.test.",
+        "Name <a@example.test>",
+        '"a b"@example.test',
+        "a@example.test\x00",
+        "a" * 65 + "@example.test",
+        "a@" + "b" * 64 + ".test",
+    ],
+)
+def test_register_email_rejects_invalid_mailboxes(email: str) -> None:
+    with pytest.raises(ValidationError) as caught:
+        RegisterRequest(email=email, password="fixture-only-password")
+    assert caught.value.errors()[0]["loc"] == ("email",)
+
+
+def test_register_email_length_is_checked_after_trim() -> None:
+    email = "a" * 64 + "@" + ".".join(["b" * 63] * 4)
+    assert len(email) == 320
+    assert RegisterRequest(email=" " + email + " ", password="fixture-only-password").email == email
+    with pytest.raises(ValidationError, match="320"):
+        RegisterRequest(email=email + "b", password="fixture-only-password")
+
+
+@pytest.mark.parametrize("password", ["a" * 12, "a" * 128, "🔑" * 12, "🔑" * 128, " " * 12])
+def test_register_password_accepts_boundaries_without_modification(password: str) -> None:
+    assert RegisterRequest(email="a@example.test", password=password).password == password
+
+
+@pytest.mark.parametrize("password", ["", "a" * 11, "a" * 129, "🔑" * 11, "🔑" * 129])
+def test_register_password_rejects_code_point_length_violations(password: str) -> None:
+    with pytest.raises(ValidationError) as caught:
+        RegisterRequest(email="a@example.test", password=password)
+    assert caught.value.errors()[0]["loc"] == ("password",)
+
+
+def test_register_password_does_not_normalize_combining_characters() -> None:
+    decomposed = "e\u0301" * 6
+    assert RegisterRequest(email="a@example.test", password=decomposed).password == decomposed
+    with pytest.raises(ValidationError):
+        RegisterRequest(email="a@example.test", password="é" * 6)
+
+
+def test_register_password_rejects_unencodable_unicode() -> None:
+    with pytest.raises(ValidationError) as caught:
+        RegisterRequest(email="a@example.test", password="a" * 11 + "\ud800")
+    assert caught.value.errors()[0]["loc"] == ("password",)
+    assert "UTF-8" in caught.value.errors()[0]["msg"]
 
 
 def test_public_user_maps_orm_bigint_and_utc_without_password_hash() -> None:
