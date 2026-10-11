@@ -218,3 +218,44 @@ def test_session_initialization_failure_is_safe(auth_settings, failure):
             response = client.post(PATH, json=INPUT, headers={"Origin": ORIGIN})
     assert_error(response, 503, "temporarily_unavailable")
     assert "private" not in response.text and "DATABASE_URL" not in response.text
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {**INPUT, "email": "invalid-email"},
+        {**INPUT, "email": 123},
+        {**INPUT, "password": None},
+        {**INPUT, "password": "a" * 11},
+        {**INPUT, "password": "a" * 129},
+        {**INPUT, "user_id": "9007199254740993"},
+    ],
+)
+def test_input_boundaries_are_rejected_through_signup_http(register_client, body):
+    client, service, _ = register_client
+    response = client.post(PATH, json=body, headers={"Origin": ORIGIN})
+    error = assert_error(response, 422, "validation_error")
+    assert error["fields"]
+    assert "invalid-email" not in response.text and "9007199254740993" not in response.text
+    service.assert_not_called()
+
+
+def test_malformed_json_does_not_expose_submitted_password(register_client):
+    client, service, _ = register_client
+    response = client.post(
+        PATH,
+        content='{"email":"fixture@example.test","password":"private-broken-json"',
+        headers={"Origin": ORIGIN, "Content-Type": "application/json"},
+    )
+    error = assert_error(response, 422, "validation_error")
+    assert error["fields"] == {"body": "올바른 JSON 본문을 보내 주세요."}
+    assert "private-broken-json" not in response.text
+    service.assert_not_called()
+
+
+def test_origin_is_checked_before_opening_a_database_session(auth_settings):
+    with patch("app.api.auth.get_session") as sessions:
+        with TestClient(create_app(auth_settings)) as client:
+            response = client.post(PATH, json=INPUT, headers={"Origin": "https://evil.test"})
+    assert_error(response, 403, "csrf_failed")
+    sessions.assert_not_called()

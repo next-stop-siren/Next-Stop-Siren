@@ -2,6 +2,7 @@
 
 from unittest.mock import patch
 from uuid import uuid4
+import unicodedata
 
 from fastapi.testclient import TestClient
 import jwt
@@ -94,3 +95,16 @@ def test_http_commit_failure_rolls_back_both_rows_and_emits_no_credentials(db_cl
     assert "private" not in response.text and "access_token" not in response.text
     assert orm_test_session.scalar(select(User.id).where(User.email == signup_body["email"])) is None
     assert orm_test_session.scalar(select(func.count()).select_from(RefreshSession)) == sessions_before
+
+
+@pytest.mark.parametrize("password", ["a" * 12, "🔑" * 128, "  e\u0301한글🔑 password  "])
+def test_http_signup_preserves_password_boundaries_and_unicode(db_client, orm_test_session, signup_body, password):
+    response = db_client.post(PATH, json={**signup_body, "password": password}, headers=HEADERS)
+    assert response.status_code == 201
+    user = orm_test_session.get(User, int(response.json()["user"]["id"]))
+    assert verify_password(password, user.password_hash)
+    assert user.password_hash.startswith("$argon2id$v=19$m=65536,t=3,p=1$")
+    if password != password.strip():
+        assert not verify_password(password.strip(), user.password_hash)
+        assert not verify_password(unicodedata.normalize("NFC", password), user.password_hash)
+    assert password not in response.text and user.password_hash not in response.text
