@@ -131,10 +131,10 @@ class AuthSettings:
         if secure == "false" and (
             environment != "development"
             or api_scheme != "http"
-            or api_host not in {"localhost", "127.0.0.1"}
-            or any(scheme != "http" or host not in {"localhost", "127.0.0.1"} for scheme, host in parsed_origins)
+            or api_host != "127.0.0.1"
+            or any(scheme != "http" or host != "127.0.0.1" for scheme, host in parsed_origins)
         ):
-            raise AuthSettingsError("Secure=false는 개발용 HTTP localhost 또는 127.0.0.1 Origin에서만 허용됩니다.")
+            raise AuthSettingsError("Secure=false는 개발용 HTTP 127.0.0.1 Origin에서만 허용됩니다.")
         return cls(
             environment="development" if environment == "development" else "production",
             access_key=keys["AUTH_ACCESS_KEY"],

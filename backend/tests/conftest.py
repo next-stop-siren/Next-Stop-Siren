@@ -18,7 +18,7 @@ from db_guard import guarded_live_url
 
 @pytest.fixture
 def auth_environment() -> dict[str, str]:
-    """Independent, fake authentication keys and localhost settings."""
+    """Independent, fake authentication keys and 127.0.0.1 settings."""
     names = ("AUTH_ACCESS_KEY", "AUTH_REFRESH_KEY", "AUTH_REFRESH_DIGEST_KEY", "AUTH_CSRF_KEY")
     return {
         **{name: base64.b64encode(bytes([index]) * 32).decode() for index, name in enumerate(names, start=1)},
@@ -27,8 +27,8 @@ def auth_environment() -> dict[str, str]:
         "AUTH_REFRESH_KID": "test-refresh-v1",
         "AUTH_JWT_ISSUER": "fixture-issuer",
         "AUTH_JWT_AUDIENCE": "fixture-api",
-        "AUTH_API_ORIGIN": "http://localhost:8000",
-        "AUTH_ALLOWED_ORIGINS": "http://localhost:5173",
+        "AUTH_API_ORIGIN": "http://127.0.0.1:8000",
+        "AUTH_ALLOWED_ORIGINS": "http://127.0.0.1:5173",
         "AUTH_COOKIE_SECURE": "false",
     }
 

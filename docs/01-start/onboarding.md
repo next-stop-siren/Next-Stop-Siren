@@ -45,7 +45,7 @@ curl -f http://127.0.0.1:8000/api/ready    # {"status":"ready"}
 
 모두 HTTP 200이어야 한다. 첫 터미널에서 `Ctrl+C`로 `dev`를 끝낸다. 이 명령이 시작한 프로세스만 종료한다.
 
-인증 개발의 HTTP 주소는 `localhost`와 `127.0.0.1`을 지원한다. 브라우저는 두 호스트의 쿠키를 따로 보관하므로 화면과 API를 같은 호스트로 사용한다. `.env`의 `AUTH_API_ORIGIN`은 선택한 API 호스트의 주소 하나로 설정하고, `AUTH_ALLOWED_ORIGINS`에는 화면 Origin을 정확히 쉼표로 구분해 나열한다. 기본 예시는 API `http://127.0.0.1:8000`, 화면 `http://127.0.0.1:5173` 및 `http://localhost:5173`이다. Google 로그인을 설정하면 API 호스트별 `/api/auth/google/callback` 주소를 Google OAuth 설정에 각각 등록한다.
+인증 개발은 `http://127.0.0.1`을 기준으로 한다. `.env`의 `AUTH_API_ORIGIN`은 `http://127.0.0.1:8000`, `AUTH_ALLOWED_ORIGINS`는 `http://127.0.0.1:5173,http://127.0.0.1:8000`으로 설정한다. 화면은 5173, Swagger UI는 8000의 `/docs`에서 제공하므로 두 실제 Origin을 모두 허용하고 `localhost`는 제외한다. Origin에는 `/docs` 경로를 포함하지 않는다. `.env` 변경은 실행 중인 앱 설정에 적용되지 않으므로 직접 관리하는 API 개발 프로세스를 재시작한다. Google 로그인 callback은 `http://127.0.0.1:8000/api/auth/google/callback`을 등록한다.
 
 ### 4. 테스트와 품질 검사
 

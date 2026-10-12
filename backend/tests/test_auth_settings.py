@@ -20,7 +20,7 @@ def test_development_settings_decode_keys_and_preserve_policy(auth_environment) 
     assert settings.refresh_kid == "test-refresh-v1"
     assert settings.issuer == "fixture-issuer"
     assert settings.audience == "fixture-api"
-    assert settings.allowed_origins == ("http://localhost:5173",)
+    assert settings.allowed_origins == ("http://127.0.0.1:5173",)
     assert settings.cookie_secure is False
     assert settings.access_ttl_seconds == 900
     assert settings.refresh_ttl_seconds == 1209600
@@ -45,25 +45,11 @@ def test_production_supports_multiple_exact_https_origins(auth_environment) -> N
     assert settings.allowed_origins == ("https://app.example.test", "https://admin.example.test:8443")
 
 
-@pytest.mark.parametrize(
-    "api_host,origins",
-    [
-        ("localhost", "http://localhost:5173"),
-        ("127.0.0.1", "http://127.0.0.1:5173"),
-        ("127.0.0.1", "http://localhost:5173,http://127.0.0.1:5173"),
-        ("localhost", "http://127.0.0.1:5173,http://localhost:5173"),
-    ],
-)
-def test_development_http_origins_allow_explicit_loopback_hosts(auth_environment, api_host, origins) -> None:
-    settings = AuthSettings.from_env(
-        {
-            **auth_environment,
-            "AUTH_API_ORIGIN": f"http://{api_host}:8000",
-            "AUTH_ALLOWED_ORIGINS": origins,
-        }
-    )
+@pytest.mark.parametrize("origins", ["http://127.0.0.1:5173", "http://127.0.0.1:5173,http://127.0.0.1:8000"])
+def test_development_http_origins_allow_frontend_and_swagger(auth_environment, origins) -> None:
+    settings = AuthSettings.from_env({**auth_environment, "AUTH_ALLOWED_ORIGINS": origins})
     assert settings.cookie_secure is False
-    assert settings.allowed_origins == tuple(origin.strip() for origin in origins.split(","))
+    assert settings.allowed_origins == tuple(origins.split(","))
 
 
 @pytest.mark.parametrize(
@@ -137,20 +123,20 @@ def test_claim_configuration_rejects_control_characters(auth_environment, name: 
     [
         "*",
         "null",
-        "ftp://localhost",
-        "http://localhost/",
-        "http://localhost/path",
-        "http://user:private@localhost",
-        "http://localhost?",
-        "http://localhost#",
+        "ftp://127.0.0.1",
+        "http://127.0.0.1/",
+        "http://127.0.0.1/path",
+        "http://user:private@127.0.0.1",
+        "http://127.0.0.1?",
+        "http://127.0.0.1#",
         "http://local host",
-        "http://localhost:99999",
-        "http://localhost:",
-        "http://localhost:0",
+        "http://127.0.0.1:99999",
+        "http://127.0.0.1:",
+        "http://127.0.0.1:0",
         "http://*.example.test",
         "http://LOCALHOST",
         "http://bad_host.test",
-        "http://localhost\n",
+        "http://127.0.0.1\n",
     ],
 )
 def test_origin_configuration_rejects_non_exact_origins(auth_environment, name: str, value: str) -> None:
@@ -178,13 +164,16 @@ def test_policy_flags_are_explicit(auth_environment, name: str, value: str) -> N
     [
         {"AUTH_ENV": "production"},
         {"AUTH_ENV": "production", "AUTH_COOKIE_SECURE": "true"},
+        {"AUTH_API_ORIGIN": "http://localhost:8000"},
+        {"AUTH_ALLOWED_ORIGINS": "http://localhost:5173"},
+        {"AUTH_ALLOWED_ORIGINS": "http://localhost:8000"},
         {"AUTH_API_ORIGIN": "http://127.0.0.2:8000"},
         {"AUTH_API_ORIGIN": "http://api.example.test"},
         {"AUTH_ALLOWED_ORIGINS": "http://app.example.test"},
         {"AUTH_ALLOWED_ORIGINS": "https://127.0.0.1:5173"},
         {"AUTH_ALLOWED_ORIGINS": "http://127.0.0.2:5173"},
         {"AUTH_ALLOWED_ORIGINS": "http://[::1]:5173"},
-        {"AUTH_API_ORIGIN": "https://localhost:8000"},
+        {"AUTH_API_ORIGIN": "https://127.0.0.1:8000"},
     ],
 )
 def test_insecure_cookie_exception_is_limited_to_development_http_loopback(auth_environment, overrides) -> None:

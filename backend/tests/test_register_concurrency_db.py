@@ -56,7 +56,7 @@ def test_concurrent_case_variant_signups_commit_one_user_and_one_session(committ
         return found
 
     def signup(candidate):
-        with TestClient(application, base_url="http://localhost:8000") as client:
+        with TestClient(application, base_url="http://127.0.0.1:8000") as client:
             return client.post(
                 "/api/auth/register",
                 json={"email": candidate, "password": "fixture-only-password"},

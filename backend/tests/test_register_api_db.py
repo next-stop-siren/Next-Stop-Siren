@@ -19,7 +19,7 @@ from app.security.session_values import create_csrf_token, create_refresh_digest
 
 pytestmark = pytest.mark.db
 PATH = "/api/auth/register"
-HEADERS = {"Origin": "http://localhost:5173"}
+HEADERS = {"Origin": "http://127.0.0.1:5173"}
 
 
 @pytest.fixture
@@ -31,7 +31,7 @@ def signup_body():
 def db_client(orm_test_session, auth_settings):
     application = create_app(auth_settings)
     application.dependency_overrides[registration_session] = lambda: orm_test_session
-    with TestClient(application, base_url="http://localhost:8000") as client:
+    with TestClient(application, base_url="http://127.0.0.1:8000") as client:
         yield client
 
 

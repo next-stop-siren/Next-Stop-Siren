@@ -17,7 +17,7 @@ from app.security.tokens import issue_access_token, issue_refresh_token
 from app.services.registration import LocalEmailExists, RegistrationResult, RegistrationUnavailable
 
 PATH = "/api/auth/register"
-ORIGIN = "http://localhost:5173"
+ORIGIN = "http://127.0.0.1:5173"
 INPUT = {"email": "fixture@example.test", "password": "fixture-only-password"}
 
 
@@ -33,16 +33,16 @@ def register_client(auth_settings):
         refresh=issue_refresh_token(9007199254740993, auth_settings, now=now),
     )
     with patch("app.api.auth.register_local_user", return_value=result) as service:
-        with TestClient(application, base_url="http://localhost:8000") as client:
+        with TestClient(application, base_url="http://127.0.0.1:8000") as client:
             yield client, service, result
 
 
 @pytest.fixture
-def mixed_loopback_register_client(auth_environment):
+def frontend_and_swagger_register_client(auth_environment):
     auth_environment.update(
         {
             "AUTH_API_ORIGIN": "http://127.0.0.1:8000",
-            "AUTH_ALLOWED_ORIGINS": "http://127.0.0.1:5173,http://localhost:5173",
+            "AUTH_ALLOWED_ORIGINS": "http://127.0.0.1:5173,http://127.0.0.1:8000",
         }
     )
     settings = AuthSettings.from_env(auth_environment)
@@ -100,9 +100,9 @@ def test_success_returns_public_body_and_matching_cookies(register_client, auth_
     service.assert_called_once()
 
 
-def test_registration_cors_and_insecure_cookies_for_both_explicit_loopback_origins(mixed_loopback_register_client):
-    client, service = mixed_loopback_register_client
-    for origin in ("http://127.0.0.1:5173", "http://localhost:5173"):
+def test_registration_cors_and_insecure_cookies_for_explicit_loopback_origins(frontend_and_swagger_register_client):
+    client, service = frontend_and_swagger_register_client
+    for origin in ("http://127.0.0.1:5173", "http://127.0.0.1:8000"):
         preflight = client.options(
             PATH,
             headers={
@@ -121,9 +121,10 @@ def test_registration_cors_and_insecure_cookies_for_both_explicit_loopback_origi
         cookies = response.headers.get_list("set-cookie")
         assert len(cookies) == 2
         assert all("HttpOnly" in cookie and "SameSite=lax" in cookie and "Secure" not in cookie for cookie in cookies)
-    rejected = client.post(PATH, json=INPUT, headers={"Origin": "http://127.0.0.1:5174"})
-    assert_error(rejected, 403, "csrf_failed")
-    assert "access-control-allow-origin" not in rejected.headers
+    for origin in ("http://127.0.0.1:5174", "http://localhost:5173", "http://localhost:8000"):
+        rejected = client.post(PATH, json=INPUT, headers={"Origin": origin})
+        assert_error(rejected, 403, "csrf_failed")
+        assert "access-control-allow-origin" not in rejected.headers
     assert service.call_count == 2
 
 
@@ -133,11 +134,12 @@ def test_registration_cors_and_insecure_cookies_for_both_explicit_loopback_origi
         None,
         "",
         "null",
-        "http://localhost:5173/",
-        "http://localhost:5174",
-        "https://localhost:5173",
-        "http://localhost:5173.evil.test",
-        "http://localhost:5173, https://evil.test",
+        "http://127.0.0.1:5173/",
+        "http://127.0.0.1:5174",
+        "http://127.0.0.1:8000",
+        "https://127.0.0.1:5173",
+        "http://127.0.0.1:5173.evil.test",
+        "http://127.0.0.1:5173, https://evil.test",
     ],
 )
 def test_origin_must_match_exactly_before_service_runs(register_client, origin):
