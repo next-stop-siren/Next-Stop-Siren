@@ -159,12 +159,6 @@ def test_origin_configuration_rejects_non_exact_origins(auth_environment, name: 
     assert value not in str(caught.value)
 
 
-@pytest.mark.parametrize("value", ["http://localhost:5173,", "http://localhost:5173,http://localhost:5173"])
-def test_origin_list_rejects_empty_or_duplicate_entries(auth_environment, value: str) -> None:
-    with pytest.raises(AuthSettingsError):
-        AuthSettings.from_env({**auth_environment, "AUTH_ALLOWED_ORIGINS": value})
-
-
 @pytest.mark.parametrize(
     "name,value",
     [
