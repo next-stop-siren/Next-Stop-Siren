@@ -1,13 +1,13 @@
-"""Create, list and read the signed-in user's own conversations."""
+"""Create, list and read the signed-in user's own conversations, and send questions to them."""
 
 from collections.abc import Sequence
 from typing import Annotated, Protocol
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, Path, Query, Response
 from sqlalchemy.orm import Session
 
 from app.api.auth import current_user_id
-from app.api.errors import not_found
+from app.api.errors import not_found, provider_failed, provider_timeout
 from app.api.schemas import (
     ConversationCreated,
     ConversationOut,
@@ -17,9 +17,13 @@ from app.api.schemas import (
     ErrorBody,
     MessageOut,
     MessagePage,
+    QuestionAnswer,
+    QuestionIn,
 )
 from app.db import get_session
+from app.integrations.provider import AnswerProvider, get_provider
 from app.repositories import conversations as repository
+from app.services import chat
 
 router = APIRouter(
     prefix="/api/conversations",
@@ -29,6 +33,7 @@ router = APIRouter(
 # The user ID comes first so that an unauthenticated request never opens a session.
 UserId = Annotated[int, Depends(current_user_id)]
 DbSession = Annotated[Session, Depends(get_session)]
+Provider = Annotated[AnswerProvider, Depends(get_provider)]
 Limit = Annotated[int, Query(ge=1, le=100)]
 
 
@@ -74,3 +79,36 @@ def list_messages(
         raise not_found()
     items = [MessageOut.model_validate(row) for row in rows[:limit]]
     return MessagePage(items=items, next_cursor=next_cursor(rows, limit))
+
+
+@router.post(
+    "/{conversation_id}/messages",
+    status_code=201,
+    responses={
+        200: {"model": QuestionAnswer, "description": "The request key was already stored and its answer has ended."},
+        202: {"model": QuestionAnswer, "description": "The request key was already stored and its answer is pending."},
+        404: {"model": ErrorBody},
+        409: {"model": ErrorBody},
+        502: {"model": ErrorBody},
+        504: {"model": ErrorBody},
+    },
+)
+def send_question(
+    conversation_id: Annotated[DecimalId, Path()],
+    body: QuestionIn,
+    user_id: UserId,
+    session: DbSession,
+    provider: Provider,
+    response: Response,
+) -> QuestionAnswer:
+    exchange = chat.send_question(session, provider, user_id, conversation_id, body.content, body.request_key)
+    status = exchange.answer.status
+    if not exchange.created:
+        response.status_code = 202 if status == "pending" else 200
+    elif status == "failed":
+        raise provider_failed()
+    elif status == "interrupted":
+        raise provider_timeout()
+    return QuestionAnswer(
+        question=MessageOut.model_validate(exchange.question), answer=MessageOut.model_validate(exchange.answer)
+    )

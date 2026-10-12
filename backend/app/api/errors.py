@@ -35,6 +35,22 @@ def not_found() -> ApiError:
     return ApiError(404, "not_found", "찾을 수 없습니다.")
 
 
+def request_key_conflict() -> ApiError:
+    return ApiError(409, "request_key_conflict", "같은 요청 키로 다른 질문을 보낼 수 없습니다.")
+
+
+def conversation_busy() -> ApiError:
+    return ApiError(409, "conversation_busy", "이전 질문의 답변을 기다리고 있습니다.")
+
+
+def provider_failed() -> ApiError:
+    return ApiError(502, "provider_failed", "답변을 만들지 못했습니다. 대화 기록을 확인해 주세요.")
+
+
+def provider_timeout() -> ApiError:
+    return ApiError(504, "provider_timeout", "답변 시간이 초과되었습니다. 대화 기록을 확인해 주세요.")
+
+
 def loggable(exc: Exception) -> str:
     """The error classes and SQLSTATE only.
 

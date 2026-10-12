@@ -6,8 +6,9 @@ through the conversation.
 """
 
 from collections.abc import Sequence
+from datetime import timedelta
 
-from sqlalchemy import Select, select
+from sqlalchemy import ColumnElement, Select, func, select, update
 from sqlalchemy.orm import Session
 
 from app.models.conversation import Conversation, Message
@@ -75,3 +76,127 @@ def list_context_messages(session: Session, user_id: int, conversation_id: int) 
         return None
     statement = _owned_messages(user_id, conversation_id).where(Message.status == "completed")
     return session.scalars(statement).all()
+
+
+def lock_conversation(session: Session, user_id: int, conversation_id: int) -> bool:
+    """Lock the user's conversation row until the transaction ends; False as in `owns_conversation`.
+
+    Sends to one conversation then run one at a time, so the request key and pending
+    checks that follow cannot be overtaken by another send.
+    """
+    statement = (
+        select(Conversation.id)
+        .where(Conversation.id == conversation_id, Conversation.user_id == user_id)
+        .with_for_update()
+    )
+    return session.scalar(statement) is not None
+
+
+def _pending_answers(conversation_id: int) -> tuple[ColumnElement[bool], ...]:
+    return (Message.conversation_id == conversation_id, Message.role == "assistant", Message.status == "pending")
+
+
+def close_stale_pending(session: Session, conversation_id: int, older_than_seconds: int) -> None:
+    """Interrupt a pending answer created longer ago than the limit, by the database clock.
+
+    An answer that is no longer pending, or still within the limit, is left as it is.
+    """
+    session.execute(
+        update(Message)
+        .where(*_pending_answers(conversation_id))
+        .where(Message.created_at < func.now() - timedelta(seconds=older_than_seconds))
+        .values(status="interrupted", error_code="outcome_unknown", updated_at=func.now())
+        .execution_options(synchronize_session="fetch")
+    )
+
+
+def has_pending_answer(session: Session, conversation_id: int) -> bool:
+    return session.scalar(select(Message.id).where(*_pending_answers(conversation_id))) is not None
+
+
+def find_question(session: Session, conversation_id: int, request_key: str) -> Message | None:
+    statement = select(Message).where(
+        Message.conversation_id == conversation_id, Message.role == "user", Message.request_key == request_key
+    )
+    return session.scalars(statement).one_or_none()
+
+
+def latest_answer(session: Session, question_id: int) -> Message:
+    """The newest answer attempt; every question is stored together with its first one."""
+    statement = (
+        select(Message)
+        .where(Message.reply_to_message_id == question_id, Message.role == "assistant")
+        .order_by(Message.attempt_no.desc())
+        .limit(1)
+    )
+    return session.scalars(statement).one()
+
+
+def _touch_conversation(session: Session, conversation_id: int) -> None:
+    session.execute(
+        update(Conversation)
+        .where(Conversation.id == conversation_id)
+        .values(updated_at=func.now())
+        .execution_options(synchronize_session=False)
+    )
+
+
+def add_question(session: Session, conversation_id: int, content: str, request_key: str) -> tuple[Message, Message]:
+    """Add a question and its first, pending answer.
+
+    The caller commits both together and has already checked the owner, the request
+    key and that no other answer is pending.
+    """
+    question = Message(
+        conversation_id=conversation_id,
+        role="user",
+        status="completed",
+        content=content,
+        request_key=request_key,
+        completed_at=func.now(),
+    )
+    session.add(question)
+    session.flush()
+    answer = Message(
+        conversation_id=conversation_id,
+        role="assistant",
+        status="pending",
+        reply_to_message_id=question.id,
+        attempt_no=1,
+    )
+    session.add(answer)
+    session.flush()
+    _touch_conversation(session, conversation_id)
+    # Load the times the database generated, so that reading them later needs no query.
+    session.refresh(question)
+    session.refresh(answer)
+    return question, answer
+
+
+def finish_answer(
+    session: Session, answer_id: int, *, status: str, content: str | None, error_code: str | None
+) -> Message:
+    """Store the outcome only while the answer is still pending; return the answer as stored.
+
+    An answer that recovery already closed keeps what recovery stored. The caller commits.
+    """
+    statement = (
+        update(Message)
+        .where(Message.id == answer_id, Message.status == "pending")
+        .values(
+            status=status,
+            content=content,
+            error_code=error_code,
+            updated_at=func.now(),
+            completed_at=func.now() if status == "completed" else None,
+        )
+        .returning(Message)
+        .execution_options(synchronize_session=False, populate_existing=True)
+    )
+    answer = session.scalars(statement).one_or_none()
+    if answer is None:
+        return session.scalars(
+            select(Message).where(Message.id == answer_id).execution_options(populate_existing=True)
+        ).one()
+    _touch_conversation(session, answer.conversation_id)
+    return answer

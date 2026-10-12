@@ -3,9 +3,21 @@
 from datetime import datetime, timezone
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, PlainSerializer, WithJsonSchema
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    PlainSerializer,
+    WithJsonSchema,
+)
 
 MAX_ID = 2**63 - 1
+# Unicode code points. Provisional until the PM decides the question length limit of issue #11.
+MAX_QUESTION_LENGTH = 4000
+# The key is part of a unique index, whose entries have a size limit.
+MAX_REQUEST_KEY_LENGTH = 200
 # What OpenAPI shows for an ID input; parse_decimal_id also enforces the bigint range.
 ID_INPUT_SCHEMA = {
     "type": "string",
@@ -78,6 +90,33 @@ class MessageOut(BaseModel):
 class MessagePage(BaseModel):
     items: list[MessageOut]
     next_cursor: str | None
+
+
+def storable_text(value: str) -> str:
+    """PostgreSQL text cannot hold the NUL character."""
+    if "\x00" in value:
+        raise ValueError("text cannot contain NUL")
+    return value
+
+
+def not_blank(value: str) -> str:
+    if not value.strip():
+        raise ValueError("text cannot be only whitespace")
+    return storable_text(value)
+
+
+class QuestionIn(BaseModel):
+    """A question as sent; it is stored and compared exactly as received."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    content: Annotated[str, Field(max_length=MAX_QUESTION_LENGTH), AfterValidator(not_blank)]
+    request_key: Annotated[str, Field(min_length=1, max_length=MAX_REQUEST_KEY_LENGTH), AfterValidator(storable_text)]
+
+
+class QuestionAnswer(BaseModel):
+    question: MessageOut
+    answer: MessageOut
 
 
 class ErrorDetail(BaseModel):
