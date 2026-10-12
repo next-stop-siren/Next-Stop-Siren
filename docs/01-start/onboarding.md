@@ -45,6 +45,8 @@ curl -f http://127.0.0.1:8000/api/ready    # {"status":"ready"}
 
 모두 HTTP 200이어야 한다. 첫 터미널에서 `Ctrl+C`로 `dev`를 끝낸다. 이 명령이 시작한 프로세스만 종료한다.
 
+인증 개발의 HTTP 주소는 `localhost`와 `127.0.0.1`을 지원한다. 브라우저는 두 호스트의 쿠키를 따로 보관하므로 화면과 API를 같은 호스트로 사용한다. `.env`의 `AUTH_API_ORIGIN`은 선택한 API 호스트의 주소 하나로 설정하고, `AUTH_ALLOWED_ORIGINS`에는 화면 Origin을 정확히 쉼표로 구분해 나열한다. 기본 예시는 API `http://127.0.0.1:8000`, 화면 `http://127.0.0.1:5173` 및 `http://localhost:5173`이다. Google 로그인을 설정하면 API 호스트별 `/api/auth/google/callback` 주소를 Google OAuth 설정에 각각 등록한다.
+
 ### 4. 테스트와 품질 검사
 
 `test-e2e`는 8000·5173 포트가 비어 있어야 한다. 다른 프로세스가 남아 있다면 원인을 확인하고 소유자와 상의한다.

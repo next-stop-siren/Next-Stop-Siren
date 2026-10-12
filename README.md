@@ -36,6 +36,8 @@ Set-Location Next-Stop-Siren
 
 화면은 [http://127.0.0.1:5173](http://127.0.0.1:5173), API 문서는 [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)입니다. 화면에는 현재 API·DB 준비 상태가 표시됩니다. API의 `/api/health`는 정상일 때 `{"status":"ok"}`, `/api/ready`는 DB 연결 성공 시 `{"status":"ready"}`를 반환합니다.
 
+인증 개발은 `http://localhost`와 `http://127.0.0.1` 주소를 지원합니다. 두 주소는 브라우저 쿠키가 분리되므로 한 로그인 흐름에서는 화면과 API를 같은 호스트 이름으로 여세요. `.env`의 `AUTH_API_ORIGIN`을 선택한 호스트로 맞추고 `AUTH_ALLOWED_ORIGINS`에 허용할 전체 화면 Origin을 쉼표로 명시합니다. 예시 기본값은 `127.0.0.1` API와 두 화면 Origin입니다. Google 로그인을 구성할 때는 API 호스트별 `/api/auth/google/callback` 주소를 각각 Google의 허용 callback 주소로 등록해야 합니다.
+
 ## Swagger로 API 확인
 
 `dev`가 실행 중일 때 [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)를 여세요. 현재 애플리케이션은 `GET /api/health`와 `GET /api/ready` 두 경로만 등록합니다. 경로를 펼치고 **Try it out**을 누른 뒤 **Execute**를 선택하면 요청을 보낼 수 있습니다. 정상 응답은 각각 HTTP 200과 `{"status":"ok"}`, `{"status":"ready"}`입니다. DB를 사용할 수 없으면 `/api/ready`는 HTTP 503을 반환합니다. OpenAPI 스키마는 [http://127.0.0.1:8000/openapi.json](http://127.0.0.1:8000/openapi.json)에서 확인할 수 있습니다.

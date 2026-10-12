@@ -37,6 +37,29 @@ def register_client(auth_settings):
             yield client, service, result
 
 
+@pytest.fixture
+def mixed_loopback_register_client(auth_environment):
+    auth_environment.update(
+        {
+            "AUTH_API_ORIGIN": "http://127.0.0.1:8000",
+            "AUTH_ALLOWED_ORIGINS": "http://127.0.0.1:5173,http://localhost:5173",
+        }
+    )
+    settings = AuthSettings.from_env(auth_environment)
+    application = create_app(settings)
+    session = Mock()
+    application.dependency_overrides[registration_session] = lambda: session
+    now = datetime.now(timezone.utc)
+    result = RegistrationResult(
+        user=PublicUser(id="9007199254740993", email=INPUT["email"], created_at=now),
+        access=issue_access_token(9007199254740993, settings, now=now),
+        refresh=issue_refresh_token(9007199254740993, settings, now=now),
+    )
+    with patch("app.api.auth.register_local_user", return_value=result) as service:
+        with TestClient(application, base_url="http://127.0.0.1:8000") as client:
+            yield client, service
+
+
 def assert_error(response, status, code):
     assert response.status_code == status
     error = response.json()["error"]
@@ -75,6 +98,33 @@ def test_success_returns_public_body_and_matching_cookies(register_client, auth_
     assert response.headers["access-control-allow-credentials"] == "true"
     assert "Origin" in response.headers["vary"]
     service.assert_called_once()
+
+
+def test_registration_cors_and_insecure_cookies_for_both_explicit_loopback_origins(mixed_loopback_register_client):
+    client, service = mixed_loopback_register_client
+    for origin in ("http://127.0.0.1:5173", "http://localhost:5173"):
+        preflight = client.options(
+            PATH,
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+        assert preflight.status_code == 200
+        assert preflight.headers["access-control-allow-origin"] == origin
+        assert preflight.headers["access-control-allow-credentials"] == "true"
+        response = client.post(PATH, json=INPUT, headers={"Origin": origin})
+        assert response.status_code == 201
+        assert response.headers["access-control-allow-origin"] == origin
+        assert response.headers["access-control-allow-credentials"] == "true"
+        cookies = response.headers.get_list("set-cookie")
+        assert len(cookies) == 2
+        assert all("HttpOnly" in cookie and "SameSite=lax" in cookie and "Secure" not in cookie for cookie in cookies)
+    rejected = client.post(PATH, json=INPUT, headers={"Origin": "http://127.0.0.1:5174"})
+    assert_error(rejected, 403, "csrf_failed")
+    assert "access-control-allow-origin" not in rejected.headers
+    assert service.call_count == 2
 
 
 @pytest.mark.parametrize(

@@ -63,7 +63,7 @@
 | Google 트랜잭션 쿠키 | 시작·callback 모두 포함하는 `/api/auth` 경로, 호스트 전용 `HttpOnly`·운영 `Secure`·`SameSite=Lax`; state/nonce/PKCE verifier를 암호화·무결성 보호한다. |
 | Origin·CORS | 세션 쿠키를 설정하는 로컬 가입·로그인과 refresh·logout은 정확한 허용 `Origin`을 요구한다. 쿠키 인증 변경 요청에서 Origin 누락·불일치는 거부한다. CORS는 정확한 프론트 Origin에만 credentials를 허용한다. |
 
-로컬 HTTP `localhost`에서만 개발 설정으로 `Secure=false`를 허용한다. 운영 프론트와 API가 서로 다른 사이트라면 `SameSite=Lax`를 다시 결정해야 한다. Bearer만 쓰는 채팅 요청에는 쿠키 CSRF 절차가 적용되지 않는다.
+개발 환경은 정확한 HTTP `localhost` 또는 `127.0.0.1` API·화면 Origin에 한해 `Secure=false`를 허용한다. 허용 화면 Origin은 전체 값을 명시하고 CORS credentials도 그 값과 정확히 일치해야 한다. 두 호스트는 쿠키 저장 공간이 분리되므로 한 인증 흐름에서는 화면과 API에 같은 호스트를 사용한다. API 주소를 바꿔 Google 로그인을 구성한다면 해당 API 호스트의 `/api/auth/google/callback` 주소도 Google에 별도 허용 callback으로 등록한다. 운영 프론트와 API가 서로 다른 사이트라면 `SameSite=Lax`를 다시 결정해야 한다. Bearer만 쓰는 채팅 요청에는 쿠키 CSRF 절차가 적용되지 않는다.
 
 비밀번호 평문, 원문 토큰, 제공자 code 및 비밀은 DB·로그·추적에 남기지 않는다.
 

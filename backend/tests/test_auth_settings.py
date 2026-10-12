@@ -46,6 +46,27 @@ def test_production_supports_multiple_exact_https_origins(auth_environment) -> N
 
 
 @pytest.mark.parametrize(
+    "api_host,origins",
+    [
+        ("localhost", "http://localhost:5173"),
+        ("127.0.0.1", "http://127.0.0.1:5173"),
+        ("127.0.0.1", "http://localhost:5173,http://127.0.0.1:5173"),
+        ("localhost", "http://127.0.0.1:5173,http://localhost:5173"),
+    ],
+)
+def test_development_http_origins_allow_explicit_loopback_hosts(auth_environment, api_host, origins) -> None:
+    settings = AuthSettings.from_env(
+        {
+            **auth_environment,
+            "AUTH_API_ORIGIN": f"http://{api_host}:8000",
+            "AUTH_ALLOWED_ORIGINS": origins,
+        }
+    )
+    assert settings.cookie_secure is False
+    assert settings.allowed_origins == tuple(origin.strip() for origin in origins.split(","))
+
+
+@pytest.mark.parametrize(
     "name",
     [
         *KEY_NAMES,
@@ -163,13 +184,16 @@ def test_policy_flags_are_explicit(auth_environment, name: str, value: str) -> N
     [
         {"AUTH_ENV": "production"},
         {"AUTH_ENV": "production", "AUTH_COOKIE_SECURE": "true"},
-        {"AUTH_API_ORIGIN": "http://127.0.0.1:8000"},
+        {"AUTH_API_ORIGIN": "http://127.0.0.2:8000"},
         {"AUTH_API_ORIGIN": "http://api.example.test"},
         {"AUTH_ALLOWED_ORIGINS": "http://app.example.test"},
+        {"AUTH_ALLOWED_ORIGINS": "https://127.0.0.1:5173"},
+        {"AUTH_ALLOWED_ORIGINS": "http://127.0.0.2:5173"},
+        {"AUTH_ALLOWED_ORIGINS": "http://[::1]:5173"},
         {"AUTH_API_ORIGIN": "https://localhost:8000"},
     ],
 )
-def test_insecure_cookie_exception_is_limited_to_development_localhost(auth_environment, overrides) -> None:
+def test_insecure_cookie_exception_is_limited_to_development_http_loopback(auth_environment, overrides) -> None:
     with pytest.raises(AuthSettingsError):
         AuthSettings.from_env({**auth_environment, **overrides})
 
