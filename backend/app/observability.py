@@ -20,6 +20,8 @@ FailureStage = Literal[
     "rollback",
     "registration",
     "cookie",
+    "compensation",
+    "compensation_rollback",
 ]
 
 
@@ -61,3 +63,18 @@ class RegistrationTraceMiddleware:
 def registration_saved(request: Request) -> None:
     """커밋 성공 후 사용자 정보 없이 저장 완료를 기록한다."""
     logger.info("event=registration_saved trace_id=%s", request_trace_id(request))
+
+
+def registration_cancelled(request: Request) -> None:
+    """보상 커밋이 완료된 경우에만 취소 성공을 기록한다."""
+    logger.info("event=registration_cancelled trace_id=%s", request_trace_id(request))
+
+
+def registration_compensation_failed(request: Request, failure: FailureDetails) -> None:
+    """쿠키 오류와 구분해서 보상 실패를 같은 요청 ID로 기록한다."""
+    logger.error(
+        "event=registration_compensation_failed trace_id=%s stage=%s error_type=%s",
+        request_trace_id(request),
+        failure.stage,
+        failure.error_type,
+    )

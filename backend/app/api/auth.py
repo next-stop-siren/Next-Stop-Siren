@@ -10,11 +10,21 @@ from sqlalchemy.orm import Session
 from app.api.cookies import AuthCookieError, set_auth_cookies
 from app.api.errors import ApiError, unauthenticated
 from app.db import get_session
-from app.observability import FailureDetails, registration_saved
+from app.observability import (
+    FailureDetails,
+    registration_cancelled,
+    registration_compensation_failed,
+    registration_saved,
+)
 from app.schemas.auth import RegisterRequest, RegisterResponse
 from app.schemas.errors import ErrorResponse
 from app.security.settings import AuthSettings
-from app.services.registration import LocalEmailExists, RegistrationUnavailable, register_local_user
+from app.services.registration import (
+    LocalEmailExists,
+    RegistrationUnavailable,
+    cancel_registration,
+    register_local_user,
+)
 
 
 def request_auth_settings(request: Request) -> AuthSettings:
@@ -74,6 +84,13 @@ def register(
     try:
         csrf_token = set_auth_cookies(response, result.refresh, settings)
     except AuthCookieError as exc:
+        try:
+            cancel_registration(result, session, settings)
+        except RegistrationUnavailable as cancellation:
+            failure = cancellation.failure or FailureDetails.from_exception("compensation", cancellation)
+            registration_compensation_failed(request, failure)
+        else:
+            registration_cancelled(request)
         raise ApiError("temporarily_unavailable", failure=FailureDetails.from_exception("cookie", exc)) from None
     # 인증 정보가 브라우저나 프록시 캐시에 남지 않게 한다.
     response.headers["Cache-Control"] = "no-store"

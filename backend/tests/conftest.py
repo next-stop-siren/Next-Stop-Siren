@@ -3,14 +3,18 @@
 from copy import deepcopy
 import base64
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import Integer, String, create_engine, func, inspect, select
-from sqlalchemy.orm import Mapped, Session, mapped_column
+from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy.schema import CreateSchema, DropSchema
 
-from app.db import Base, psycopg_url
+from app.db import Base, create_db_engine, psycopg_url
 from app.db_init import initialize_with_engine
 from app.models import register_models
+from app.models.refresh_session import RefreshSession
+from app.models.user import User
 from app.security.settings import AuthSettings
 from auth_helpers import load_auth_cases
 from db_guard import guarded_live_url
@@ -117,3 +121,25 @@ def orm_test_session(orm_test_connection):
     """Allow model tests to commit without committing the outer transaction."""
     with Session(orm_test_connection, join_transaction_mode="create_savepoint") as session:
         yield session
+
+
+@pytest.fixture
+def committed_signup_sessions():
+    """임시 스키마에서만 실제 가입 커밋을 허용한다."""
+    engine = create_db_engine(guarded_live_url())
+    schema = f"signup_test_{uuid4().hex}"
+    scoped = engine.execution_options(schema_translate_map={None: schema})
+    created = False
+    try:
+        with engine.begin() as connection:
+            connection.execute(CreateSchema(schema))
+        created = True
+        User.metadata.create_all(scoped, tables=[User.__table__, RefreshSession.__table__])
+        yield sessionmaker(bind=scoped, autoflush=False, expire_on_commit=False)
+    finally:
+        try:
+            if created:
+                with engine.begin() as connection:
+                    connection.execute(DropSchema(schema, cascade=True))
+        finally:
+            engine.dispose()

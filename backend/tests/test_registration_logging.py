@@ -195,17 +195,20 @@ def test_cookie_failure_keeps_the_committed_storage_event(real_registration_clie
     with (
         caplog.at_level(logging.INFO),
         patch("app.api.auth.set_auth_cookies", side_effect=AuthCookieError("private-refresh-token")),
+        patch("app.api.auth.cancel_registration") as cancel,
     ):
         response = client.post(PATH, json=INPUT, headers={"Origin": auth_settings.allowed_origins[0]})
     assert response.status_code == 503
-    received, saved, failed = registration_events(caplog)
+    received, saved, cancelled, failed = registration_events(caplog)
     trace_id = response.json()["error"]["trace_id"]
-    assert all(trace_id in record.getMessage() for record in (received, saved, failed))
+    assert all(trace_id in record.getMessage() for record in (received, saved, cancelled, failed))
     assert "event=registration_saved" in saved.getMessage()
     assert "stage=cookie error_type=AuthCookieError" in failed.getMessage()
+    assert "event=registration_cancelled" in cancelled.getMessage()
     assert "set-cookie" not in response.headers
     assert_no_secrets(caplog, response)
     session.commit.assert_called_once()
+    cancel.assert_called_once()
 
 
 def test_each_signup_request_has_a_fresh_trace(real_registration_client, auth_settings, caplog):

@@ -8,40 +8,13 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 import pytest
 from sqlalchemy import func, select
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.schema import CreateSchema, DropSchema
-
-from app.db import create_db_engine
 from app.main import create_app
 from app.models.refresh_session import RefreshSession
 from app.models.user import User
 from app.repositories.users import find_local_user_by_email
 from app.security.session_values import create_refresh_digest
-from db_guard import guarded_live_url
 
 pytestmark = pytest.mark.db
-
-
-@pytest.fixture
-def committed_signup_sessions():
-    # 테스트 전용 DB의 임시 스키마에서만 실제 커밋을 허용한다.
-    engine = create_db_engine(guarded_live_url())
-    schema = f"signup_test_{uuid4().hex}"
-    scoped = engine.execution_options(schema_translate_map={None: schema})
-    created = False
-    try:
-        with engine.begin() as connection:
-            connection.execute(CreateSchema(schema))
-        created = True
-        User.metadata.create_all(scoped, tables=[User.__table__, RefreshSession.__table__])
-        yield sessionmaker(bind=scoped, autoflush=False, expire_on_commit=False)
-    finally:
-        try:
-            if created:
-                with engine.begin() as connection:
-                    connection.execute(DropSchema(schema, cascade=True))
-        finally:
-            engine.dispose()
 
 
 def test_concurrent_case_variant_signups_commit_one_user_and_one_session(committed_signup_sessions, auth_settings):

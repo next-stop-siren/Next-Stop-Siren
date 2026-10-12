@@ -4,9 +4,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from psycopg.errors import UniqueViolation
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.models.refresh_session import RefreshSession
+from app.models.user import User
 from app.observability import FailureDetails, FailureStage
 from app.repositories.refresh_sessions import add_initial_refresh_session
 from app.repositories.users import add_local_user, find_local_user_by_email
@@ -38,12 +41,12 @@ class RegistrationResult:
     refresh: IssuedToken
 
 
-def _rollback(session: Session) -> None:
+def _rollback(session: Session, stage: FailureStage = "rollback") -> None:
     try:
         session.rollback()
     except SQLAlchemyError as exc:
         raise RegistrationUnavailable(
-            "가입 저장을 완료할 수 없습니다.", failure=FailureDetails.from_exception("rollback", exc)
+            "가입 저장을 완료할 수 없습니다.", failure=FailureDetails.from_exception(stage, exc)
         ) from None
 
 
@@ -93,4 +96,55 @@ def register_local_user(request: RegisterRequest, session: Session, settings: Au
     except Exception:
         # 코드 오류도 롤백하되 원래 예외를 유지한다.
         _rollback(session)
+        raise
+
+
+def cancel_registration(result: RegistrationResult, session: Session, settings: AuthSettings) -> None:
+    """쿠키 발급에 실패한 이번 가입의 사용자·최초 세션만 원자적으로 취소한다."""
+    try:
+        # 이미 커밋된 데이터이므로 새 트랜잭션에서 사용자부터 잠근다.
+        user = session.scalar(
+            select(User)
+            .where(User.id == int(result.user.id))
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if user is None:
+            session.rollback()
+            return
+        refresh = session.scalar(
+            select(RefreshSession)
+            .where(
+                RefreshSession.user_id == user.id,
+                RefreshSession.token_digest == create_refresh_digest(result.refresh.token, settings),
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if (
+            user.email != result.user.email
+            or user.created_at != result.user.created_at
+            or refresh is None
+            or refresh.rotated_from_id is not None
+            or refresh.revoked_at is not None
+        ):
+            raise RegistrationUnavailable(
+                "가입 취소를 완료할 수 없습니다.",
+                failure=FailureDetails(stage="compensation", error_type="RegistrationStateChanged"),
+            )
+        # 세션을 먼저 지우며, 다른 참조가 있으면 전체 삭제를 롤백한다.
+        session.delete(refresh)
+        session.flush()
+        session.delete(user)
+        session.commit()
+    except RegistrationUnavailable:
+        _rollback(session, "compensation_rollback")
+        raise
+    except SQLAlchemyError as exc:
+        _rollback(session, "compensation_rollback")
+        raise RegistrationUnavailable(
+            "가입 취소를 완료할 수 없습니다.", failure=FailureDetails.from_exception("compensation", exc)
+        ) from None
+    except Exception:
+        _rollback(session, "compensation_rollback")
         raise
