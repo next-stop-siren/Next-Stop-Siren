@@ -1,0 +1,124 @@
+.sidebar {
+  display: flex;
+  flex: 0 0 260px;
+  flex-direction: column;
+  width: 260px;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--color-sidebar);
+  box-sizing: border-box;
+  padding: 20px 16px;
+}
+
+.sidebarHeader {
+  padding: 4px 10px 18px;
+}
+
+.sidebarHeader,
+.sidebarFooter {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.sidebarHeader h2 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.newChatButton,
+.loginButton {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.newChatButton {
+  justify-content: space-between;
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-align: left;
+}
+
+.newChatButton:disabled {
+  background: #f0f2f4;
+  color: var(--color-muted);
+  cursor: not-allowed;
+}
+
+.loginRequired {
+  margin-left: 8px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: var(--color-soft);
+  color: var(--color-primary);
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.conversationList {
+  flex: 1;
+  padding: 22px 10px;
+}
+
+.conversationList p {
+  margin: 0 0 8px;
+  color: var(--color-muted);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.conversationList p:first-child {
+  color: var(--color-text);
+  font-weight: 700;
+}
+
+.sidebarFooter {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  background: var(--color-sidebar);
+  padding: 12px 0 4px;
+}
+
+.loginButton {
+  justify-content: center;
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: #ffffff;
+}
+
+.loginButton:hover {
+  border-color: var(--color-primary-hover);
+  background: var(--color-primary-hover);
+}
+
+@media (max-width: 760px) {
+  .sidebar {
+    flex: 0 0 auto;
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    overflow-y: visible;
+  }
+
+  .sidebarHeader {
+    padding: 4px 8px 12px;
+  }
+
+  .conversationList {
+    display: none;
+  }
+
+  .sidebarFooter {
+    position: static;
+    margin-top: 8px;
+  }
+}
