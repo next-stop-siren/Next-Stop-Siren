@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
+from app.observability import FailureDetails, request_trace_id
 from app.schemas.errors import ErrorDetail, ErrorResponse
 
 logger = logging.getLogger(__name__)
@@ -38,9 +39,10 @@ _PUBLIC_FIELDS = {"email", "password", "limit", "before_id", "after_id", "conver
 class ApiError(Exception):
     """예상 가능한 오류는 내부 메시지 대신 정해진 코드를 사용한다."""
 
-    def __init__(self, code: ApiErrorCode) -> None:
+    def __init__(self, code: ApiErrorCode, *, failure: FailureDetails | None = None) -> None:
         self.code = code
         self.status_code, self.public_message = _API_ERRORS[code]
+        self.failure = failure
         super().__init__(code)
 
 
@@ -77,7 +79,15 @@ def _error_response(
 async def api_error_handler(request: Request, exc: Exception) -> JSONResponse:
     if not isinstance(exc, ApiError):
         raise exc
-    return _error_response(exc.status_code, exc.code, exc.public_message, {})
+    trace_id = request_trace_id(request)
+    if exc.failure is not None:
+        logger.error(
+            "event=registration_failed trace_id=%s stage=%s error_type=%s",
+            trace_id,
+            exc.failure.stage,
+            exc.failure.error_type,
+        )
+    return _error_response(exc.status_code, exc.code, exc.public_message, {}, trace_id=trace_id)
 
 
 async def validation_error_handler(request: Request, exc: Exception) -> JSONResponse:
@@ -93,12 +103,12 @@ async def validation_error_handler(request: Request, exc: Exception) -> JSONResp
             field = location[1]
         message = _VALIDATION_MESSAGES.get(error.get("type", ""), "입력값을 확인해 주세요.")
         fields.setdefault(field, message)
-    return _error_response(422, "validation_error", "요청을 확인해 주세요.", fields)
+    return _error_response(422, "validation_error", "요청을 확인해 주세요.", fields, trace_id=request_trace_id(request))
 
 
 async def database_unavailable_handler(request: Request, exc: Exception) -> JSONResponse:
     # 응답과 로그를 같은 trace ID로 연결하며, 예외 원문은 기록하지 않는다.
-    trace_id = str(uuid4())
+    trace_id = request_trace_id(request)
     logger.error("Database unavailable, trace_id=%s, error=%s", trace_id, loggable(exc))
     return _error_response(503, "temporarily_unavailable", "잠시 후 다시 시도해 주세요.", {}, trace_id=trace_id)
 

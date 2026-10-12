@@ -3,6 +3,7 @@
 from unittest.mock import patch
 from uuid import uuid4
 import unicodedata
+import logging
 
 from fastapi.testclient import TestClient
 import jwt
@@ -80,19 +81,41 @@ def test_http_origin_failure_creates_no_user(db_client, orm_test_session, signup
     assert orm_test_session.scalar(select(User.id).where(User.email == signup_body["email"])) is None
 
 
-def test_http_commit_failure_rolls_back_both_rows_and_emits_no_credentials(db_client, orm_test_session, signup_body):
+def test_http_commit_failure_rolls_back_both_rows_and_emits_no_credentials(
+    db_client, orm_test_session, signup_body, caplog
+):
     sessions_before = orm_test_session.scalar(select(func.count()).select_from(RefreshSession))
 
     def fail_commit():
         orm_test_session.flush()
-        raise OperationalError("private SQL", None, RuntimeError("private details"))
+        raise OperationalError(
+            "INSERT INTO private_table (password_hash, token_digest) VALUES (%(hash)s, %(digest)s)",
+            {"hash": "private-hash", "digest": "private-digest", "token": "private-refresh-token"},
+            RuntimeError("password=private-db-password host=db.private.test"),
+        )
 
-    with patch.object(orm_test_session, "commit", side_effect=fail_commit):
+    with caplog.at_level(logging.INFO), patch.object(orm_test_session, "commit", side_effect=fail_commit):
         response = db_client.post(PATH, json=signup_body, headers=HEADERS)
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "temporarily_unavailable"
     assert "set-cookie" not in response.headers
     assert "private" not in response.text and "access_token" not in response.text
+    events = [record for record in caplog.records if "event=registration_" in record.getMessage()]
+    received, failed = events
+    trace_id = response.json()["error"]["trace_id"]
+    assert trace_id in received.getMessage() and trace_id in failed.getMessage()
+    assert "stage=commit error_type=OperationalError" in failed.getMessage()
+    assert failed.exc_info is None
+    for secret in (
+        *signup_body.values(),
+        "private_table",
+        "private-hash",
+        "private-digest",
+        "private-refresh-token",
+        "private-db-password",
+        "db.private.test",
+    ):
+        assert secret not in caplog.text and secret not in response.text
     assert orm_test_session.scalar(select(User.id).where(User.email == signup_body["email"])) is None
     assert orm_test_session.scalar(select(func.count()).select_from(RefreshSession)) == sessions_before
 

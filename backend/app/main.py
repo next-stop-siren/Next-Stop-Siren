@@ -1,5 +1,6 @@
 """Small local API for checking the application and its database dependency."""
 
+import logging
 import os
 
 import psycopg
@@ -10,6 +11,7 @@ from fastapi.responses import JSONResponse
 from app.api import conversations
 from app.api.auth import router as auth_router
 from app.api.errors import register_error_handlers
+from app.observability import RegistrationTraceMiddleware
 from app.security.settings import AuthSettings, AuthSettingsError, get_auth_settings
 
 
@@ -43,6 +45,8 @@ def ready() -> dict[str, str] | JSONResponse:
 
 def create_app(auth_settings: AuthSettings | None = None) -> FastAPI:
     """앱 생성 시 인증 설정을 고정하며, 잘못된 설정은 인증 요청을 차단한다."""
+    # 기존 로그 설정이 없으면 요청·저장 성공의 INFO 기록도 출력한다.
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     if auth_settings is None:
         try:
             auth_settings = get_auth_settings()
@@ -52,6 +56,7 @@ def create_app(auth_settings: AuthSettings | None = None) -> FastAPI:
     application = FastAPI(title="B7-1 API")
     application.state.auth_settings = auth_settings
     register_error_handlers(application)
+    application.add_middleware(RegistrationTraceMiddleware)
     application.add_middleware(
         CORSMiddleware,
         allow_origins=list(auth_settings.allowed_origins) if auth_settings else [],

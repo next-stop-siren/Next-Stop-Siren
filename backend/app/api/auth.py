@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.api.cookies import AuthCookieError, set_auth_cookies
 from app.api.errors import ApiError, unauthenticated
 from app.db import get_session
+from app.observability import FailureDetails, registration_saved
 from app.schemas.auth import RegisterRequest, RegisterResponse
 from app.schemas.errors import ErrorResponse
 from app.security.settings import AuthSettings
@@ -37,8 +38,8 @@ def registration_session() -> Iterator[Session]:
     try:
         try:
             session = next(sessions)
-        except (SQLAlchemyError, RuntimeError, ValueError):
-            raise ApiError("temporarily_unavailable") from None
+        except (SQLAlchemyError, RuntimeError, ValueError) as exc:
+            raise ApiError("temporarily_unavailable", failure=FailureDetails.from_exception("session", exc)) from None
         yield session
     finally:
         sessions.close()
@@ -56,6 +57,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 )
 def register(
     body: RegisterRequest,
+    request: Request,
     response: Response,
     session: Annotated[Session, Depends(registration_session)],
     settings: Annotated[AuthSettings, Depends(request_auth_settings)],
@@ -65,12 +67,14 @@ def register(
         result = register_local_user(body, session, settings)
     except LocalEmailExists:
         raise ApiError("local_email_exists") from None
-    except RegistrationUnavailable:
-        raise ApiError("temporarily_unavailable") from None
+    except RegistrationUnavailable as exc:
+        failure = exc.failure or FailureDetails.from_exception("registration", exc)
+        raise ApiError("temporarily_unavailable", failure=failure) from None
+    registration_saved(request)
     try:
         csrf_token = set_auth_cookies(response, result.refresh, settings)
-    except AuthCookieError:
-        raise ApiError("temporarily_unavailable") from None
+    except AuthCookieError as exc:
+        raise ApiError("temporarily_unavailable", failure=FailureDetails.from_exception("cookie", exc)) from None
     # 인증 정보가 브라우저나 프록시 캐시에 남지 않게 한다.
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
