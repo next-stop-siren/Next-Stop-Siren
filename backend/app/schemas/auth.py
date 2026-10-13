@@ -1,4 +1,4 @@
-"""Registration input and public authentication response contracts."""
+"""Local registration/login inputs and public authentication responses."""
 
 from datetime import datetime, timezone
 import re
@@ -13,8 +13,8 @@ _EMAIL_LOCAL = re.compile(r"[\w!#$%&'*+/=?^`{|}~-]+(?:\.[\w!#$%&'*+/=?^`{|}~-]+)
 _DOMAIN_LABEL = re.compile(r"[^\W_](?:[^\W_]|-){0,61}[^\W_]|[^\W_]")
 
 
-class RegisterRequest(BaseModel):
-    """Validate local registration inputs without normalizing passwords."""
+class _LocalCredentialsRequest(BaseModel):
+    """Share approved email/password validation for registration and login."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -56,6 +56,14 @@ class RegisterRequest(BaseModel):
         return value
 
 
+class RegisterRequest(_LocalCredentialsRequest):
+    """Local registration input; preserve the password exactly as submitted."""
+
+
+class LoginRequest(_LocalCredentialsRequest):
+    """Local login input with the same credential rules as registration."""
+
+
 class PublicUser(BaseModel):
     """Expose an allowlist of user attributes without database-only secrets."""
 
@@ -79,8 +87,8 @@ class PublicUser(BaseModel):
         return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-class RegisterResponse(BaseModel):
-    """Registration success body; refresh tokens travel only in cookies."""
+class _AuthResponse(BaseModel):
+    """Shared success body; refresh tokens travel only in cookies."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -89,3 +97,11 @@ class RegisterResponse(BaseModel):
     token_type: Literal["Bearer"] = "Bearer"
     expires_in: Literal[900] = 900
     csrf_token: StrictStr = Field(repr=False)
+
+
+class RegisterResponse(_AuthResponse):
+    """Successful registration body (HTTP 201 at the API boundary)."""
+
+
+class LoginResponse(_AuthResponse):
+    """Successful login body (HTTP 200 at the API boundary)."""
