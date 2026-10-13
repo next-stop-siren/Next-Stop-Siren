@@ -82,7 +82,9 @@ def lock_conversation(session: Session, user_id: int, conversation_id: int) -> b
     """Lock the user's conversation row until the transaction ends; False as in `owns_conversation`.
 
     Sends to one conversation then run one at a time, so the request key and pending
-    checks that follow cannot be overtaken by another send.
+    checks that follow cannot be overtaken by another send. Every transaction that
+    changes a conversation's messages takes this lock before any message lock, so two
+    of them never wait for each other in opposite order.
     """
     statement = (
         select(Conversation.id)
@@ -96,18 +98,21 @@ def _pending_answers(conversation_id: int) -> tuple[ColumnElement[bool], ...]:
     return (Message.conversation_id == conversation_id, Message.role == "assistant", Message.status == "pending")
 
 
-def close_stale_pending(session: Session, conversation_id: int, older_than_seconds: int) -> None:
-    """Interrupt a pending answer created longer ago than the limit, by the database clock.
+def close_stale_pending(session: Session, conversation_id: int, older_than_seconds: int) -> int:
+    """Interrupt pending answers created more than the limit ago, by the database clock; return how many.
 
-    An answer that is no longer pending, or still within the limit, is left as it is.
+    An answer that is no longer pending, or exactly at or within the limit, is left as
+    it is. The caller has locked the conversation with `lock_conversation`.
     """
-    session.execute(
+    statement = (
         update(Message)
         .where(*_pending_answers(conversation_id))
         .where(Message.created_at < func.now() - timedelta(seconds=older_than_seconds))
         .values(status="interrupted", error_code="outcome_unknown", updated_at=func.now())
+        .returning(Message.id)
         .execution_options(synchronize_session="fetch")
     )
+    return len(session.scalars(statement).all())
 
 
 def has_pending_answer(session: Session, conversation_id: int) -> bool:
@@ -174,12 +179,15 @@ def add_question(session: Session, conversation_id: int, content: str, request_k
 
 
 def finish_answer(
-    session: Session, answer_id: int, *, status: str, content: str | None, error_code: str | None
+    session: Session, conversation_id: int, answer_id: int, *, status: str, content: str | None, error_code: str | None
 ) -> Message:
     """Store the outcome only while the answer is still pending; return the answer as stored.
 
-    An answer that recovery already closed keeps what recovery stored. The caller commits.
+    The conversation row is locked first, in the same order as `lock_conversation`
+    followed by `close_stale_pending`. An answer that recovery already closed keeps
+    what recovery stored. The caller commits.
     """
+    session.execute(select(Conversation.id).where(Conversation.id == conversation_id).with_for_update())
     statement = (
         update(Message)
         .where(Message.id == answer_id, Message.status == "pending")
@@ -198,5 +206,5 @@ def finish_answer(
         return session.scalars(
             select(Message).where(Message.id == answer_id).execution_options(populate_existing=True)
         ).one()
-    _touch_conversation(session, answer.conversation_id)
+    _touch_conversation(session, conversation_id)
     return answer
