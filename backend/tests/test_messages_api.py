@@ -6,6 +6,7 @@ contract requires; the real statements are checked in test_messages_api_db.py.
 Authentication is mocked as in test_conversations_api.py.
 """
 
+import logging
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -16,6 +17,7 @@ from app.db import get_session
 from app.integrations.provider import MockProvider, ProviderFailed, ProviderTimeout, get_provider
 from app.main import app
 from app.repositories import conversations as repository
+from app.services import chat
 from app.services.chat import ANSWER_TIME_LIMIT_SECONDS, STALE_PENDING_SECONDS
 from test_conversations_api import at, call, error_of, failing, message, sign_in
 
@@ -80,10 +82,11 @@ class FakeChatStore:
         return (user_id, conversation_id) == (self.owner, 501)
 
     def close_stale_pending(self, _session, _conversation_id, older_than_seconds):
-        for row in self.pending():
-            if row.created_at < NOW - timedelta(seconds=older_than_seconds):
-                row.status, row.error_code = "interrupted", "outcome_unknown"
-                row.updated_at = LATER
+        stale = [row for row in self.pending() if row.created_at < NOW - timedelta(seconds=older_than_seconds)]
+        for row in stale:
+            row.status, row.error_code = "interrupted", "outcome_unknown"
+            row.updated_at = LATER
+        return len(stale)
 
     def has_pending_answer(self, _session, _conversation_id):
         return bool(self.pending())
@@ -107,7 +110,7 @@ class FakeChatStore:
         ]
         return self.rows[-2], self.rows[-1]
 
-    def finish_answer(self, _session, answer_id, *, status, content, error_code):
+    def finish_answer(self, _session, _conversation_id, answer_id, *, status, content, error_code):
         answer = next(row for row in self.rows if row.id == answer_id)
         if answer.status == "pending":
             answer.status, answer.content, answer.error_code = status, content, error_code
@@ -377,6 +380,67 @@ def test_another_users_conversation_and_a_missing_one_are_the_same_404(store, pr
     assert others.status_code == missing.status_code == 404
     assert error_of(others) == error_of(missing) == {"code": "not_found", "message": "찾을 수 없습니다.", "fields": {}}
     assert (store.rows, store.commits, provider.calls) == ([], 0, [])
+
+
+def test_an_answer_exactly_at_the_recovery_limit_is_still_pending(store, provider):
+    store.add_question(None, 501, "안녕?", "q-demo-1", created=NOW - timedelta(seconds=STALE_PENDING_SECONDS))
+    assert send().status_code == 202
+    assert send(content="하나 더", request_key="q-demo-2").status_code == 409
+
+
+# Private text a request carries; neither its response nor the server log may repeat it.
+PRIVATE_QUESTION = "비밀 질문 fixture-private-question"
+PRIVATE_KEY = "fixture-private-key"
+PROVIDER_DETAIL = "fixture-provider-secret"
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code", "outcome"),
+    [
+        (ProviderFailed(PROVIDER_DETAIL), 502, "provider_failed"),
+        (ProviderTimeout(PROVIDER_DETAIL), 504, "outcome_unknown"),
+    ],
+    ids=["failure", "timeout"],
+)
+def test_provider_failure_response_and_server_log_share_the_request_trace_id(
+    store, provider, caplog, error, status_code, outcome
+):
+    provider.outcome = failing(error)
+    with caplog.at_level(logging.INFO, logger="app"):
+        response = send(content=PRIVATE_QUESTION, request_key=PRIVATE_KEY)
+    assert response.status_code == status_code
+    trace_id = response.json()["error"]["trace_id"]
+    messages = [record.getMessage() for record in caplog.records]
+    # Received, question saved, provider call ended and answer saved, all under the response's trace ID.
+    assert [message.split(",")[0] for message in messages] == [
+        "Question received",
+        "Question saved",
+        "Provider call ended",
+        "Answer saved",
+    ]
+    assert all(f"trace_id={trace_id}" in message for message in messages)
+    assert f"outcome={outcome}" in messages[2] and caplog.records[2].levelno == logging.WARNING
+    assert all(record.exc_info is None for record in caplog.records)
+    for private in (PRIVATE_QUESTION, PRIVATE_KEY, PROVIDER_DETAIL):
+        assert private not in caplog.text and private not in response.text
+    # Another request has its own trace ID.
+    conflict = send(content="다른 질문", request_key=PRIVATE_KEY)
+    assert conflict.status_code == 409 and conflict.json()["error"]["trace_id"] != trace_id
+
+
+def test_the_service_raises_business_errors_and_leaves_http_to_the_api(store, provider):
+    def send_directly(conversation_id=501, content="안녕?", request_key="q-demo-1"):
+        return chat.send_question(store, provider, store.owner, conversation_id, content, request_key, trace_id="t")
+
+    with pytest.raises(chat.ConversationNotFound):
+        send_directly(conversation_id=999)
+    store.add_question(None, 501, "안녕?", "q-demo-1")
+    with pytest.raises(chat.RequestKeyConflict):
+        send_directly(content="안녕!")
+    with pytest.raises(chat.ConversationBusy):
+        send_directly(request_key="q-demo-2")
+    # Nothing in the service module comes from the HTTP layer.
+    assert not any(getattr(value, "__module__", "").startswith("app.api") for value in vars(chat).values())
 
 
 def test_the_default_provider_is_the_free_mock():

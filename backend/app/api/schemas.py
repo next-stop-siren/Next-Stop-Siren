@@ -14,9 +14,8 @@ from pydantic import (
 )
 
 MAX_ID = 2**63 - 1
-# Unicode code points. Provisional until the PM decides the question length limit of issue #11.
+# The approved S10 input limits in docs/04-reference/api.md, in Unicode code points.
 MAX_QUESTION_LENGTH = 4000
-# The key is part of a unique index, whose entries have a size limit.
 MAX_REQUEST_KEY_LENGTH = 200
 # What OpenAPI shows for an ID input; parse_decimal_id also enforces the bigint range.
 ID_INPUT_SCHEMA = {

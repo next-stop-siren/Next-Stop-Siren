@@ -1,13 +1,21 @@
 """Create, list and read the signed-in user's own conversations, and send questions to them."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Annotated, Protocol
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Path, Query, Response
 from sqlalchemy.orm import Session
 
 from app.api.auth import current_user_id
-from app.api.errors import not_found, provider_failed, provider_timeout
+from app.api.errors import (
+    ApiError,
+    conversation_busy,
+    not_found,
+    provider_failed,
+    provider_timeout,
+    request_key_conflict,
+)
 from app.api.schemas import (
     ConversationCreated,
     ConversationOut,
@@ -34,6 +42,13 @@ router = APIRouter(
 UserId = Annotated[int, Depends(current_user_id)]
 DbSession = Annotated[Session, Depends(get_session)]
 Provider = Annotated[AnswerProvider, Depends(get_provider)]
+
+# The HTTP answer to each refusal of the chat service.
+CHAT_ERRORS: dict[type[chat.ChatError], Callable[[], ApiError]] = {
+    chat.ConversationNotFound: not_found,
+    chat.RequestKeyConflict: request_key_conflict,
+    chat.ConversationBusy: conversation_busy,
+}
 Limit = Annotated[int, Query(ge=1, le=100)]
 
 
@@ -101,14 +116,21 @@ def send_question(
     provider: Provider,
     response: Response,
 ) -> QuestionAnswer:
-    exchange = chat.send_question(session, provider, user_id, conversation_id, body.content, body.request_key)
+    # The service logs under this ID, and a 502 or 504 returns it, so the response leads to its log entries.
+    trace_id = uuid4().hex
+    try:
+        exchange = chat.send_question(
+            session, provider, user_id, conversation_id, body.content, body.request_key, trace_id=trace_id
+        )
+    except chat.ChatError as error:
+        raise CHAT_ERRORS[type(error)]() from None
     status = exchange.answer.status
     if not exchange.created:
         response.status_code = 202 if status == "pending" else 200
     elif status == "failed":
-        raise provider_failed()
+        raise provider_failed(trace_id)
     elif status == "interrupted":
-        raise provider_timeout()
+        raise provider_timeout(trace_id)
     return QuestionAnswer(
         question=MessageOut.model_validate(exchange.question), answer=MessageOut.model_validate(exchange.answer)
     )

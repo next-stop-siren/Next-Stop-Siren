@@ -19,11 +19,13 @@ DATABASE_UNAVAILABLE = (OperationalError, InterfaceError, PoolTimeoutError)
 class ApiError(Exception):
     """An expected failure with a stable code and a message that is safe to display."""
 
-    def __init__(self, status_code: int, code: str, message: str) -> None:
+    def __init__(self, status_code: int, code: str, message: str, trace_id: str | None = None) -> None:
         super().__init__(code)
         self.status_code = status_code
         self.code = code
         self.message = message
+        # Set when the server log already holds entries under this ID; otherwise the response gets a new one.
+        self.trace_id = trace_id
 
 
 def unauthenticated() -> ApiError:
@@ -43,12 +45,12 @@ def conversation_busy() -> ApiError:
     return ApiError(409, "conversation_busy", "이전 질문의 답변을 기다리고 있습니다.")
 
 
-def provider_failed() -> ApiError:
-    return ApiError(502, "provider_failed", "답변을 만들지 못했습니다. 대화 기록을 확인해 주세요.")
+def provider_failed(trace_id: str) -> ApiError:
+    return ApiError(502, "provider_failed", "답변을 만들지 못했습니다. 대화 기록을 확인해 주세요.", trace_id)
 
 
-def provider_timeout() -> ApiError:
-    return ApiError(504, "provider_timeout", "답변 시간이 초과되었습니다. 대화 기록을 확인해 주세요.")
+def provider_timeout(trace_id: str) -> ApiError:
+    return ApiError(504, "provider_timeout", "답변 시간이 초과되었습니다. 대화 기록을 확인해 주세요.", trace_id)
 
 
 def loggable(exc: Exception) -> str:
@@ -77,7 +79,7 @@ def error_response(
 def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(ApiError)
     def api_error(_request: Request, exc: ApiError) -> JSONResponse:
-        return error_response(exc.status_code, exc.code, exc.message)
+        return error_response(exc.status_code, exc.code, exc.message, trace_id=exc.trace_id)
 
     @app.exception_handler(RequestValidationError)
     def validation_error(_request: Request, exc: RequestValidationError) -> JSONResponse:
