@@ -61,9 +61,9 @@
 | Refresh 쿠키 | `HttpOnly`, 호스트 전용(`Domain` 없음), `SameSite=Lax`, `Path=/api/auth`, 운영 `Secure`. `Expires`는 루트 절대 만료, 회전 `Max-Age`는 남은 초다. |
 | CSRF 쿠키 | 별도 `HttpOnly`·호스트 전용·`SameSite=Lax`·`Path=/api/auth`·운영 `Secure`; 서버 MAC 값을 현재 refresh `jti`에 결박한다. 본문으로 받은 값을 화면 메모리에 둔다. |
 | Google 트랜잭션 쿠키 | 시작·callback 모두 포함하는 `/api/auth` 경로, 호스트 전용 `HttpOnly`·운영 `Secure`·`SameSite=Lax`; state/nonce/PKCE verifier를 암호화·무결성 보호한다. |
-| Origin·CORS | 세션 쿠키를 설정하는 로컬 가입·로그인과 refresh·logout은 정확한 허용 `Origin`을 요구한다. 쿠키 인증 변경 요청에서 Origin 누락·불일치는 거부한다. CORS는 정확한 프론트 Origin에만 credentials를 허용한다. |
+| Origin·CORS | 세션 쿠키를 설정하는 로컬 가입·로그인과 refresh·logout은 정확한 허용 `Origin`을 요구한다. 쿠키 인증 변경 요청에서 Origin 누락·불일치는 거부한다. CORS는 명시된 정확한 클라이언트 Origin에만 credentials를 허용한다. |
 
-로컬 HTTP `localhost`에서만 개발 설정으로 `Secure=false`를 허용한다. 운영 프론트와 API가 서로 다른 사이트라면 `SameSite=Lax`를 다시 결정해야 한다. Bearer만 쓰는 채팅 요청에는 쿠키 CSRF 절차가 적용되지 않는다.
+개발 인증은 `127.0.0.1`을 기준으로 API 주소 `http://127.0.0.1:8000`과 허용 Origin `http://127.0.0.1:5173,http://127.0.0.1:8000`을 사용한다. 화면과 Swagger UI의 실제 Origin을 모두 허용하며 `localhost`는 제외한다. 개발용 HTTP `127.0.0.1`에서만 `Secure=false`를 허용한다. CORS credentials도 명시된 Origin과 정확히 일치해야 한다. Google callback은 `http://127.0.0.1:8000/api/auth/google/callback`을 등록한다. 운영 프론트와 API가 서로 다른 사이트라면 `SameSite=Lax`를 다시 결정해야 한다. Bearer만 쓰는 채팅 요청에는 쿠키 CSRF 절차가 적용되지 않는다.
 
 비밀번호 평문, 원문 토큰, 제공자 code 및 비밀은 DB·로그·추적에 남기지 않는다.
 

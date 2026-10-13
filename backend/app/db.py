@@ -1,7 +1,7 @@
 """Synchronous SQLAlchemy connection and request session helpers."""
 
 import os
-from collections.abc import Iterator
+from collections.abc import Generator
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine, make_url
@@ -47,7 +47,7 @@ def make_session_factory(url: str) -> sessionmaker[Session]:
 _session_factory: sessionmaker[Session] | None = None
 
 
-def get_session() -> Iterator[Session]:
+def get_session() -> Generator[Session, None, None]:
     """Yield a session; callers explicitly commit or roll back their work."""
     global _session_factory
     if _session_factory is None:
