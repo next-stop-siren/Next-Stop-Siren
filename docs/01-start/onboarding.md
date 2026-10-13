@@ -32,6 +32,64 @@ git --version
 
 `setup`은 `.env`가 없을 때만 예시를 복사한다. 잠금 파일로 프런트엔드·백엔드 의존성과 프로젝트 Playwright Chromium을 설치하고, 개발·테스트 PostgreSQL을 시작한다. 각 DB의 `SELECT 1`, API 준비 상태, 기본 검사를 확인한다. 완료 출력에는 `SELECT 1 passed`, `API readiness passed`, 프런트엔드 타입 검사와 백엔드 단위 검사 성공이 나타난다.
 
+### 2-1. 인증 키 생성과 .env 설정
+
+가입 API를 사용하려면 `setup` 완료 후 저장소 루트의 `.env`에 인증 키 4개를 설정한다. `.env.example`의 키는 의도적으로 비어 있으므로 Origin 주소만 설정해서는 가입 API를 사용할 수 없다. `.env`가 없으면 먼저 `setup`을 실행한다. 기존 `.env`를 예시 파일로 덮어쓰지 않는다.
+
+키는 외부 서비스에서 발급받지 않고 각 팀원이 자신의 개발 환경에서 생성한다. 각각 독립적인 무작위 32바이트를 Base64 문자열로 변환하며, 네 값은 서로 달라야 한다.
+
+| 설정 | 용도 |
+| --- | --- |
+| `AUTH_ACCESS_KEY` | access JWT 서명 |
+| `AUTH_REFRESH_KEY` | refresh JWT 서명 |
+| `AUTH_REFRESH_DIGEST_KEY` | DB에 저장할 refresh digest 생성 |
+| `AUTH_CSRF_KEY` | refresh에 연결된 CSRF 값 생성 |
+
+macOS 터미널에서 다음 명령을 한 번 실행한다.
+
+```sh
+backend/.venv/bin/python - <<'PY'
+import base64
+import secrets
+
+for name in (
+    "AUTH_ACCESS_KEY",
+    "AUTH_REFRESH_KEY",
+    "AUTH_REFRESH_DIGEST_KEY",
+    "AUTH_CSRF_KEY",
+):
+    key = base64.b64encode(secrets.token_bytes(32)).decode("ascii")
+    print(f"{name}={key}")
+PY
+```
+
+Windows 사용자는 아래 [PowerShell 인증 키 설정](#powershell-인증-키-설정) 절차를 따른다. Windows 실제 실행은 미확인이다.
+
+출력된 `AUTH_…_KEY=…` 네 줄을 자신의 `.env`에서 같은 이름의 빈 항목 대신 붙여넣고 저장한다. 다른 DB·Origin 설정은 유지한다. 같은 키를 네 항목에 복사하거나 실행할 때마다 다시 생성하지 않는다. 이미 유효한 키가 설정돼 있다면 이 단계를 반복하지 않는다.
+
+실제 키와 명령 출력은 `.env`에만 보관하며 `.env.example`, Git, PR, 채팅, 공유 화면에 넣지 않는다. 키를 교체하면 기존 토큰·세션·CSRF 값이 더 이상 유효하지 않을 수 있으므로 다시 인증해야 한다.
+
+macOS에서는 다음 명령으로 키 값을 출력하지 않고 인증 설정 전체를 확인할 수 있다.
+
+```sh
+backend/.venv/bin/python - <<'PY'
+from pathlib import Path
+import sys
+
+sys.path.insert(0, "backend")
+sys.path.insert(0, "backend/tests")
+from app.security.settings import AuthSettings
+from db_guard import read_settings
+
+AuthSettings.from_env(read_settings(Path(".env")))
+print("인증 설정 검증 통과")
+PY
+```
+
+오류가 발생하면 표시된 설정 항목을 확인한다. 키는 빈 값이 아니고 Base64로 해석한 결과가 최소 32바이트여야 하며, 네 키가 서로 달라야 한다. 로컬 API·허용 Origin·쿠키 설정도 아래 실행 안내와 일치해야 한다.
+
+설정 저장 후 `./local.sh dev` 또는 `.\local.ps1 dev`로 실행한다. 이미 실행 중이라면 해당 개발 터미널에서 `Ctrl+C`로 종료한 뒤 다시 실행한다. 앱은 생성 시 인증 설정을 읽으므로 `.env` 저장만으로 실행 중인 서버 설정이 갱신되지 않는다. Swagger는 `http://127.0.0.1:8000/docs`에서 열고 `POST /api/auth/register`의 **Try it out → Execute**로 새로운 테스트 이메일의 가입 `201`을 확인한다. 동일한 로컬 이메일의 재가입은 `409`다.
+
 ### 3. 화면과 API 실행
 
 첫 터미널에서 `./local.sh dev`를 실행한다. 두 DB의 `SELECT 1 passed`, Vite의 `ready`, API와 UI 주소가 나오면 둘째 터미널에서 확인한다.
@@ -85,6 +143,65 @@ export TEST_DATABASE_URL="$(backend/.venv/bin/python -c 'import sys; from pathli
 Git과 실행 중인 Docker Desktop(Compose 포함)을 준비한다. `.\windows-check.ps1`과 `.\local.ps1 setup`은 언어 도구를 프로젝트 안에 설치·재사용하도록 구성했다. 필요하면 `B71_NODE`, `B71_NPM`, `B71_PYTHON`, `B71_UV`로 기존 도구를 지정한다. `B71_DOCKER`는 수동 준비한 Docker CLI 경로다. Windows 실제 실행은 아직 확인되지 않았다.
 
 실행 정책이 스크립트를 막으면 조직 정책에 맞는 허용 방법을 관리자에게 확인한다.
+
+### PowerShell 인증 키 설정
+
+아래 명령은 모두 저장소 루트의 PowerShell에서 실행한다. 키의 용도와 보관 기준은 [인증 키 생성과 .env 설정](#2-1-인증-키-생성과-env-설정)을 따른다. 이미 유효한 키가 설정됐다면 생성·교체를 반복하지 않는다.
+
+1. 프로젝트 설치를 완료한다. `.env`가 없을 때만 예시를 복사하며 기존 파일은 보존한다.
+
+```powershell
+.\local.ps1 setup
+```
+
+2. 다음 블록 전체를 복사해 실행한다. 네 키를 각각 독립적으로 생성하며 실제 키가 터미널에 출력되므로 결과를 공유하지 않는다.
+
+```powershell
+@'
+import base64
+import secrets
+
+for name in (
+    "AUTH_ACCESS_KEY",
+    "AUTH_REFRESH_KEY",
+    "AUTH_REFRESH_DIGEST_KEY",
+    "AUTH_CSRF_KEY",
+):
+    key = base64.b64encode(secrets.token_bytes(32)).decode("ascii")
+    print(f"{name}={key}")
+'@ | & .\backend\.venv\Scripts\python.exe -
+```
+
+3. 메모장으로 `.env`를 열고, 출력된 네 줄을 같은 이름의 빈 항목 대신 붙여넣는다. 다른 설정은 유지하고 `.env` 이름 그대로 저장한다. `.env.txt`나 `.env.example`에 저장하지 않는다.
+
+```powershell
+notepad .env
+```
+
+4. 키를 출력하지 않고 설정을 검증한다. `Auth settings validated`가 출력돼야 한다. 오류가 나면 해당 설정 항목을 수정한 뒤 다시 확인한다.
+
+```powershell
+@'
+from pathlib import Path
+import sys
+
+sys.path.insert(0, "backend")
+sys.path.insert(0, "backend/tests")
+from app.security.settings import AuthSettings
+from db_guard import read_settings
+
+AuthSettings.from_env(read_settings(Path(".env")))
+print("Auth settings validated")
+'@ | & .\backend\.venv\Scripts\python.exe -
+```
+
+5. 개발 서버를 실행한다. 이미 실행 중이면 해당 터미널에서 `Ctrl+C`로 종료한 후 다시 실행한다. 브라우저에서 `http://127.0.0.1:8000/docs`를 열고 가입 API의 **Try it out → Execute**로 새 테스트 이메일의 `201`을 확인한다.
+
+```powershell
+.\local.ps1 dev
+```
+
+이 절차는 Windows에서 실제 실행하지 않았다. Python 실행 파일이 없으면 `setup` 완료 여부와 현재 디렉터리를 먼저 확인한다.
 
 ### 실행
 
