@@ -17,7 +17,17 @@ logger = logging.getLogger(__name__)
 
 # 연결·조회 시간 제한·풀 대기는 503, 다른 DB 오류는 원래 예외를 유지한다.
 DATABASE_UNAVAILABLE = (OperationalError, InterfaceError, PoolTimeoutError)
-ApiErrorCode = Literal["local_email_exists", "csrf_failed", "temporarily_unavailable", "unauthenticated", "not_found"]
+ApiErrorCode = Literal[
+    "local_email_exists",
+    "csrf_failed",
+    "temporarily_unavailable",
+    "unauthenticated",
+    "not_found",
+    "request_key_conflict",
+    "conversation_busy",
+    "provider_failed",
+    "provider_timeout",
+]
 
 _API_ERRORS: dict[ApiErrorCode, tuple[int, str]] = {
     "local_email_exists": (409, "이미 가입된 이메일입니다."),
@@ -25,6 +35,10 @@ _API_ERRORS: dict[ApiErrorCode, tuple[int, str]] = {
     "temporarily_unavailable": (503, "일시적으로 서비스를 이용할 수 없습니다."),
     "unauthenticated": (401, "로그인이 필요합니다."),
     "not_found": (404, "찾을 수 없습니다."),
+    "request_key_conflict": (409, "같은 요청 키로 다른 질문을 보낼 수 없습니다."),
+    "conversation_busy": (409, "이전 질문의 답변을 기다리고 있습니다."),
+    "provider_failed": (502, "답변을 만들지 못했습니다. 대화 기록을 확인해 주세요."),
+    "provider_timeout": (504, "답변 시간이 초과되었습니다. 대화 기록을 확인해 주세요."),
 }
 _VALIDATION_MESSAGES = {
     "missing": "필수 값입니다.",
@@ -33,7 +47,7 @@ _VALIDATION_MESSAGES = {
     "json_invalid": "올바른 JSON 본문을 보내 주세요.",
 }
 _LOCATIONS = {"body", "path", "query", "header", "cookie"}
-_PUBLIC_FIELDS = {"email", "password", "limit", "before_id", "after_id", "conversation_id"}
+_PUBLIC_FIELDS = {"email", "password", "limit", "before_id", "after_id", "conversation_id", "content", "request_key"}
 
 
 class ApiError(Exception):
@@ -53,6 +67,22 @@ def unauthenticated() -> ApiError:
 def not_found() -> ApiError:
     """없는 리소스와 다른 사용자의 리소스에 같은 오류를 반환한다."""
     return ApiError("not_found")
+
+
+def request_key_conflict() -> ApiError:
+    return ApiError("request_key_conflict")
+
+
+def conversation_busy() -> ApiError:
+    return ApiError("conversation_busy")
+
+
+def provider_failed() -> ApiError:
+    return ApiError("provider_failed")
+
+
+def provider_timeout() -> ApiError:
+    return ApiError("provider_timeout")
 
 
 def loggable(exc: Exception) -> str:
