@@ -19,3 +19,15 @@ def add_local_user(session: Session, email: str, password_hash: str) -> User:
     session.add(user)
     session.flush()
     return user
+
+
+def find_user_for_update(session: Session, user_id: int) -> User | None:
+    """사용자를 잠그고 기존 ORM 객체도 최신 DB 값으로 갱신한다."""
+    return session.scalar(
+        select(User).where(User.id == user_id).with_for_update().execution_options(populate_existing=True)
+    )
+
+
+def delete_user(session: Session, user: User) -> None:
+    """사용자 삭제를 예약하며 커밋은 호출자가 담당한다."""
+    session.delete(user)

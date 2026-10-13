@@ -4,15 +4,16 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from psycopg.errors import UniqueViolation
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.models.refresh_session import RefreshSession
-from app.models.user import User
 from app.observability import FailureDetails, FailureStage
-from app.repositories.refresh_sessions import add_initial_refresh_session
-from app.repositories.users import add_local_user, find_local_user_by_email
+from app.repositories.refresh_sessions import (
+    add_initial_refresh_session,
+    delete_refresh_session,
+    find_refresh_session_for_update,
+)
+from app.repositories.users import add_local_user, delete_user, find_local_user_by_email, find_user_for_update
 from app.schemas.auth import PublicUser, RegisterRequest
 from app.security.passwords import PasswordHashError, hash_password
 from app.security.session_values import create_refresh_digest
@@ -103,24 +104,12 @@ def cancel_registration(result: RegistrationResult, session: Session, settings: 
     """쿠키 발급에 실패한 이번 가입의 사용자·최초 세션만 원자적으로 취소한다."""
     try:
         # 이미 커밋된 데이터이므로 새 트랜잭션에서 사용자부터 잠근다.
-        user = session.scalar(
-            select(User)
-            .where(User.id == int(result.user.id))
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
+        user = find_user_for_update(session, int(result.user.id))
         if user is None:
             session.rollback()
             return
-        refresh = session.scalar(
-            select(RefreshSession)
-            .where(
-                RefreshSession.user_id == user.id,
-                RefreshSession.token_digest == create_refresh_digest(result.refresh.token, settings),
-            )
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
+        token_digest = create_refresh_digest(result.refresh.token, settings)
+        refresh = find_refresh_session_for_update(session, user.id, token_digest)
         if (
             user.email != result.user.email
             or user.created_at != result.user.created_at
@@ -133,9 +122,8 @@ def cancel_registration(result: RegistrationResult, session: Session, settings: 
                 failure=FailureDetails(stage="compensation", error_type="RegistrationStateChanged"),
             )
         # 세션을 먼저 지우며, 다른 참조가 있으면 전체 삭제를 롤백한다.
-        session.delete(refresh)
-        session.flush()
-        session.delete(user)
+        delete_refresh_session(session, refresh)
+        delete_user(session, user)
         session.commit()
     except RegistrationUnavailable:
         _rollback(session, "compensation_rollback")
