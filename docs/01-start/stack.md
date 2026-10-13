@@ -15,7 +15,7 @@
 
 ## 개발과 초기 DB
 
-로컬 개발에서는 Vite와 Uvicorn을 호스트에서 실행하고 Compose의 분리된 개발·테스트 PostgreSQL을 사용한다. 기존 localhost 포트와 테스트 DB 보호 규칙은 [공통 환경](environment.md)과 [실행 체크리스트](onboarding.md)를 따른다.
+로컬 개발에서는 Vite와 Uvicorn을 호스트에서 실행하고 Compose의 분리된 개발·테스트 PostgreSQL을 사용한다. 인증 개발은 `127.0.0.1`을 기준으로 화면 Origin `http://127.0.0.1:5173`과 Swagger UI Origin `http://127.0.0.1:8000`을 허용하고 `localhost`는 제외한다. 기존 로컬 포트와 테스트 DB 보호 규칙은 [공통 환경](environment.md)과 [실행 체크리스트](onboarding.md)를 따른다.
 
 - **공통 준비:** `app.db`의 Base·동기 Session, `app.models.register_models`, `db-init`·`db-init-test`, 보호된 테스트 DB 명령이 구현되어 있다. 이 공통 코드와 명령은 현재 `main`에 병합되어 있다. 엔진·세션(한 작업의 DB 읽기·쓰기를 묶는 객체)·모델 등록과 두 OS용 명령, 개발/테스트 DB 보호 및 테스트 세션의 사용법은 [온보딩](onboarding.md)에 정리했다.
 - **초기 생성:** 빈 개발·테스트 DB의 테이블은 ORM 모델 메타데이터에 `create_all()`을 적용해 만든다. 요청마다 테이블을 만들지 않는다.

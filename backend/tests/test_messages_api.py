@@ -11,6 +11,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
 from app.api.schemas import MAX_QUESTION_LENGTH, MAX_REQUEST_KEY_LENGTH
 from app.db import get_session
@@ -194,8 +195,9 @@ def test_unauthenticated_send_gets_401_before_anything_else(store, provider, una
         ({"content": "안녕?", "request_key": "a\x00b"}, "request_key"),
         ({"content": "안녕?", "request_key": 1}, "request_key"),
         ({"content": "안녕?"}, "request_key"),
-        ({"content": "안녕?", "request_key": "q", "user_id": "202"}, "user_id"),
-        ({"content": "안녕?", "request_key": "q", "role": "assistant"}, "role"),
+        # An unknown field's name is not repeated in the response.
+        ({"content": "안녕?", "request_key": "q", "user_id": "202"}, "body"),
+        ({"content": "안녕?", "request_key": "q", "role": "assistant"}, "body"),
         ([], "body"),
     ],
     ids=[
@@ -426,6 +428,37 @@ def test_provider_failure_response_and_server_log_share_the_request_trace_id(
     # Another request has its own trace ID.
     conflict = send(content="다른 질문", request_key=PRIVATE_KEY)
     assert conflict.status_code == 409 and conflict.json()["error"]["trace_id"] != trace_id
+
+
+@pytest.mark.parametrize(
+    ("failing_commit", "events_before"),
+    [(1, ["Question received"]), (2, ["Question received", "Question saved", "Provider call ended"])],
+    ids=["question save", "answer save"],
+)
+def test_database_failure_503_shares_the_trace_id_of_the_chat_log(
+    store, provider, monkeypatch, caplog, failing_commit, events_before
+):
+    """The 503 and the chat entries logged before the failure carry one trace ID; no statement values leak."""
+    statement = "UPDATE messages SET content=%(content)s"
+    failure = OperationalError(statement, {"content": PRIVATE_QUESTION}, Exception(f"password={PROVIDER_DETAIL}"))
+    commit = store.commit
+
+    def commit_or_fail():
+        if store.commits + 1 == failing_commit:
+            raise failure
+        commit()
+
+    monkeypatch.setattr(store, "commit", commit_or_fail)
+    with caplog.at_level(logging.INFO, logger="app"):
+        response = send(content=PRIVATE_QUESTION, request_key=PRIVATE_KEY)
+    assert response.status_code == 503
+    assert error_of(response)["code"] == "temporarily_unavailable"
+    trace_id = response.json()["error"]["trace_id"]
+    messages = [record.getMessage() for record in caplog.records]
+    assert [message.split(",")[0] for message in messages] == [*events_before, "Database unavailable"]
+    assert all(f"trace_id={trace_id}" in message for message in messages)
+    for private in (PRIVATE_QUESTION, PRIVATE_KEY, PROVIDER_DETAIL, statement):
+        assert private not in caplog.text and private not in response.text
 
 
 def test_the_service_raises_business_errors_and_leaves_http_to_the_api(store, provider):

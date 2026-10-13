@@ -1,1 +1,1 @@
-"""Work that spans storage and outside services, including its transaction boundaries."""
+"""Application workflows and transaction boundaries, independent of HTTP."""

@@ -104,7 +104,7 @@
 
 로그인·가입의 refresh 쿠키는 `HttpOnly; SameSite=Lax; Path=/api/auth`, CSRF도 별도의 같은 속성 쿠키다. 둘 다 호스트 전용(`Domain` 없음)이며 운영에서는 `Secure`다. refresh는 최초 로그인부터 절대 14일로 만료된다. refresh 쿠키의 `Expires`는 그 절대 시각, 교체할 때의 `Max-Age`는 남은 초다.
 
-로컬 HTTP `localhost` 개발 설정에 한해 `Secure=false`를 허용한다. CORS credentials는 정확한 프론트 Origin에만 허용한다.
+개발 인증은 API 주소 `http://127.0.0.1:8000`을 사용하고 화면 `http://127.0.0.1:5173`과 Swagger UI `http://127.0.0.1:8000`을 `AUTH_ALLOWED_ORIGINS`에 명시한다. `localhost`는 제외하며 Origin에는 `/docs` 경로를 넣지 않는다. 개발용 HTTP `127.0.0.1`에서만 `Secure=false`를 허용하고 CORS credentials는 허용 목록과 정확히 일치하는 Origin에만 허용한다.
 
 ### 현재 사용자 — `GET /api/me`
 

@@ -2,9 +2,8 @@
 
 from collections.abc import Callable, Sequence
 from typing import Annotated, Protocol
-from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Path, Query, Response
+from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from app.api.auth import current_user_id
@@ -30,6 +29,7 @@ from app.api.schemas import (
 )
 from app.db import get_session
 from app.integrations.provider import AnswerProvider, get_provider
+from app.observability import request_trace_id
 from app.repositories import conversations as repository
 from app.services import chat
 
@@ -114,10 +114,12 @@ def send_question(
     user_id: UserId,
     session: DbSession,
     provider: Provider,
+    request: Request,
     response: Response,
 ) -> QuestionAnswer:
-    # The service logs under this ID, and a 502 or 504 returns it, so the response leads to its log entries.
-    trace_id = uuid4().hex
+    # The request's trace ID: the service logs under it, and the error handlers return it
+    # in a 502, 504 or database 503, so the response leads to its log entries.
+    trace_id = request_trace_id(request)
     try:
         exchange = chat.send_question(
             session, provider, user_id, conversation_id, body.content, body.request_key, trace_id=trace_id
@@ -128,9 +130,9 @@ def send_question(
     if not exchange.created:
         response.status_code = 202 if status == "pending" else 200
     elif status == "failed":
-        raise provider_failed(trace_id)
+        raise provider_failed()
     elif status == "interrupted":
-        raise provider_timeout(trace_id)
+        raise provider_timeout()
     return QuestionAnswer(
         question=MessageOut.model_validate(exchange.question), answer=MessageOut.model_validate(exchange.answer)
     )

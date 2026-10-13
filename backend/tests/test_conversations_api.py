@@ -211,14 +211,14 @@ def test_create_rejects_another_users_id_in_the_body(store, principal_body_misma
     sign_in(principal_body_mismatch_case["expected_principal_user_id"])
     response = call("POST", "/api/conversations", json=principal_body_mismatch_case["request_body"])
     assert response.status_code == 422
-    assert set(error_of(response)["fields"]) == {"user_id"}
+    assert set(error_of(response)["fields"]) == {"body"}
     assert (store.calls, store.commits) == (0, 0)
 
 
 @pytest.mark.parametrize(
     ("kwargs", "field"),
     [
-        ({"json": {"title": "x"}}, "title"),
+        ({"json": {"title": "x"}}, "body"),
         ({"json": []}, "body"),
         ({"content": b"{", "headers": {"Content-Type": "application/json"}}, "body"),
         ({}, "body"),

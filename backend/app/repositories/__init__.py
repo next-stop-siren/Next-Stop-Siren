@@ -1,1 +1,1 @@
-"""Database access through SQLAlchemy ORM, always limited to the verified owner."""
+"""Database operations; callers own transaction commit and rollback."""
