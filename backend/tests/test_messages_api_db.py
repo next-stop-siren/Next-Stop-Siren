@@ -6,7 +6,7 @@ transaction of the test connection, so the database clock does not advance; an o
 answer is made by storing an old creation time.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -209,6 +209,34 @@ def test_a_new_question_closes_an_old_pending_answer_and_is_answered(session, se
         ("assistant", "completed", "안녕하세요.", None),
     ]
     assert provider.calls[-1].context == [("user", "안녕?"), ("user", "하나 더")]
+
+
+def test_recovery_closes_only_answers_older_than_the_limit(session, seeded, provider):
+    """Exactly at the limit is not yet stale; one second more is. The database clock is fixed in the test."""
+    provider.outcome = failing(Crash())
+    with pytest.raises(Crash):
+        send(seeded.mine)
+    for seconds, closed, expected in ((STALE_PENDING_SECONDS, 0, WAITING), (STALE_PENDING_SECONDS + 1, 1, INTERRUPTED)):
+        session.execute(
+            update(Message)
+            .where(Message.conversation_id == seeded.mine)
+            .values(created_at=func.now() - timedelta(seconds=seconds))
+        )
+        assert repository.close_stale_pending(session, seeded.mine, STALE_PENDING_SECONDS) == closed
+        assert stored(session, seeded.mine) == expected
+
+
+def test_reading_the_history_does_not_recover_an_old_pending_answer(session, seeded, provider):
+    """Only a message POST recovers; a GET reads what is stored and changes nothing."""
+    provider.outcome = failing(Crash())
+    with pytest.raises(Crash):
+        send(seeded.mine)
+    make_pending_old(session, seeded.mine)
+    history = call("GET", f"/api/conversations/{seeded.mine}/messages")
+    assert history.status_code == 200
+    answer = history.json()["items"][1]
+    assert (answer["status"], answer["error_code"]) == ("pending", None)
+    assert stored(session, seeded.mine) == WAITING
 
 
 def test_recovery_leaves_recent_and_ended_answers_alone(session, seeded, provider):

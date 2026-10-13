@@ -25,7 +25,11 @@ class ContextMessage:
 
 class AnswerProvider(Protocol):
     def complete(self, messages: Sequence[ContextMessage], *, timeout_seconds: float) -> str:
-        """Return the whole answer to the last message, or raise one of the two failures."""
+        """Return the whole answer to the last message, or raise one of the two failures.
+
+        An implementation must itself return or raise `ProviderTimeout` within
+        `timeout_seconds`; receiving the value does not limit the call.
+        """
         ...
 
 
