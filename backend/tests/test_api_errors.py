@@ -15,11 +15,12 @@ from app.schemas.auth import RegisterRequest
 
 
 class UnsafeValidatorInput(BaseModel):
-    content: str
+    # Not a public field name, so its errors are reported under "body".
+    note: str
 
-    @field_validator("content")
+    @field_validator("note")
     @classmethod
-    def reject_content(cls, value: str) -> str:
+    def reject_note(cls, value: str) -> str:
         raise ValueError(f"private validator details: {value}")
 
 
@@ -106,7 +107,7 @@ def test_validation_does_not_echo_password_email_or_extra_names(error_client) ->
 
 
 def test_arbitrary_validator_message_is_not_exposed(error_client) -> None:
-    response = error_client.post("/test/unsafe-validator", json={"content": "private-value"})
+    response = error_client.post("/test/unsafe-validator", json={"note": "private-value"})
     error = assert_error(response, 422, "validation_error")
     assert error["fields"] == {"body": "입력값을 확인해 주세요."}
     assert "private" not in response.text
