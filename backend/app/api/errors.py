@@ -12,6 +12,7 @@ from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
 from app.observability import FailureDetails, request_trace_id
 from app.schemas.errors import ErrorDetail, ErrorResponse
+from app.security.login_limits import LoginRateLimited
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ ApiErrorCode = Literal[
     "temporarily_unavailable",
     "unauthenticated",
     "not_found",
+    "rate_limited",
     "request_key_conflict",
     "conversation_busy",
     "provider_failed",
@@ -35,6 +37,7 @@ _API_ERRORS: dict[ApiErrorCode, tuple[int, str]] = {
     "temporarily_unavailable": (503, "일시적으로 서비스를 이용할 수 없습니다."),
     "unauthenticated": (401, "로그인이 필요합니다."),
     "not_found": (404, "찾을 수 없습니다."),
+    "rate_limited": (429, "로그인 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요."),
     "request_key_conflict": (409, "같은 요청 키로 다른 질문을 보낼 수 없습니다."),
     "conversation_busy": (409, "이전 질문의 답변을 기다리고 있습니다."),
     "provider_failed": (502, "답변을 만들지 못했습니다. 대화 기록을 확인해 주세요."),
@@ -53,10 +56,18 @@ _PUBLIC_FIELDS = {"email", "password", "limit", "before_id", "after_id", "conver
 class ApiError(Exception):
     """예상 가능한 오류는 내부 메시지 대신 정해진 코드를 사용한다."""
 
-    def __init__(self, code: ApiErrorCode, *, failure: FailureDetails | None = None) -> None:
+    def __init__(
+        self, code: ApiErrorCode, *, failure: FailureDetails | None = None, retry_after: int | None = None
+    ) -> None:
+        if code == "rate_limited":
+            if type(retry_after) is not int or retry_after < 1:
+                raise ValueError("로그인 제한에는 양의 정수 대기 시간이 필요합니다.")
+        elif retry_after is not None:
+            raise ValueError("대기 시간은 로그인 제한 오류에만 지정할 수 있습니다.")
         self.code = code
         self.status_code, self.public_message = _API_ERRORS[code]
         self.failure = failure
+        self.retry_after = retry_after
         super().__init__(code)
 
 
@@ -111,13 +122,33 @@ async def api_error_handler(request: Request, exc: Exception) -> JSONResponse:
         raise exc
     trace_id = request_trace_id(request)
     if exc.failure is not None:
+        operation = (
+            "login"
+            if request.url.path == "/api/auth/login"
+            else "registration"
+            if request.url.path == "/api/auth/register"
+            else "authentication"
+        )
         logger.error(
-            "event=registration_failed trace_id=%s stage=%s error_type=%s",
+            "event=%s_failed trace_id=%s stage=%s error_type=%s",
+            operation,
             trace_id,
             exc.failure.stage,
             exc.failure.error_type,
         )
-    return _error_response(exc.status_code, exc.code, exc.public_message, {}, trace_id=trace_id)
+    response = _error_response(exc.status_code, exc.code, exc.public_message, {}, trace_id=trace_id)
+    if exc.code == "unauthenticated":
+        response.headers["WWW-Authenticate"] = "Bearer"
+    if exc.retry_after is not None:
+        response.headers["Retry-After"] = str(exc.retry_after)
+    return response
+
+
+async def login_rate_limit_handler(request: Request, exc: Exception) -> JSONResponse:
+    """제한 모듈의 오류를 공통 429 응답으로 바꾼다."""
+    if not isinstance(exc, LoginRateLimited):
+        raise exc
+    return await api_error_handler(request, ApiError("rate_limited", retry_after=exc.retry_after))
 
 
 async def validation_error_handler(request: Request, exc: Exception) -> JSONResponse:
@@ -146,6 +177,7 @@ async def database_unavailable_handler(request: Request, exc: Exception) -> JSON
 def register_error_handlers(app: FastAPI) -> None:
     """입력·예상 오류와 DB 연결 실패 핸들러를 등록한다."""
     app.add_exception_handler(ApiError, api_error_handler)
+    app.add_exception_handler(LoginRateLimited, login_rate_limit_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)
     for kind in DATABASE_UNAVAILABLE:
         app.add_exception_handler(kind, database_unavailable_handler)

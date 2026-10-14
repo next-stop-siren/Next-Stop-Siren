@@ -1,4 +1,4 @@
-"""Request correlation and safe registration failure diagnostics."""
+"""Request correlation and safe registration/login failure diagnostics."""
 
 from dataclasses import dataclass
 import logging
@@ -12,13 +12,16 @@ logger = logging.getLogger(__name__)
 FailureStage = Literal[
     "session",
     "password_hash",
+    "password_verify",
     "email_lookup",
     "user_insert",
+    "user_lock",
     "token_issue",
     "refresh_session",
     "commit",
     "rollback",
     "registration",
+    "login",
     "cookie",
     "compensation",
     "compensation_rollback",
@@ -47,16 +50,21 @@ def request_trace_id(request: Request) -> str:
 
 
 class RegistrationTraceMiddleware:
-    """본문을 읽기 전에 가입 요청 수신을 기록한다."""
+    """본문을 읽기 전에 가입·로그인 요청 수신을 기록한다."""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and scope["method"] == "POST" and scope["path"] == "/api/auth/register":
+        if (
+            scope["type"] == "http"
+            and scope["method"] == "POST"
+            and scope["path"] in {"/api/auth/register", "/api/auth/login"}
+        ):
             trace_id = str(uuid4())
             scope.setdefault("state", {})["trace_id"] = trace_id
-            logger.info("event=registration_received trace_id=%s", trace_id)
+            operation = "login" if scope["path"] == "/api/auth/login" else "registration"
+            logger.info("event=%s_received trace_id=%s", operation, trace_id)
         await self.app(scope, receive, send)
 
 
@@ -74,6 +82,26 @@ def registration_compensation_failed(request: Request, failure: FailureDetails) 
     """쿠키 오류와 구분해서 보상 실패를 같은 요청 ID로 기록한다."""
     logger.error(
         "event=registration_compensation_failed trace_id=%s stage=%s error_type=%s",
+        request_trace_id(request),
+        failure.stage,
+        failure.error_type,
+    )
+
+
+def login_saved(request: Request) -> None:
+    """로그인 세션의 저장 성공을 개인 정보 없이 기록한다."""
+    logger.info("event=login_saved trace_id=%s", request_trace_id(request))
+
+
+def login_cancelled(request: Request) -> None:
+    """이번 로그인 세션의 취소가 저장된 뒤에만 기록한다."""
+    logger.info("event=login_cancelled trace_id=%s", request_trace_id(request))
+
+
+def login_compensation_failed(request: Request, failure: FailureDetails) -> None:
+    """취소 실패의 안전한 오류 종류만 원래 요청의 추적 ID와 함께 기록한다."""
+    logger.error(
+        "event=login_compensation_failed trace_id=%s stage=%s error_type=%s",
         request_trace_id(request),
         failure.stage,
         failure.error_type,

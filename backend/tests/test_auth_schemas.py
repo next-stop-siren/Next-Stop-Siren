@@ -1,4 +1,4 @@
-"""Registration schema boundaries without a database or real credentials."""
+"""Registration and login schema boundaries without a database or real credentials."""
 
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -7,54 +7,77 @@ import pytest
 from pydantic import ValidationError
 
 from app.models.user import User
-from app.schemas.auth import PublicUser, RegisterRequest, RegisterResponse
+from app.schemas.auth import LoginRequest, LoginResponse, PublicUser, RegisterRequest, RegisterResponse
 
 
-def test_register_request_preserves_fixture_input(auth_user: dict[str, Any]) -> None:
-    request = RegisterRequest.model_validate(auth_user["register_input"])
-    assert request.model_dump() == auth_user["register_input"]
+@pytest.fixture(params=[RegisterRequest, LoginRequest], ids=["register", "login"])
+def request_model(request: pytest.FixtureRequest) -> type[RegisterRequest] | type[LoginRequest]:
+    return request.param
+
+
+@pytest.fixture(params=[RegisterResponse, LoginResponse], ids=["register", "login"])
+def response_model(request: pytest.FixtureRequest) -> type[RegisterResponse] | type[LoginResponse]:
+    return request.param
+
+
+def test_credentials_request_preserves_fixture_input(
+    request_model: type[RegisterRequest] | type[LoginRequest], auth_user: dict[str, Any]
+) -> None:
+    input_key = "login_input" if request_model is LoginRequest else "register_input"
+    request = request_model.model_validate(auth_user[input_key])
+    assert request.model_dump() == auth_user[input_key]
     assert request.password not in repr(request)
 
 
 @pytest.mark.parametrize("field", ["email", "password"])
 @pytest.mark.parametrize("value", [None, 123, True, [], {}])
-def test_register_request_rejects_non_string_fields(field: str, value: object) -> None:
+def test_credentials_request_rejects_non_string_fields(
+    request_model: type[RegisterRequest] | type[LoginRequest], field: str, value: object
+) -> None:
     body = {"email": "a@example.test", "password": "fixture-only-password"}
     with pytest.raises(ValidationError) as caught:
-        RegisterRequest.model_validate({**body, field: value})
+        request_model.model_validate({**body, field: value})
     assert caught.value.errors()[0]["loc"] == (field,)
     assert caught.value.errors()[0]["type"] == "string_type"
 
 
 @pytest.mark.parametrize("field", ["email", "password"])
-def test_register_request_requires_both_fields(field: str) -> None:
+def test_credentials_request_requires_both_fields(
+    request_model: type[RegisterRequest] | type[LoginRequest], field: str
+) -> None:
     body = {"email": "a@example.test", "password": "fixture-only-password"}
     del body[field]
     with pytest.raises(ValidationError) as caught:
-        RegisterRequest.model_validate(body)
+        request_model.model_validate(body)
     assert caught.value.errors()[0]["loc"] == (field,)
     assert caught.value.errors()[0]["type"] == "missing"
 
 
 @pytest.mark.parametrize("field", ["user_id", "password_hash", "unexpected"])
-def test_register_request_rejects_extra_fields(field: str, auth_user_a: dict[str, Any]) -> None:
+def test_credentials_request_rejects_extra_fields(
+    request_model: type[RegisterRequest] | type[LoginRequest], field: str, auth_user_a: dict[str, Any]
+) -> None:
     with pytest.raises(ValidationError) as caught:
-        RegisterRequest.model_validate({**auth_user_a["register_input"], field: "forged"})
+        request_model.model_validate({**auth_user_a["register_input"], field: "forged"})
     assert caught.value.errors()[0]["loc"] == (field,)
     assert caught.value.errors()[0]["type"] == "extra_forbidden"
 
 
-def test_register_request_preserves_unicode_and_whitespace() -> None:
+def test_credentials_request_preserves_unicode_and_whitespace(
+    request_model: type[RegisterRequest] | type[LoginRequest],
+) -> None:
     body = {"email": " a@example.test ", "password": "  e\u0301한글🔑 password  "}
-    assert RegisterRequest.model_validate(body).model_dump() == {**body, "email": "a@example.test"}
+    assert request_model.model_validate(body).model_dump() == {**body, "email": "a@example.test"}
 
 
 @pytest.mark.parametrize(
     "email",
     ["\t A.Name+tag@Example.TEST \n", "사용자@예시.한국", "a@sub.example.test"],
 )
-def test_register_email_trims_without_changing_case_or_unicode(email: str) -> None:
-    request = RegisterRequest(email=email, password="fixture-only-password")
+def test_credentials_email_trims_without_changing_case_or_unicode(
+    request_model: type[RegisterRequest] | type[LoginRequest], email: str
+) -> None:
+    request = request_model(email=email, password="fixture-only-password")
     assert request.email == email.strip()
 
 
@@ -85,42 +108,54 @@ def test_register_email_trims_without_changing_case_or_unicode(email: str) -> No
         "a@" + "b" * 64 + ".test",
     ],
 )
-def test_register_email_rejects_invalid_mailboxes(email: str) -> None:
+def test_credentials_email_rejects_invalid_mailboxes(
+    request_model: type[RegisterRequest] | type[LoginRequest], email: str
+) -> None:
     with pytest.raises(ValidationError) as caught:
-        RegisterRequest(email=email, password="fixture-only-password")
+        request_model(email=email, password="fixture-only-password")
     assert caught.value.errors()[0]["loc"] == ("email",)
 
 
-def test_register_email_length_is_checked_after_trim() -> None:
+def test_credentials_email_length_is_checked_after_trim(
+    request_model: type[RegisterRequest] | type[LoginRequest],
+) -> None:
     email = "a" * 64 + "@" + ".".join(["b" * 63] * 4)
     assert len(email) == 320
-    assert RegisterRequest(email=" " + email + " ", password="fixture-only-password").email == email
+    assert request_model(email=" " + email + " ", password="fixture-only-password").email == email
     with pytest.raises(ValidationError, match="320"):
-        RegisterRequest(email=email + "b", password="fixture-only-password")
+        request_model(email=email + "b", password="fixture-only-password")
 
 
 @pytest.mark.parametrize("password", ["a" * 12, "a" * 128, "🔑" * 12, "🔑" * 128, " " * 12])
-def test_register_password_accepts_boundaries_without_modification(password: str) -> None:
-    assert RegisterRequest(email="a@example.test", password=password).password == password
+def test_credentials_password_accepts_boundaries_without_modification(
+    request_model: type[RegisterRequest] | type[LoginRequest], password: str
+) -> None:
+    assert request_model(email="a@example.test", password=password).password == password
 
 
 @pytest.mark.parametrize("password", ["", "a" * 11, "a" * 129, "🔑" * 11, "🔑" * 129])
-def test_register_password_rejects_code_point_length_violations(password: str) -> None:
+def test_credentials_password_rejects_code_point_length_violations(
+    request_model: type[RegisterRequest] | type[LoginRequest], password: str
+) -> None:
     with pytest.raises(ValidationError) as caught:
-        RegisterRequest(email="a@example.test", password=password)
+        request_model(email="a@example.test", password=password)
     assert caught.value.errors()[0]["loc"] == ("password",)
 
 
-def test_register_password_does_not_normalize_combining_characters() -> None:
+def test_credentials_password_does_not_normalize_combining_characters(
+    request_model: type[RegisterRequest] | type[LoginRequest],
+) -> None:
     decomposed = "e\u0301" * 6
-    assert RegisterRequest(email="a@example.test", password=decomposed).password == decomposed
+    assert request_model(email="a@example.test", password=decomposed).password == decomposed
     with pytest.raises(ValidationError):
-        RegisterRequest(email="a@example.test", password="é" * 6)
+        request_model(email="a@example.test", password="é" * 6)
 
 
-def test_register_password_rejects_unencodable_unicode() -> None:
+def test_credentials_password_rejects_unencodable_unicode(
+    request_model: type[RegisterRequest] | type[LoginRequest],
+) -> None:
     with pytest.raises(ValidationError) as caught:
-        RegisterRequest(email="a@example.test", password="a" * 11 + "\ud800")
+        request_model(email="a@example.test", password="a" * 11 + "\ud800")
     assert caught.value.errors()[0]["loc"] == ("password",)
     assert "UTF-8" in caught.value.errors()[0]["msg"]
 
@@ -153,20 +188,47 @@ def test_public_user_rejects_timestamp_without_timezone(auth_user_a: dict[str, A
     assert caught.value.errors()[0]["type"] == "timezone_aware"
 
 
-def test_register_response_matches_existing_contract(auth_user: dict[str, Any]) -> None:
-    response = RegisterResponse.model_validate(auth_user["expected_auth_response"])
+def test_auth_response_matches_existing_contract(
+    response_model: type[RegisterResponse] | type[LoginResponse], auth_user: dict[str, Any]
+) -> None:
+    response = response_model.model_validate(auth_user["expected_auth_response"])
     assert response.model_dump(mode="json") == auth_user["expected_auth_response"]
     assert response.access_token not in repr(response)
     assert response.csrf_token not in repr(response)
 
 
 @pytest.mark.parametrize("field,value", [("token_type", "Refresh"), ("expires_in", 3600)])
-def test_register_response_rejects_wrong_token_contract(field: str, value: object, auth_user_a: dict[str, Any]) -> None:
+def test_auth_response_rejects_wrong_token_contract(
+    response_model: type[RegisterResponse] | type[LoginResponse], field: str, value: object, auth_user_a: dict[str, Any]
+) -> None:
     with pytest.raises(ValidationError):
-        RegisterResponse.model_validate({**auth_user_a["expected_auth_response"], field: value})
+        response_model.model_validate({**auth_user_a["expected_auth_response"], field: value})
 
 
-def test_register_response_cannot_include_refresh_token(auth_user_a: dict[str, Any]) -> None:
+def test_auth_response_cannot_include_refresh_token(
+    response_model: type[RegisterResponse] | type[LoginResponse], auth_user_a: dict[str, Any]
+) -> None:
     with pytest.raises(ValidationError) as caught:
-        RegisterResponse.model_validate({**auth_user_a["expected_auth_response"], "refresh_token": "fixture-refresh"})
+        response_model.model_validate({**auth_user_a["expected_auth_response"], "refresh_token": "fixture-refresh"})
     assert caught.value.errors()[0]["type"] == "extra_forbidden"
+
+
+def test_auth_response_supplies_bearer_and_expiry_defaults(
+    response_model: type[RegisterResponse] | type[LoginResponse], auth_user_a: dict[str, Any]
+) -> None:
+    body = auth_user_a["expected_auth_response"].copy()
+    del body["token_type"]
+    del body["expires_in"]
+    assert response_model.model_validate(body).model_dump(mode="json") == auth_user_a["expected_auth_response"]
+
+
+@pytest.mark.parametrize("field", ["user", "access_token", "csrf_token"])
+def test_auth_response_requires_public_user_and_tokens(
+    response_model: type[RegisterResponse] | type[LoginResponse], field: str, auth_user_a: dict[str, Any]
+) -> None:
+    body = auth_user_a["expected_auth_response"].copy()
+    del body[field]
+    with pytest.raises(ValidationError) as caught:
+        response_model.model_validate(body)
+    assert caught.value.errors()[0]["loc"] == (field,)
+    assert caught.value.errors()[0]["type"] == "missing"

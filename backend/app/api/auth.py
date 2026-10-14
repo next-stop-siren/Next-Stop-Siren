@@ -1,9 +1,12 @@
-"""HTTP registration endpoint and authentication request dependencies."""
+"""HTTP registration/login endpoints and authentication request dependencies."""
 
 from collections.abc import Iterator
+from ipaddress import ip_address
+import re
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, Response
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -12,13 +15,25 @@ from app.api.errors import ApiError, unauthenticated
 from app.db import get_session
 from app.observability import (
     FailureDetails,
+    login_cancelled,
+    login_compensation_failed,
+    login_saved,
     registration_cancelled,
     registration_compensation_failed,
     registration_saved,
 )
-from app.schemas.auth import RegisterRequest, RegisterResponse
+from app.schemas.auth import LoginRequest, LoginResponse, RegisterRequest, RegisterResponse
 from app.schemas.errors import ErrorResponse
 from app.security.settings import AuthSettings
+from app.security.login_limits import LoginFailureLimiter
+from app.security.tokens import TokenVerifyError, verify_access_token
+from app.services.login import (
+    InvalidCredentials,
+    LoginUnavailable,
+    cancel_login,
+    create_login_session,
+    local_login_attempt,
+)
 from app.services.registration import (
     LocalEmailExists,
     RegistrationUnavailable,
@@ -33,6 +48,24 @@ def request_auth_settings(request: Request) -> AuthSettings:
     if not isinstance(settings, AuthSettings):
         raise ApiError("temporarily_unavailable")
     return settings
+
+
+def request_login_limiter(request: Request) -> LoginFailureLimiter:
+    """요청마다 새 카운터를 만들지 않고 앱에 저장된 제한 모듈을 사용한다."""
+    limiter = getattr(request.app.state, "login_failure_limiter", None)
+    if not isinstance(limiter, LoginFailureLimiter):
+        raise ApiError("temporarily_unavailable")
+    return limiter
+
+
+def request_client_ip(request: Request) -> str:
+    """ASGI 연결 정보에서 IP를 읽는다. 임의의 전달 헤더는 직접 신뢰하지 않는다."""
+    if request.client is None:
+        raise ApiError("temporarily_unavailable")
+    try:
+        return str(ip_address(request.client.host))
+    except ValueError:
+        raise ApiError("temporarily_unavailable") from None
 
 
 def require_allowed_origin(request: Request, settings: Annotated[AuthSettings, Depends(request_auth_settings)]) -> None:
@@ -56,6 +89,58 @@ def registration_session() -> Iterator[Session]:
 
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+def login_session() -> Iterator[Session]:
+    """로그인에서도 기존의 안전한 DB 세션 생성 처리를 재사용한다."""
+    yield from registration_session()
+
+
+@router.post(
+    "/login",
+    status_code=200,
+    response_model=LoginResponse,
+    dependencies=[Depends(require_allowed_origin)],
+    responses={code: {"model": ErrorResponse} for code in (401, 403, 422, 429, 503)},
+)
+def login(
+    body: LoginRequest,
+    request: Request,
+    response: Response,
+    client_ip: Annotated[str, Depends(request_client_ip)],
+    limiter: Annotated[LoginFailureLimiter, Depends(request_login_limiter)],
+    session: Annotated[Session, Depends(login_session)],
+    settings: Annotated[AuthSettings, Depends(request_auth_settings)],
+) -> LoginResponse:
+    """실패 제한과 비밀번호 검사를 거쳐, 저장된 새 로그인 세션을 반환한다."""
+    try:
+        with local_login_attempt(body, session, limiter, client_ip) as attempt:
+            result = create_login_session(body, session, settings)
+            login_saved(request)
+            try:
+                csrf_token = set_auth_cookies(response, result.refresh, settings)
+            except AuthCookieError as exc:
+                try:
+                    cancel_login(result, session, settings)
+                except LoginUnavailable as cancellation:
+                    failure = cancellation.failure or FailureDetails.from_exception("compensation", cancellation)
+                    login_compensation_failed(request, failure)
+                else:
+                    login_cancelled(request)
+                raise ApiError(
+                    "temporarily_unavailable", failure=FailureDetails.from_exception("cookie", exc)
+                ) from None
+            body_response = LoginResponse(user=result.user, access_token=result.access.token, csrf_token=csrf_token)
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Pragma"] = "no-cache"
+            # 저장과 쿠키 설정까지 성공한 요청만 이메일 실패 기록을 비운다.
+            attempt.succeeded()
+            return body_response
+    except InvalidCredentials:
+        raise unauthenticated() from None
+    except LoginUnavailable as exc:
+        failure = exc.failure or FailureDetails.from_exception("login", exc)
+        raise ApiError("temporarily_unavailable", failure=failure) from None
 
 
 @router.post(
@@ -98,6 +183,34 @@ def register(
     return RegisterResponse(user=result.user, access_token=result.access.token, csrf_token=csrf_token)
 
 
-def current_user_id() -> int:
-    """access 검증을 연결하기 전까지 보호된 요청을 거부한다."""
-    raise unauthenticated()
+access_bearer = HTTPBearer(
+    auto_error=False,
+    scheme_name="AccessBearer",
+    bearerFormat="JWT",
+    description="로그인 응답의 access_token만 입력하세요. Bearer 접두사는 자동으로 붙습니다.",
+)
+_COMPACT_JWT = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
+
+
+def current_user_id(
+    request: Request,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(access_bearer)],
+) -> int:
+    """Bearer access를 검증한 사용자 ID만 전달한다. 쿠키와 입력 본문은 인증에 사용하지 않는다."""
+    if (
+        len(request.headers.getlist("authorization")) != 1
+        or credentials is None
+        or _COMPACT_JWT.fullmatch(credentials.credentials) is None
+    ):
+        raise unauthenticated()
+    # 인증 정보가 없거나 잘못된 요청은 DB 세션을 열기 전에 거부한다.
+    settings = request_auth_settings(request)
+    try:
+        return verify_access_token(credentials.credentials, settings)
+    except TokenVerifyError:
+        raise unauthenticated() from None
+
+
+def authenticated_session() -> Iterator[Session]:
+    """보호 경로에서도 안전한 DB 세션 생성 처리를 재사용한다."""
+    yield from registration_session()

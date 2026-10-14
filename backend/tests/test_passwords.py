@@ -8,6 +8,7 @@ from argon2.low_level import Type
 import pytest
 
 from app.security.passwords import PasswordHashError, hash_password, verify_password
+from app.security.passwords import _DUMMY_PASSWORD_HASH, verify_dummy_password
 
 
 @pytest.fixture(scope="module")
@@ -84,3 +85,12 @@ def test_unexpected_programming_errors_are_not_hidden() -> None:
         hasher.hash.side_effect = RuntimeError("programming failure")
         with pytest.raises(RuntimeError, match="programming failure"):
             hash_password("fixture-only-password")
+
+
+def test_dummy_hash_uses_the_same_approved_work_as_real_hash(encoded_password: str) -> None:
+    assert extract_parameters(_DUMMY_PASSWORD_HASH) == extract_parameters(encoded_password)
+
+
+@pytest.mark.parametrize("password", ["dummy-local-login-password", "fixture-only-wrong-password"])
+def test_dummy_verification_ignores_match_result(password: str) -> None:
+    assert verify_dummy_password(password) is None
