@@ -93,8 +93,10 @@ async def api_error_handler(request: Request, exc: Exception) -> JSONResponse:
         raise exc
     trace_id = request_trace_id(request)
     if exc.failure is not None:
+        operation = "login" if request.url.path == "/api/auth/login" else "registration"
         logger.error(
-            "event=registration_failed trace_id=%s stage=%s error_type=%s",
+            "event=%s_failed trace_id=%s stage=%s error_type=%s",
+            operation,
             trace_id,
             exc.failure.stage,
             exc.failure.error_type,

@@ -68,7 +68,7 @@ def test_database_email_comparison_also_controls_failure_limit(orm_test_session,
     email = f"İΣ-login-{uuid4().hex}@Example.TEST"
     user = User(email=email, password_hash=password_hash)
     orm_test_session.add(user)
-    orm_test_session.flush()
+    orm_test_session.commit()
     compared_email = orm_test_session.scalar(select(func.lower(User.email)).where(User.id == user.id))
     limiter = LoginFailureLimiter()
     for spelling in (email, compared_email, email, compared_email, email):
@@ -88,7 +88,7 @@ def test_verified_password_resets_email_failures_in_database_flow(orm_test_sessi
     email = f"login-{uuid4().hex}@example.test"
     user = User(email=email, password_hash=password_hash)
     orm_test_session.add(user)
-    orm_test_session.flush()
+    orm_test_session.commit()
     limiter = LoginFailureLimiter()
     wrong = LoginRequest(email=email, password="fixture-only-wrong-password")
     correct = LoginRequest(email=email, password="fixture-only-password")

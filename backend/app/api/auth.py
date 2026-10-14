@@ -1,4 +1,4 @@
-"""HTTP registration endpoint and authentication request dependencies."""
+"""HTTP registration/login endpoints and authentication request dependencies."""
 
 from collections.abc import Iterator
 from ipaddress import ip_address
@@ -13,14 +13,24 @@ from app.api.errors import ApiError, unauthenticated
 from app.db import get_session
 from app.observability import (
     FailureDetails,
+    login_cancelled,
+    login_compensation_failed,
+    login_saved,
     registration_cancelled,
     registration_compensation_failed,
     registration_saved,
 )
-from app.schemas.auth import RegisterRequest, RegisterResponse
+from app.schemas.auth import LoginRequest, LoginResponse, RegisterRequest, RegisterResponse
 from app.schemas.errors import ErrorResponse
 from app.security.settings import AuthSettings
 from app.security.login_limits import LoginFailureLimiter
+from app.services.login import (
+    InvalidCredentials,
+    LoginUnavailable,
+    cancel_login,
+    create_login_session,
+    local_login_attempt,
+)
 from app.services.registration import (
     LocalEmailExists,
     RegistrationUnavailable,
@@ -76,6 +86,58 @@ def registration_session() -> Iterator[Session]:
 
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+def login_session() -> Iterator[Session]:
+    """로그인에서도 기존의 안전한 DB 세션 생성 처리를 재사용한다."""
+    yield from registration_session()
+
+
+@router.post(
+    "/login",
+    status_code=200,
+    response_model=LoginResponse,
+    dependencies=[Depends(require_allowed_origin)],
+    responses={code: {"model": ErrorResponse} for code in (401, 403, 422, 429, 503)},
+)
+def login(
+    body: LoginRequest,
+    request: Request,
+    response: Response,
+    client_ip: Annotated[str, Depends(request_client_ip)],
+    limiter: Annotated[LoginFailureLimiter, Depends(request_login_limiter)],
+    session: Annotated[Session, Depends(login_session)],
+    settings: Annotated[AuthSettings, Depends(request_auth_settings)],
+) -> LoginResponse:
+    """실패 제한과 비밀번호 검사를 거쳐, 저장된 새 로그인 세션을 반환한다."""
+    try:
+        with local_login_attempt(body, session, limiter, client_ip) as attempt:
+            result = create_login_session(body, session, settings)
+            login_saved(request)
+            try:
+                csrf_token = set_auth_cookies(response, result.refresh, settings)
+            except AuthCookieError as exc:
+                try:
+                    cancel_login(result, session, settings)
+                except LoginUnavailable as cancellation:
+                    failure = cancellation.failure or FailureDetails.from_exception("compensation", cancellation)
+                    login_compensation_failed(request, failure)
+                else:
+                    login_cancelled(request)
+                raise ApiError(
+                    "temporarily_unavailable", failure=FailureDetails.from_exception("cookie", exc)
+                ) from None
+            body_response = LoginResponse(user=result.user, access_token=result.access.token, csrf_token=csrf_token)
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Pragma"] = "no-cache"
+            # 저장과 쿠키 설정까지 성공한 요청만 이메일 실패 기록을 비운다.
+            attempt.succeeded()
+            return body_response
+    except InvalidCredentials:
+        raise unauthenticated() from None
+    except LoginUnavailable as exc:
+        failure = exc.failure or FailureDetails.from_exception("login", exc)
+        raise ApiError("temporarily_unavailable", failure=failure) from None
 
 
 @router.post(
