@@ -4,7 +4,7 @@ The mock makes no network call and costs nothing. The real adapter is a later
 issue; it has to keep this interface and its two failures.
 """
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -32,12 +32,25 @@ class AnswerProvider(Protocol):
         """
         ...
 
+    def stream(self, messages: Sequence[ContextMessage], *, timeout_seconds: float) -> Iterator[str]:
+        """Yield the answer to the last message in pieces, in order; joined, they are the whole answer.
+
+        Either failure can be raised before the first piece or between two pieces.
+        `timeout_seconds` limits the whole stream, under the same rule as `complete`.
+        """
+        ...
+
 
 class MockProvider:
     """Always the same completed answer, immediately."""
 
+    PIECES = ("모의 ", "답변", "입니다.")
+
     def complete(self, messages: Sequence[ContextMessage], *, timeout_seconds: float) -> str:
-        return "모의 답변입니다."
+        return "".join(self.PIECES)
+
+    def stream(self, messages: Sequence[ContextMessage], *, timeout_seconds: float) -> Iterator[str]:
+        yield from self.PIECES
 
 
 def get_provider() -> AnswerProvider:

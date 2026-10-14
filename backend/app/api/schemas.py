@@ -118,6 +118,12 @@ class QuestionAnswer(BaseModel):
     answer: MessageOut
 
 
+class AnswerDelta(BaseModel):
+    """One piece of an answer being streamed: temporary output, not a stored message."""
+
+    text: str
+
+
 class ErrorDetail(BaseModel):
     code: str
     message: str

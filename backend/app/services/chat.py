@@ -4,6 +4,7 @@ The question and its pending answer are committed before the provider is called,
 and the outcome is saved in a second transaction, so no transaction stays open
 during the call. A pending answer that is never finished, for example after a
 crash between the two, is closed by the next send to the same conversation.
+A streamed answer follows the same two transactions; its pieces are never stored.
 
 Refusals are raised as the business errors below; the API layer turns them into
 HTTP responses. Log entries carry the caller's trace ID and row IDs only, never a
@@ -11,6 +12,8 @@ question, a request key, an answer or a provider's error message.
 """
 
 import logging
+from collections.abc import Callable, Generator
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
@@ -51,17 +54,26 @@ class Exchange:
     created: bool
 
 
-def send_question(
-    session: Session,
-    provider: AnswerProvider,
-    user_id: int,
-    conversation_id: int,
-    content: str,
-    request_key: str,
-    *,
-    trace_id: str,
-) -> Exchange:
-    """`trace_id` ties this send's log entries to the caller's error response."""
+@dataclass(frozen=True)
+class Started:
+    """A new question committed with its pending answer; the provider has not been called."""
+
+    conversation_id: int
+    question: Message
+    answer: Message
+    # Read before the commit: a session that expires rows on commit would reload them
+    # and so reopen a transaction for the duration of the provider call.
+    answer_id: int
+    context: list[ContextMessage]
+
+
+def begin_question(
+    session: Session, user_id: int, conversation_id: int, content: str, request_key: str, *, trace_id: str
+) -> Exchange | Started:
+    """Return the stored pair of a request key already seen, or store the new question.
+
+    `trace_id` ties this send's log entries to the caller's error response.
+    """
     logger.info("Question received, trace_id=%s, conversation_id=%s", trace_id, conversation_id)
     if not repository.lock_conversation(session, user_id, conversation_id):
         raise ConversationNotFound
@@ -87,16 +99,46 @@ def send_question(
     context = [ContextMessage(message.role, message.content or "") for message in stored]
     context.append(ContextMessage("user", content))
     question, answer = repository.add_question(session, conversation_id, content, request_key)
-    # Read before the commit: a session that expires rows on commit would reload them
-    # and so reopen a transaction for the duration of the provider call.
-    answer_id = answer.id
+    started = Started(conversation_id, question, answer, answer.id, context)
     session.commit()
-    logger.info("Question saved, trace_id=%s, answer_id=%s", trace_id, answer_id)
+    logger.info("Question saved, trace_id=%s, answer_id=%s", trace_id, started.answer_id)
+    return started
 
+
+def _store_outcome(
+    session: Session, started: Started, status: str, text: str | None, error_code: str | None, *, trace_id: str
+) -> Message:
+    """Store how the provider call ended and return the answer as stored, which recovery may have closed first."""
+    answer_id = started.answer_id
+    log = logger.info if status == "completed" else logger.warning
+    log("Provider call ended, trace_id=%s, answer_id=%s, outcome=%s", trace_id, answer_id, error_code or status)
+    answer = repository.finish_answer(
+        session, started.conversation_id, answer_id, status=status, content=text, error_code=error_code
+    )
+    stored_status = answer.status
+    session.commit()
+    logger.info("Answer saved, trace_id=%s, answer_id=%s, status=%s", trace_id, answer_id, stored_status)
+    return answer
+
+
+def send_question(
+    session: Session,
+    provider: AnswerProvider,
+    user_id: int,
+    conversation_id: int,
+    content: str,
+    request_key: str,
+    *,
+    trace_id: str,
+) -> Exchange:
+    """Answer the question with one provider call and return the pair once the answer is stored."""
+    begun = begin_question(session, user_id, conversation_id, content, request_key, trace_id=trace_id)
+    if isinstance(begun, Exchange):
+        return begun
     text = None
     status, error_code = "completed", None
     try:
-        text = provider.complete(context, timeout_seconds=ANSWER_TIME_LIMIT_SECONDS)
+        text = provider.complete(begun.context, timeout_seconds=ANSWER_TIME_LIMIT_SECONDS)
     except ProviderFailed:
         status, error_code = "failed", "provider_failed"
     except ProviderTimeout:
@@ -104,13 +146,46 @@ def send_question(
     else:
         if not text.strip():
             text, status, error_code = None, "failed", "provider_failed"
-    log = logger.info if status == "completed" else logger.warning
-    log("Provider call ended, trace_id=%s, answer_id=%s, outcome=%s", trace_id, answer_id, error_code or status)
+    answer = _store_outcome(session, begun, status, text, error_code, trace_id=trace_id)
+    return Exchange(begun.question, answer, created=True)
 
-    answer = repository.finish_answer(
-        session, conversation_id, answer_id, status=status, content=text, error_code=error_code
-    )
-    stored_status = answer.status
-    session.commit()
-    logger.info("Answer saved, trace_id=%s, answer_id=%s, status=%s", trace_id, answer_id, stored_status)
-    return Exchange(question, answer, created=True)
+
+def stream_answer(
+    open_session: Callable[[], AbstractContextManager[Session]],
+    provider: AnswerProvider,
+    started: Started,
+    *,
+    trace_id: str,
+) -> Generator[str | Message]:
+    """Yield the pieces of the answer as they arrive, then the answer as stored.
+
+    A piece is temporary output. Nothing is stored until the provider has ended, and
+    the answer is yielded only after its commit, so a reader that has not received it
+    cannot take the answer as complete. A failure or time limit between two pieces
+    stores no text. Closing the generator before the provider has ended, as when the
+    reader has left, discards the pieces and stores the answer as interrupted.
+    `open_session` gives the session of that one short transaction.
+    """
+    pieces: list[str] = []
+    text: str | None = None
+    status, error_code = "completed", None
+    try:
+        for piece in provider.stream(started.context, timeout_seconds=ANSWER_TIME_LIMIT_SECONDS):
+            pieces.append(piece)
+            yield piece
+    except ProviderFailed:
+        status, error_code = "failed", "provider_failed"
+    except ProviderTimeout:
+        status, error_code = "interrupted", "outcome_unknown"
+    except GeneratorExit:
+        logger.warning("Stream abandoned, trace_id=%s, answer_id=%s", trace_id, started.answer_id)
+        with open_session() as session:
+            _store_outcome(session, started, "interrupted", None, "outcome_unknown", trace_id=trace_id)
+        raise
+    else:
+        text = "".join(pieces)
+        if not text.strip():
+            text, status, error_code = None, "failed", "provider_failed"
+    with open_session() as session:
+        answer = _store_outcome(session, started, status, text, error_code, trace_id=trace_id)
+    yield answer
