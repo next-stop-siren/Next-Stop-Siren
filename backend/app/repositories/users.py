@@ -6,6 +6,11 @@ from sqlalchemy.orm import Session
 from app.models.user import User
 
 
+def find_user_by_id(session: Session, user_id: int) -> User | None:
+    """검증된 사용자 ID로 조회하며, 로컬·Google 계정을 모두 지원한다."""
+    return session.get(User, user_id)
+
+
 def local_email_key(session: Session, email: str) -> str:
     """로그인 제한에도 사용자 조회와 같은 DB 소문자 변환을 사용한다."""
     key = session.scalar(select(func.lower(email)))

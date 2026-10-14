@@ -2,9 +2,11 @@
 
 from collections.abc import Iterator
 from ipaddress import ip_address
+import re
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, Response
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -24,6 +26,7 @@ from app.schemas.auth import LoginRequest, LoginResponse, RegisterRequest, Regis
 from app.schemas.errors import ErrorResponse
 from app.security.settings import AuthSettings
 from app.security.login_limits import LoginFailureLimiter
+from app.security.tokens import TokenVerifyError, verify_access_token
 from app.services.login import (
     InvalidCredentials,
     LoginUnavailable,
@@ -180,6 +183,34 @@ def register(
     return RegisterResponse(user=result.user, access_token=result.access.token, csrf_token=csrf_token)
 
 
-def current_user_id() -> int:
-    """access 검증을 연결하기 전까지 보호된 요청을 거부한다."""
-    raise unauthenticated()
+access_bearer = HTTPBearer(
+    auto_error=False,
+    scheme_name="AccessBearer",
+    bearerFormat="JWT",
+    description="로그인 응답의 access_token만 입력하세요. Bearer 접두사는 자동으로 붙습니다.",
+)
+_COMPACT_JWT = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
+
+
+def current_user_id(
+    request: Request,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(access_bearer)],
+) -> int:
+    """Bearer access를 검증한 사용자 ID만 전달한다. 쿠키와 입력 본문은 인증에 사용하지 않는다."""
+    if (
+        len(request.headers.getlist("authorization")) != 1
+        or credentials is None
+        or _COMPACT_JWT.fullmatch(credentials.credentials) is None
+    ):
+        raise unauthenticated()
+    # 인증 정보가 없거나 잘못된 요청은 DB 세션을 열기 전에 거부한다.
+    settings = request_auth_settings(request)
+    try:
+        return verify_access_token(credentials.credentials, settings)
+    except TokenVerifyError:
+        raise unauthenticated() from None
+
+
+def authenticated_session() -> Iterator[Session]:
+    """보호 경로에서도 안전한 DB 세션 생성 처리를 재사용한다."""
+    yield from registration_session()

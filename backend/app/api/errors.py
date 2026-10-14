@@ -93,7 +93,13 @@ async def api_error_handler(request: Request, exc: Exception) -> JSONResponse:
         raise exc
     trace_id = request_trace_id(request)
     if exc.failure is not None:
-        operation = "login" if request.url.path == "/api/auth/login" else "registration"
+        operation = (
+            "login"
+            if request.url.path == "/api/auth/login"
+            else "registration"
+            if request.url.path == "/api/auth/register"
+            else "authentication"
+        )
         logger.error(
             "event=%s_failed trace_id=%s stage=%s error_type=%s",
             operation,
@@ -102,6 +108,8 @@ async def api_error_handler(request: Request, exc: Exception) -> JSONResponse:
             exc.failure.error_type,
         )
     response = _error_response(exc.status_code, exc.code, exc.public_message, {}, trace_id=trace_id)
+    if exc.code == "unauthenticated":
+        response.headers["WWW-Authenticate"] = "Bearer"
     if exc.retry_after is not None:
         response.headers["Retry-After"] = str(exc.retry_after)
     return response

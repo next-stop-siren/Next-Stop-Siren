@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import conversations
+from app.api import conversations, me
 from app.api.auth import router as auth_router
 from app.api.errors import register_error_handlers
 from app.observability import RegistrationTraceMiddleware
@@ -70,6 +70,7 @@ def create_app(auth_settings: AuthSettings | None = None) -> FastAPI:
     application.add_api_route("/api/health", health, methods=["GET"])
     application.add_api_route("/api/ready", ready, methods=["GET"], response_model=None)
     application.include_router(auth_router)
+    application.include_router(me.router)
     application.include_router(conversations.router)
     return application
 
