@@ -3,11 +3,18 @@
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import func, select
 
 from app.models.user import User
 from app.schemas.auth import LoginRequest
 from app.security.passwords import hash_password
-from app.services.login import InvalidCredentials, LoginUnavailable, authenticate_local_user
+from app.security.login_limits import LoginFailureLimiter, LoginRateLimited
+from app.services.login import (
+    InvalidCredentials,
+    LoginUnavailable,
+    authenticate_limited_local_user,
+    authenticate_local_user,
+)
 
 pytestmark = pytest.mark.db
 
@@ -55,3 +62,42 @@ def test_corrupt_database_hash_is_an_internal_failure(orm_test_session) -> None:
     body = LoginRequest(email=email, password="fixture-only-password")
     with pytest.raises(LoginUnavailable):
         authenticate_local_user(body, orm_test_session)
+
+
+def test_database_email_comparison_also_controls_failure_limit(orm_test_session, password_hash: str) -> None:
+    email = f"İΣ-login-{uuid4().hex}@Example.TEST"
+    user = User(email=email, password_hash=password_hash)
+    orm_test_session.add(user)
+    orm_test_session.flush()
+    compared_email = orm_test_session.scalar(select(func.lower(User.email)).where(User.id == user.id))
+    limiter = LoginFailureLimiter()
+    for spelling in (email, compared_email, email, compared_email, email):
+        body = LoginRequest(email=f" {spelling} ", password="fixture-only-wrong-password")
+        with pytest.raises(InvalidCredentials):
+            authenticate_limited_local_user(body, orm_test_session, limiter, "192.0.2.1")
+    with pytest.raises(LoginRateLimited):
+        authenticate_limited_local_user(
+            LoginRequest(email=compared_email, password="fixture-only-password"),
+            orm_test_session,
+            limiter,
+            "192.0.2.2",
+        )
+
+
+def test_verified_password_resets_email_failures_in_database_flow(orm_test_session, password_hash: str) -> None:
+    email = f"login-{uuid4().hex}@example.test"
+    user = User(email=email, password_hash=password_hash)
+    orm_test_session.add(user)
+    orm_test_session.flush()
+    limiter = LoginFailureLimiter()
+    wrong = LoginRequest(email=email, password="fixture-only-wrong-password")
+    correct = LoginRequest(email=email, password="fixture-only-password")
+    for _ in range(4):
+        with pytest.raises(InvalidCredentials):
+            authenticate_limited_local_user(wrong, orm_test_session, limiter, "192.0.2.1")
+    assert authenticate_limited_local_user(correct, orm_test_session, limiter, "192.0.2.1").id == user.id
+    for _ in range(5):
+        with pytest.raises(InvalidCredentials):
+            authenticate_limited_local_user(wrong, orm_test_session, limiter, "192.0.2.1")
+    with pytest.raises(LoginRateLimited):
+        authenticate_limited_local_user(correct, orm_test_session, limiter, "192.0.2.1")

@@ -1,6 +1,7 @@
 """HTTP registration endpoint and authentication request dependencies."""
 
 from collections.abc import Iterator
+from ipaddress import ip_address
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -19,6 +20,7 @@ from app.observability import (
 from app.schemas.auth import RegisterRequest, RegisterResponse
 from app.schemas.errors import ErrorResponse
 from app.security.settings import AuthSettings
+from app.security.login_limits import LoginFailureLimiter
 from app.services.registration import (
     LocalEmailExists,
     RegistrationUnavailable,
@@ -33,6 +35,24 @@ def request_auth_settings(request: Request) -> AuthSettings:
     if not isinstance(settings, AuthSettings):
         raise ApiError("temporarily_unavailable")
     return settings
+
+
+def request_login_limiter(request: Request) -> LoginFailureLimiter:
+    """요청마다 새 카운터를 만들지 않고 앱에 저장된 제한 모듈을 사용한다."""
+    limiter = getattr(request.app.state, "login_failure_limiter", None)
+    if not isinstance(limiter, LoginFailureLimiter):
+        raise ApiError("temporarily_unavailable")
+    return limiter
+
+
+def request_client_ip(request: Request) -> str:
+    """ASGI 연결 정보에서 IP를 읽는다. 임의의 전달 헤더는 직접 신뢰하지 않는다."""
+    if request.client is None:
+        raise ApiError("temporarily_unavailable")
+    try:
+        return str(ip_address(request.client.host))
+    except ValueError:
+        raise ApiError("temporarily_unavailable") from None
 
 
 def require_allowed_origin(request: Request, settings: Annotated[AuthSettings, Depends(request_auth_settings)]) -> None:

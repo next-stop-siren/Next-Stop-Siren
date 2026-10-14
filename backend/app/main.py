@@ -12,11 +12,12 @@ from app.api import conversations
 from app.api.auth import router as auth_router
 from app.api.errors import register_error_handlers
 from app.observability import RegistrationTraceMiddleware
+from app.security.login_limits import LoginFailureLimiter
 from app.security.settings import AuthSettings, AuthSettingsError, get_auth_settings
 
 
 def health() -> dict[str, str]:
-    """Report whether the API process can answer requests."""
+    """API 프로세스가 요청에 응답할 수 있는지 확인한다."""
     return {"status": "ok"}
 
 
@@ -32,7 +33,7 @@ def _check_database() -> None:
 
 
 def ready() -> dict[str, str] | JSONResponse:
-    """Report readiness only after a real bounded PostgreSQL query succeeds."""
+    """제한 시간 안에 실제 PostgreSQL 조회가 성공해야 준비 완료로 응답한다."""
     try:
         _check_database()
     except (psycopg.Error, OSError, RuntimeError):
@@ -55,6 +56,7 @@ def create_app(auth_settings: AuthSettings | None = None) -> FastAPI:
             auth_settings = None
     application = FastAPI(title="B7-1 API")
     application.state.auth_settings = auth_settings
+    application.state.login_failure_limiter = LoginFailureLimiter()
     register_error_handlers(application)
     application.add_middleware(RegistrationTraceMiddleware)
     application.add_middleware(
@@ -63,6 +65,7 @@ def create_app(auth_settings: AuthSettings | None = None) -> FastAPI:
         allow_credentials=True,
         allow_methods=["GET", "POST"],
         allow_headers=["Content-Type", "Authorization", "X-CSRF-Token"],
+        expose_headers=["Retry-After"],
     )
     application.add_api_route("/api/health", health, methods=["GET"])
     application.add_api_route("/api/ready", ready, methods=["GET"], response_model=None)

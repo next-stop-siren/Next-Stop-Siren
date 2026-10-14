@@ -4,8 +4,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.models.user import User
-from app.repositories.users import find_local_user_by_email
+from app.repositories.users import find_local_user_by_email, local_email_key
 from app.schemas.auth import LoginRequest
+from app.security.login_limits import LoginFailureLimiter
 from app.security.passwords import PasswordHashError, verify_dummy_password, verify_password
 
 
@@ -39,3 +40,21 @@ def authenticate_local_user(request: LoginRequest, session: Session) -> User:
         return user
     except (SQLAlchemyError, PasswordHashError):
         raise LoginUnavailable() from None
+
+
+def authenticate_limited_local_user(
+    request: LoginRequest, session: Session, limiter: LoginFailureLimiter, client_ip: str
+) -> User:
+    """실패 제한을 적용한 뒤 비밀번호를 검사한다. DB·해시 오류는 실패 횟수에 넣지 않는다."""
+    try:
+        email_key = local_email_key(session, request.email)
+    except (SQLAlchemyError, ValueError):
+        raise LoginUnavailable() from None
+    with limiter.attempt(email_key, client_ip) as attempt:
+        try:
+            user = authenticate_local_user(request, session)
+        except InvalidCredentials:
+            attempt.failed()
+            raise
+        attempt.succeeded()
+        return user
