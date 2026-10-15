@@ -28,6 +28,8 @@ FailureStage = Literal[
     "google_settings",
     "google_discovery",
     "google_transaction",
+    "google_code_exchange",
+    "google_jwks",
 ]
 
 

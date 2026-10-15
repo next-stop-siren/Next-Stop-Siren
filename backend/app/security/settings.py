@@ -172,6 +172,11 @@ class GoogleSettings:
     callback_path: ClassVar[str] = "/api/auth/google/callback"
     discovery_url: ClassVar[str] = "https://accounts.google.com/.well-known/openid-configuration"
     scopes: ClassVar[tuple[str, ...]] = ("openid", "email")
+    issuer: ClassVar[str] = "https://accounts.google.com"
+    accepted_issuers: ClassVar[tuple[str, ...]] = ("https://accounts.google.com", "accounts.google.com")
+    token_endpoint: ClassVar[str] = "https://oauth2.googleapis.com/token"
+    jwks_uri: ClassVar[str] = "https://www.googleapis.com/oauth2/v3/certs"
+    id_token_algorithms: ClassVar[tuple[str, ...]] = ("RS256",)
 
     @classmethod
     def from_env(

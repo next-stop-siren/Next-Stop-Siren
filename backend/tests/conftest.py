@@ -6,6 +6,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.rsa import generate_private_key
 from sqlalchemy import Integer, String, create_engine, func, inspect, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 from sqlalchemy.schema import CreateSchema, DropSchema
@@ -57,6 +58,12 @@ def google_environment(auth_environment: dict[str, str]) -> dict[str, str]:
 @pytest.fixture
 def google_settings(google_environment: dict[str, str]) -> GoogleSettings:
     return GoogleSettings.from_env(google_environment)
+
+
+@pytest.fixture(scope="session")
+def google_rsa_private_key():
+    """실제 서명 검증 테스트에서만 사용하는 일회성 RSA 키. 파일로 저장하지 않는다."""
+    return generate_private_key(public_exponent=65537, key_size=2048)
 
 
 @pytest.fixture

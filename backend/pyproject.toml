@@ -9,6 +9,7 @@ dependencies = [
   "cryptography==50.0.2",
   "fastapi==0.117.1",
   "httpx==0.28.1",
+  "joserfc==1.7.5",
   "psycopg[binary]==3.2.10",
   "pyjwt==2.15.1",
   "sqlalchemy==2.0.44",
