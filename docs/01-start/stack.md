@@ -9,6 +9,7 @@
 | 저장 | PostgreSQL 개발·테스트 DB, `psycopg` 연결 확인, SQLAlchemy 2.0.44 공통 동기 세션 | 제품 ORM 모델은 #3·#9에서 추가 |
 | 데이터 경계 | 인증·채팅 모델 없음 | API 요청·응답은 Pydantic 모델, DB 행은 별도 ORM 모델 |
 | 인증 | 경로·토큰 발급 미구현 | 앱 JWT는 PyJWT, Google OAuth/OIDC는 Authlib, 비밀번호는 `argon2-cffi`의 Argon2id |
+| 외부 AI | 실제 연결 미구현 | Codyssey GPT `gpt-5.5` 고정; [S11 GPT 기준](../04-reference/ai.md), SDK 미선정 |
 | 검사·설치 | npm·uv, 기존 pytest·Ruff·mypy·Vitest·Playwright·Biome | 잠금 파일과 기존 검사 도구 유지 |
 
 `backend/pyproject.toml`에는 현재 FastAPI·Uvicorn·`psycopg` 등이 선언되어 있다. SQLAlchemy 2.0.44는 `pyproject.toml`과 `uv.lock`에 고정되어 Python 3.13.15 및 psycopg 3.2.10과 함께 동기 Session으로 사용한다. PyJWT, Authlib, `argon2-cffi`는 아직 프로젝트 의존성이 아니다.
