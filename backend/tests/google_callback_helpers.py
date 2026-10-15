@@ -75,7 +75,9 @@ def google_callback_flow(auth_settings, google_settings, google_rsa_private_key)
 
     app = create_app(auth_settings, google_settings)
     app.dependency_overrides[google_http_client] = mock_http_client
-    with TestClient(app, base_url=auth_settings.api_origin, follow_redirects=False) as client:
+    with TestClient(
+        app, base_url=auth_settings.api_origin, follow_redirects=False, client=("192.0.2.1", 123)
+    ) as client:
         flow.client = client
         flow.app = app
 
