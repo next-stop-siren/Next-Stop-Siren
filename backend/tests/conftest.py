@@ -190,3 +190,6 @@ def committed_google_sessions():
                     connection.execute(DropSchema(schema, cascade=True))
         finally:
             engine.dispose()
+
+
+pytest_plugins = ["google_callback_helpers"]

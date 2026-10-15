@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import logging
+import re
 from typing import Literal
 from uuid import uuid4
 
@@ -9,6 +10,36 @@ from fastapi import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
+
+
+class GoogleCallbackQueryFilter(logging.Filter):
+    """Remove callback queries while preserving Uvicorn's structured access log arguments."""
+
+    _query = re.compile(r"(/api/auth/google/callback/?)\?[^\s\"']*")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name == "httpx":
+            # HTTPX passes a URL object rather than a string as a formatting argument.
+            record.msg = self._query.sub(r"\1", record.getMessage())
+            record.args = ()
+            return True
+        if isinstance(record.msg, str):
+            record.msg = self._query.sub(r"\1", record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(
+                self._query.sub(r"\1", value) if isinstance(value, str) else value for value in record.args
+            )
+        return True
+
+
+def protect_google_callback_logs() -> None:
+    """Cover server access logs and HTTPX request summaries, including local TestClient runs."""
+    for name in ("uvicorn.access", "httpx"):
+        target = logging.getLogger(name)
+        if not any(isinstance(item, GoogleCallbackQueryFilter) for item in target.filters):
+            target.addFilter(GoogleCallbackQueryFilter())
+
+
 FailureStage = Literal[
     "session",
     "password_hash",
