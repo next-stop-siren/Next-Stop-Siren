@@ -30,6 +30,8 @@ FailureStage = Literal[
     "google_transaction",
     "google_code_exchange",
     "google_jwks",
+    "google_identity_lookup",
+    "google_identity_insert",
 ]
 
 

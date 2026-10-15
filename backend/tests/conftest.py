@@ -14,6 +14,7 @@ from sqlalchemy.schema import CreateSchema, DropSchema
 from app.db import Base, create_db_engine, psycopg_url
 from app.db_init import initialize_with_engine
 from app.models import register_models
+from app.models.auth_identity import AuthIdentity
 from app.models.refresh_session import RefreshSession
 from app.models.user import User
 from app.security.settings import AuthSettings, GoogleSettings
@@ -159,6 +160,28 @@ def committed_signup_sessions():
             connection.execute(CreateSchema(schema))
         created = True
         User.metadata.create_all(scoped, tables=[User.__table__, RefreshSession.__table__])
+        yield sessionmaker(bind=scoped, autoflush=False, expire_on_commit=False)
+    finally:
+        try:
+            if created:
+                with engine.begin() as connection:
+                    connection.execute(DropSchema(schema, cascade=True))
+        finally:
+            engine.dispose()
+
+
+@pytest.fixture
+def committed_google_sessions():
+    """Test real concurrent Google account commits in a temporary schema of the guarded test DB."""
+    engine = create_db_engine(guarded_live_url())
+    schema = f"google_test_{uuid4().hex}"
+    scoped = engine.execution_options(schema_translate_map={None: schema})
+    created = False
+    try:
+        with engine.begin() as connection:
+            connection.execute(CreateSchema(schema))
+        created = True
+        User.metadata.create_all(scoped, tables=[User.__table__, AuthIdentity.__table__, RefreshSession.__table__])
         yield sessionmaker(bind=scoped, autoflush=False, expire_on_commit=False)
     finally:
         try:
