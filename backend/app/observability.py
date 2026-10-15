@@ -25,6 +25,9 @@ FailureStage = Literal[
     "cookie",
     "compensation",
     "compensation_rollback",
+    "google_settings",
+    "google_discovery",
+    "google_transaction",
 ]
 
 
