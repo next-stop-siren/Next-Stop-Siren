@@ -5,7 +5,10 @@ description = "Local API and database readiness for the B7-1 project"
 requires-python = "==3.13.15"
 dependencies = [
   "argon2-cffi==25.1.0",
+  "authlib==1.9.1",
+  "cryptography==50.0.2",
   "fastapi==0.117.1",
+  "httpx==0.28.1",
   "psycopg[binary]==3.2.10",
   "pyjwt==2.15.1",
   "sqlalchemy==2.0.44",
@@ -21,7 +24,6 @@ packages = ["app"]
 
 [dependency-groups]
 dev = [
-    "httpx==0.28.1",
     "mypy==2.3.1",
     "pytest==9.1.1",
     "ruff==0.16.5",

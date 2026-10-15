@@ -154,3 +154,53 @@ class AuthSettings:
 def get_auth_settings() -> AuthSettings:
     """Dependency for later routes; configuration is not loaded at import time."""
     return AuthSettings.from_env()
+
+
+@dataclass(frozen=True, slots=True)
+class GoogleSettings:
+    """Google-only settings; loading local authentication does not require them.
+
+    The transaction key is reserved for AES-256-GCM encryption in the next phase.
+    Loading these values does not contact Google or prove the credentials are valid.
+    """
+
+    client_id: str
+    client_secret: str = field(repr=False)
+    redirect_uri: str
+    transaction_key: bytes = field(repr=False)
+
+    callback_path: ClassVar[str] = "/api/auth/google/callback"
+    discovery_url: ClassVar[str] = "https://accounts.google.com/.well-known/openid-configuration"
+    scopes: ClassVar[tuple[str, ...]] = ("openid", "email")
+
+    @classmethod
+    def from_env(
+        cls, environ: Mapping[str, str] | None = None, *, auth_settings: AuthSettings | None = None
+    ) -> "GoogleSettings":
+        """Validate Google config against the same API origin and auth keys."""
+        values = os.environ if environ is None else environ
+        auth = auth_settings if auth_settings is not None else AuthSettings.from_env(values)
+        client_id = _required(values, "GOOGLE_CLIENT_ID")
+        if not re.fullmatch(r"[A-Za-z0-9_-]+\.apps\.googleusercontent\.com", client_id):
+            raise AuthSettingsError("GOOGLE_CLIENT_ID: Google OAuth client ID 형식이 필요합니다.")
+        client_secret = _claim(values, "GOOGLE_CLIENT_SECRET")
+        redirect_uri = _required(values, "GOOGLE_REDIRECT_URI")
+        # Exact equality also rejects credentials, queries, fragments and alternate hosts.
+        if redirect_uri != auth.api_origin + cls.callback_path:
+            raise AuthSettingsError("GOOGLE_REDIRECT_URI: API Origin과 Google callback 경로가 일치해야 합니다.")
+        transaction_key = _key(values, "GOOGLE_TRANSACTION_KEY")
+        if len(transaction_key) != 32:
+            raise AuthSettingsError("GOOGLE_TRANSACTION_KEY: 정확히 32바이트의 키가 필요합니다.")
+        if transaction_key in (auth.access_key, auth.refresh_key, auth.refresh_digest_key, auth.csrf_key):
+            raise AuthSettingsError("GOOGLE_TRANSACTION_KEY: 기존 인증 키와 다른 키가 필요합니다.")
+        return cls(
+            client_id=client_id,
+            client_secret=client_secret,
+            redirect_uri=redirect_uri,
+            transaction_key=transaction_key,
+        )
+
+
+def get_google_settings() -> GoogleSettings:
+    """Load only when Google authentication is requested; no import-time I/O."""
+    return GoogleSettings.from_env()
