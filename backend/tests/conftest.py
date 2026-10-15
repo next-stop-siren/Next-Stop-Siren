@@ -15,14 +15,14 @@ from app.db_init import initialize_with_engine
 from app.models import register_models
 from app.models.refresh_session import RefreshSession
 from app.models.user import User
-from app.security.settings import AuthSettings
+from app.security.settings import AuthSettings, GoogleSettings
 from auth_helpers import load_auth_cases
 from db_guard import guarded_live_url
 
 
 @pytest.fixture
 def auth_environment() -> dict[str, str]:
-    """Independent, fake authentication keys and 127.0.0.1 settings."""
+    """테스트마다 독립적으로 사용하는 가짜 인증 키와 127.0.0.1 설정."""
     names = ("AUTH_ACCESS_KEY", "AUTH_REFRESH_KEY", "AUTH_REFRESH_DIGEST_KEY", "AUTH_CSRF_KEY")
     return {
         **{name: base64.b64encode(bytes([index]) * 32).decode() for index, name in enumerate(names, start=1)},
@@ -43,38 +43,55 @@ def auth_settings(auth_environment: dict[str, str]) -> AuthSettings:
 
 
 @pytest.fixture
+def google_environment(auth_environment: dict[str, str]) -> dict[str, str]:
+    """가짜 Google 자격 증명. Google에 접속하거나 개발자의 .env를 읽지 않는다."""
+    return {
+        **auth_environment,
+        "GOOGLE_CLIENT_ID": "123456-fixture.apps.googleusercontent.com",
+        "GOOGLE_CLIENT_SECRET": "fixture-only-google-secret",
+        "GOOGLE_REDIRECT_URI": "http://127.0.0.1:8000/api/auth/google/callback",
+        "GOOGLE_TRANSACTION_KEY": base64.b64encode(bytes([5]) * 32).decode(),
+    }
+
+
+@pytest.fixture
+def google_settings(google_environment: dict[str, str]) -> GoogleSettings:
+    return GoogleSettings.from_env(google_environment)
+
+
+@pytest.fixture
 def auth_cases() -> dict[str, Any]:
-    """Provide fresh authentication inputs and expectations for each test."""
+    """각 테스트에 독립적인 인증 입력과 기대 결과를 제공한다."""
     return load_auth_cases()
 
 
 @pytest.fixture
 def auth_user_a(auth_cases: dict[str, Any]) -> dict[str, Any]:
-    """User 101: inputs, public responses and a mock verified principal."""
+    """사용자 101의 입력, 공개 응답과 서버가 신원을 확인했다고 가정한 테스트용 사용자 정보."""
     return deepcopy(auth_cases["users"]["a"])
 
 
 @pytest.fixture
 def auth_user_b(auth_cases: dict[str, Any]) -> dict[str, Any]:
-    """User 202: inputs, public responses and a mock verified principal."""
+    """사용자 202의 입력, 공개 응답과 서버가 신원을 확인했다고 가정한 테스트용 사용자 정보."""
     return deepcopy(auth_cases["users"]["b"])
 
 
 @pytest.fixture(params=["a", "b"], ids=["user-101", "user-202"])
 def auth_user(request: pytest.FixtureRequest, auth_cases: dict[str, Any]) -> dict[str, Any]:
-    """Run a consuming test once per user without manually duplicating it."""
+    """테스트 코드를 복제하지 않고 사용자별로 한 번씩 실행한다."""
     return deepcopy(auth_cases["users"][request.param])
 
 
 @pytest.fixture
 def unauthenticated_case(auth_cases: dict[str, Any]) -> dict[str, Any]:
-    """No principal or credentials, with the expected 401 response example."""
+    """확인된 사용자 정보와 자격 증명이 없는 요청 및 기대하는 401 응답 예시."""
     return deepcopy(auth_cases["unauthenticated"])
 
 
 @pytest.fixture(params=[0, 1], ids=["a-body-b", "b-body-a"])
 def principal_body_mismatch_case(request: pytest.FixtureRequest, auth_cases: dict[str, Any]) -> dict[str, Any]:
-    """Run both attempts to substitute a different user ID in a request body."""
+    """요청 본문의 사용자 ID를 다른 사용자로 바꾼 두 사례를 각각 실행한다."""
     return deepcopy(auth_cases["principal_body_mismatch_cases"][request.param])
 
 
@@ -87,7 +104,7 @@ class OrmProbe(Base):
 
 @pytest.fixture
 def orm_test_connection():
-    """A verified test connection whose DDL, savepoints and data all roll back."""
+    """DDL, 저장점과 데이터를 모두 롤백하는 검증된 테스트 DB 연결."""
     url = guarded_live_url()
     engine = create_engine(psycopg_url(url), connect_args={"connect_timeout": 3})
     register_models()
@@ -118,7 +135,7 @@ def orm_test_connection():
 
 @pytest.fixture
 def orm_test_session(orm_test_connection):
-    """Allow model tests to commit without committing the outer transaction."""
+    """외부 트랜잭션을 확정하지 않고 모델 테스트 안에서 커밋할 수 있게 한다."""
     with Session(orm_test_connection, join_transaction_mode="create_savepoint") as session:
         yield session
 

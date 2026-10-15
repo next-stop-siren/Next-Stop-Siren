@@ -11,17 +11,6 @@ GOOGLE_NAMES = ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI
 AUTH_KEYS = ("AUTH_ACCESS_KEY", "AUTH_REFRESH_KEY", "AUTH_REFRESH_DIGEST_KEY", "AUTH_CSRF_KEY")
 
 
-@pytest.fixture
-def google_environment(auth_environment):
-    return {
-        **auth_environment,
-        "GOOGLE_CLIENT_ID": "123456-fixture.apps.googleusercontent.com",
-        "GOOGLE_CLIENT_SECRET": "fixture-only-google-secret",
-        "GOOGLE_REDIRECT_URI": "http://127.0.0.1:8000/api/auth/google/callback",
-        "GOOGLE_TRANSACTION_KEY": base64.b64encode(bytes([5]) * 32).decode(),
-    }
-
-
 def test_google_settings_decode_key_and_preserve_callback(google_environment):
     settings = GoogleSettings.from_env(google_environment)
     assert settings.client_id == google_environment["GOOGLE_CLIENT_ID"]
