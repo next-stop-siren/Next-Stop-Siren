@@ -11,6 +11,7 @@ question, a request key, an answer or a provider's error message.
 """
 
 import logging
+import time
 from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
@@ -95,6 +96,7 @@ def send_question(
 
     text = None
     status, error_code = "completed", None
+    started = time.monotonic()
     try:
         text = provider.complete(context, timeout_seconds=ANSWER_TIME_LIMIT_SECONDS)
     except ProviderFailed:
@@ -105,7 +107,13 @@ def send_question(
         if not text.strip():
             text, status, error_code = None, "failed", "provider_failed"
     log = logger.info if status == "completed" else logger.warning
-    log("Provider call ended, trace_id=%s, answer_id=%s, outcome=%s", trace_id, answer_id, error_code or status)
+    log(
+        "Provider call ended, trace_id=%s, answer_id=%s, outcome=%s, elapsed_ms=%s",
+        trace_id,
+        answer_id,
+        error_code or status,
+        round((time.monotonic() - started) * 1000),
+    )
 
     answer = repository.finish_answer(
         session, conversation_id, answer_id, status=status, content=text, error_code=error_code
