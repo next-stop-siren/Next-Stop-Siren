@@ -48,6 +48,8 @@ def add_exchange(session, conversation_id, request_key, content, status="complet
     )
     if status == "completed":
         values = dict(content="안녕하세요.", completed_at=NOW)
+    elif status == "pending":
+        values = {}
     else:
         values = dict(error_code=ERROR_CODES[status])
     answer = save(
@@ -92,7 +94,6 @@ def seeded(session):
         first_messages=[*greeting, *todo, *again],
         other_messages=list(theirs),
         completed_pair=list(greeting),
-        unfinished_answers=[todo[1], again[1]],
     )
 
 
@@ -140,11 +141,13 @@ def test_messages_are_paged_by_ascending_id(session, seeded):
     assert repository.list_messages(session, seeded.local, seeded.first, limit=4, after_id=last_id) == []
 
 
-def test_failed_and_interrupted_answers_are_left_out_of_the_context(session, seeded):
-    """Whether a question whose answer failed stays is an open PM decision, so it is not pinned here."""
+def test_the_context_is_only_the_completed_pairs_in_order(session, seeded):
+    """A failed, interrupted or pending pair is left out on both sides; the history keeps every row."""
+    pending = add_exchange(session, seeded.first, "q-demo-4", "아직 답을 기다리는 질문", "pending")
+    later = add_exchange(session, seeded.first, "q-demo-5", "마지막 질문")
     context = repository.list_context_messages(session, seeded.local, seeded.first)
-    assert ids(context) == sorted(ids(context))
-    assert ids(context)[:2] == seeded.completed_pair
-    assert not set(seeded.unfinished_answers) & set(ids(context))
-    assert {row.status for row in context} == {"completed"}
-    assert all(row.content for row in context)
+    assert ids(context) == [*seeded.completed_pair, *later]
+    history = repository.list_messages(session, seeded.local, seeded.first, limit=20, after_id=None)
+    assert ids(history) == [*seeded.first_messages, *pending, *later]
+    # Another user's completed pair never enters this context.
+    assert not set(seeded.other_messages) & set(ids(context))
