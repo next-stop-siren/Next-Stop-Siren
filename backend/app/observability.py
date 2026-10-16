@@ -98,22 +98,30 @@ def request_trace_id(request: Request) -> str:
 
 
 class RegistrationTraceMiddleware:
-    """본문을 읽기 전에 가입·로그인 요청 수신을 기록한다."""
+    """Assign a server trace ID and record supported authentication requests before validation."""
+
+    _operations = {
+        ("POST", "/api/auth/register"): "registration",
+        ("POST", "/api/auth/login"): "login",
+        ("GET", "/api/auth/google/callback"): "google_callback",
+    }
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if (
-            scope["type"] == "http"
-            and scope["method"] == "POST"
-            and scope["path"] in {"/api/auth/register", "/api/auth/login"}
-        ):
-            trace_id = str(uuid4())
-            scope.setdefault("state", {})["trace_id"] = trace_id
-            operation = "login" if scope["path"] == "/api/auth/login" else "registration"
-            logger.info("event=%s_received trace_id=%s", operation, trace_id)
+        if scope["type"] == "http":
+            operation = self._operations.get((scope["method"], scope["path"]))
+            if operation is not None:
+                trace_id = str(uuid4())
+                scope.setdefault("state", {})["trace_id"] = trace_id
+                logger.info("event=%s_received trace_id=%s", operation, trace_id)
         await self.app(scope, receive, send)
+
+
+def google_callback_verification_failed(request: Request) -> None:
+    """Correlate rejected callbacks without recording credentials or provider error text."""
+    logger.warning("event=google_callback_verification_failed trace_id=%s", request_trace_id(request))
 
 
 def registration_saved(request: Request) -> None:

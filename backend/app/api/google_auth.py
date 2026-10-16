@@ -23,7 +23,13 @@ from app.integrations.google_oidc import (
     GoogleProviderUnavailable,
     google_authorization_url,
 )
-from app.observability import FailureDetails, login_cancelled, login_compensation_failed, login_saved
+from app.observability import (
+    FailureDetails,
+    google_callback_verification_failed,
+    login_cancelled,
+    login_compensation_failed,
+    login_saved,
+)
 from app.schemas.errors import ErrorResponse
 from app.security.google_transactions import (
     GoogleTransactionError,
@@ -173,6 +179,7 @@ async def google_callback(
         )
         return await run_in_threadpool(_finish_google_login, verified, request, settings)
     except (GoogleIdentityError, GoogleTransactionError):
+        google_callback_verification_failed(request)
         failure = ApiError("unauthenticated")
     except GoogleProviderUnavailable as exc:
         failure = ApiError("temporarily_unavailable", failure=exc.failure)
