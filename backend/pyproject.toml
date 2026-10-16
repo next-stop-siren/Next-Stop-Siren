@@ -28,7 +28,10 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-markers = ["db: requires the guarded local test database"]
+markers = [
+  "db: requires the guarded local test database",
+  "live: calls the real Codyssey GPT API; runs only with --run-live",
+]
 
 [tool.ruff]
 line-length = 120
