@@ -160,15 +160,18 @@ def test_failure_is_stored_and_left_out_of_the_next_context(
     answer = again.json()["answer"]
     assert (answer["role"], answer["status"], answer["content"], answer["error_code"]) == ended
     assert answer["completed_at"] is None and len(provider.calls) == 1
-    # The conversation is not blocked, and only completed messages reach the provider.
+    # The conversation is not blocked, and the unfinished pair reaches the provider on neither side.
     provider.outcome = lambda: "두 번째 답변"
     assert send(seeded.mine, content="하나 더", request_key="q-demo-2").status_code == 201
-    assert provider.calls[-1].context == [("user", "안녕?"), ("user", "하나 더")]
+    assert provider.calls[-1].context == [("user", "하나 더")]
     context = repository.list_context_messages(session, seeded.user_a, seeded.mine)
-    assert [(row.role, row.content) for row in context] == [
-        ("user", "안녕?"),
-        ("user", "하나 더"),
-        ("assistant", "두 번째 답변"),
+    assert [(row.role, row.content) for row in context] == [("user", "하나 더"), ("assistant", "두 번째 답변")]
+    # The history keeps both pairs.
+    assert stored(session, seeded.mine) == [
+        DONE[0],
+        ended,
+        ("user", "completed", "하나 더", None),
+        ("assistant", "completed", "두 번째 답변", None),
     ]
 
 
@@ -208,7 +211,7 @@ def test_a_new_question_closes_an_old_pending_answer_and_is_answered(session, se
         ("user", "completed", "하나 더", None),
         ("assistant", "completed", "안녕하세요.", None),
     ]
-    assert provider.calls[-1].context == [("user", "안녕?"), ("user", "하나 더")]
+    assert provider.calls[-1].context == [("user", "하나 더")]
 
 
 def test_recovery_closes_only_answers_older_than_the_limit(session, seeded, provider):

@@ -1,0 +1,176 @@
+"""The real answer provider: Codyssey's GPT API with the fixed gpt-5.5 model (S11).
+
+Nothing in the public service selects this adapter yet; `get_provider()` stays the
+free mock until member limits (#15), integration (#19) and deployment are verified.
+It is used only by the explicit, isolated smoke test.
+
+One call is one HTTP request. There is no automatic retry and no fallback to another
+model or provider. The caller's wait ends at the deadline, when the connection is
+closed; a connection still opening then is closed without sending the request.
+Whether the provider stops generating or charging is not guaranteed. Only an answer
+that ended naturally (`finish_reason` "stop") is returned as complete.
+
+Logs carry the HTTP status and elapsed time only, never the key, a question, an
+answer or the provider's response body.
+"""
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from http.client import HTTPConnection, HTTPException, HTTPSConnection
+import json
+import logging
+import os
+import queue
+import socket
+import threading
+import time
+from urllib.parse import urlsplit
+
+from app.integrations.provider import ContextMessage, ProviderFailed, ProviderTimeout
+
+logger = logging.getLogger(__name__)
+
+# The approved values in docs/04-reference/ai.md.
+APPROVED_BASE_URL = "https://copa.codyssey.kr/v1"
+APPROVED_MODEL = "gpt-5.5"
+# Unfinished reasons logged by name; any other value is logged as "other", never echoed.
+KNOWN_UNFINISHED = frozenset({"length", "content_filter", "tool_calls", "function_call"})
+
+
+class GptSettingsError(ValueError):
+    """A missing or unapproved setting, named without echoing its value."""
+
+
+@dataclass(frozen=True, slots=True)
+class GptSettings:
+    api_key: str = field(repr=False)
+    base_url: str
+    model: str
+
+    @classmethod
+    def from_env(cls, environ: Mapping[str, str] | None = None) -> "GptSettings":
+        """Read the developer's own server-side key; the URL and model must be the approved ones."""
+        values = os.environ if environ is None else environ
+        api_key = values.get("CODYSSEY_API_KEY", "")
+        if not api_key or any(character.isspace() or ord(character) < 32 for character in api_key):
+            raise GptSettingsError("CODYSSEY_API_KEY: 서버 .env에 본인 키가 없거나 형식이 올바르지 않습니다.")
+        if values.get("CODYSSEY_BASE_URL") != APPROVED_BASE_URL:
+            raise GptSettingsError(f"CODYSSEY_BASE_URL: 승인된 {APPROVED_BASE_URL}만 사용할 수 있습니다.")
+        if values.get("CODYSSEY_MODEL") != APPROVED_MODEL:
+            raise GptSettingsError(f"CODYSSEY_MODEL: 승인된 {APPROVED_MODEL}만 사용할 수 있습니다.")
+        return cls(api_key, APPROVED_BASE_URL, APPROVED_MODEL)
+
+
+@dataclass(frozen=True, slots=True)
+class _Response:
+    status: int
+    body: bytes
+
+
+class CodysseyGptProvider:
+    def __init__(self, settings: GptSettings) -> None:
+        self.settings = settings
+
+    def complete(self, messages: Sequence[ContextMessage], *, timeout_seconds: float) -> str:
+        """Return the answer, or raise `ProviderFailed` or `ProviderTimeout` within `timeout_seconds`."""
+        url = urlsplit(self.settings.base_url.rstrip("/") + "/chat/completions")
+        connection_type = HTTPSConnection if url.scheme == "https" else HTTPConnection
+        connection = connection_type(url.netloc, timeout=timeout_seconds)
+        body = json.dumps(
+            {
+                "model": self.settings.model,
+                "messages": [{"role": message.role, "content": message.content} for message in messages],
+            },
+            ensure_ascii=False,
+        ).encode()
+        headers = {
+            "Authorization": f"Bearer {self.settings.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        # A closed connection must not reopen by itself and send the request after the deadline.
+        connection.auto_open = 0
+        outcome: queue.Queue[_Response | BaseException] = queue.Queue(maxsize=1)
+        # Held only to decide whether to send and to mark the call cancelled, never during I/O,
+        # so cancelling does not wait for a slow send. A connection that opens after the
+        # deadline sees the mark and sends nothing; a send under way when it passes fails on
+        # the shut-down socket, which `auto_open = 0` keeps from reopening.
+        guard = threading.Lock()
+        cancelled = False
+
+        def request() -> None:
+            try:
+                connection.connect()
+                with guard:
+                    send = not cancelled
+                if not send:
+                    connection.close()
+                    return
+                connection.request("POST", url.path, body=body, headers=headers)
+                response = connection.getresponse()
+                outcome.put(_Response(response.status, response.read()))
+            except BaseException as error:
+                outcome.put(error)
+
+        started = time.monotonic()
+        threading.Thread(target=request, daemon=True).start()
+        try:
+            result = outcome.get(timeout=timeout_seconds)
+        except queue.Empty:
+            with guard:
+                cancelled = True
+            _cancel(connection)
+            logger.warning("event=gpt_call_ended outcome=timeout elapsed_ms=%s", _elapsed_ms(started))
+            raise ProviderTimeout from None
+        connection.close()
+        elapsed_ms = _elapsed_ms(started)
+        if isinstance(result, (TimeoutError, socket.timeout)):
+            logger.warning("event=gpt_call_ended outcome=timeout elapsed_ms=%s", elapsed_ms)
+            raise ProviderTimeout from None
+        if isinstance(result, (OSError, HTTPException)):
+            logger.warning(
+                "event=gpt_call_ended outcome=connection_error error_type=%s elapsed_ms=%s",
+                type(result).__name__,
+                elapsed_ms,
+            )
+            raise ProviderFailed from None
+        if isinstance(result, BaseException):
+            raise result
+        # 429 and quota exhaustion are failures like any other non-200 status; nothing is retried.
+        if result.status != 200:
+            logger.warning("event=gpt_call_ended outcome=http_error status=%s elapsed_ms=%s", result.status, elapsed_ms)
+            raise ProviderFailed
+        try:
+            choice = json.loads(result.body)["choices"][0]
+            content, finish_reason = choice["message"]["content"], choice.get("finish_reason")
+        except (ValueError, LookupError, TypeError, AttributeError):
+            content, finish_reason = None, None
+        if not isinstance(content, str):
+            logger.warning("event=gpt_call_ended outcome=invalid_response elapsed_ms=%s", elapsed_ms)
+            raise ProviderFailed
+        # Only a natural end is a whole answer; one cut by the length limit or a content
+        # filter, with no stated reason or with a reason that is not a string, is stored as
+        # a failure, never as completed.
+        if finish_reason != "stop":
+            # An array or object cannot be looked up in the set, so only a string is named.
+            known = isinstance(finish_reason, str) and finish_reason in KNOWN_UNFINISHED
+            reason = finish_reason if known else "other"
+            logger.warning("event=gpt_call_ended outcome=incomplete finish_reason=%s elapsed_ms=%s", reason, elapsed_ms)
+            raise ProviderFailed
+        logger.info("event=gpt_call_ended outcome=completed status=200 elapsed_ms=%s", elapsed_ms)
+        return content
+
+
+def _elapsed_ms(started: float) -> int:
+    return round((time.monotonic() - started) * 1000)
+
+
+def _cancel(connection: HTTPConnection) -> None:
+    """Close the socket under the waiting request, so that it ends and its late result is discarded."""
+    sock = connection.sock
+    if sock is not None:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+    connection.close()
