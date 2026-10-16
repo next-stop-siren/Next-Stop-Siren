@@ -54,8 +54,8 @@ Python 모듈·함수·변수는 `snake_case`, 클래스는 `PascalCase`를 쓴�
 
 - **설정:** 서버 `.env`의 `CODYSSEY_API_KEY`(본인 키)·`CODYSSEY_BASE_URL`·`CODYSSEY_MODEL`을 읽는다. URL·모델이 승인값과 다르면 거부한다.
 - **호출:** 표준 라이브러리 `http.client`로 한 번만 요청한다. 자동 재시도·모델 대체가 없고 429·할당 부족을 포함한 비정상 응답은 `ProviderFailed`(기존 502)다.
-- **완성 판정:** `finish_reason`이 `stop`인 답변만 완성이다. 길이 제한(`length`)·필터링(`content_filter`)·이유 없음은 `ProviderFailed`로 `failed` 저장하며 `completed`로 저장하지 않는다.
-- **30초 기한·취소:** 기한이 지나면 연결을 닫아 대기를 끝내고 `ProviderTimeout`(기존 504)을 낸다. 연결 대기 중에 기한이 지나면 연결이 열린 뒤에도 요청을 보내지 않는다. 늦은 결과는 버린다. 제공자 쪽 생성·차감 중단은 보장하지 않는다.
+- **완성 판정:** `finish_reason`이 `stop`인 답변만 완성이다. 길이 제한(`length`)·필터링(`content_filter`)·이유 없음·문자열이 아닌 값(배열·객체 등)은 `ProviderFailed`로 `failed` 저장하며 `completed`로 저장하지 않는다.
+- **30초 기한·취소:** 기한이 지나면 연결을 닫아 대기를 끝내고 `ProviderTimeout`(기존 504)을 낸다. 연결 대기 중에 기한이 지나면 연결이 열린 뒤에도 요청을 보내지 않는다. 취소는 전송 완료를 기다리지 않으며, 지연된 전송은 닫힌 소켓에서 실패한다. 늦은 결과는 버린다. 제공자 쪽 생성·차감 중단은 보장하지 않는다.
 - **기록:** 어댑터는 HTTP 상태·소요 시간만, 채팅 서비스는 `trace_id`·결과·소요 시간만 남긴다.
 
 모의 검사는 `tests/test_codyssey_provider.py`가 로컬 대체 서버로 수행한다. 실제 스모크는 `live` 표시가 있어 `--run-live` 없이는 CI·`-m db`에서도 건너뛴다. 대시보드에서 남은 할당을 확인한 뒤 합성 질문 1회로 실행하고, 출력된 상태·소요 시간만 증거로 남긴다. 테스트 DB를 쓰므로 실행 전에 `db-test`를 켜고 [온보딩](../01-start/onboarding.md)대로 `TEST_DATABASE_URL`을 지정한다.

@@ -91,8 +91,10 @@ class CodysseyGptProvider:
         # A closed connection must not reopen by itself and send the request after the deadline.
         connection.auto_open = 0
         outcome: queue.Queue[_Response | BaseException] = queue.Queue(maxsize=1)
-        # Held while sending and while cancelling: the request is either sent before the
-        # deadline or not at all, even when the connection opens only after it.
+        # Held only to decide whether to send and to mark the call cancelled, never during I/O,
+        # so cancelling does not wait for a slow send. A connection that opens after the
+        # deadline sees the mark and sends nothing; a send under way when it passes fails on
+        # the shut-down socket, which `auto_open = 0` keeps from reopening.
         guard = threading.Lock()
         cancelled = False
 
@@ -100,10 +102,11 @@ class CodysseyGptProvider:
             try:
                 connection.connect()
                 with guard:
-                    if cancelled:
-                        connection.close()
-                        return
-                    connection.request("POST", url.path, body=body, headers=headers)
+                    send = not cancelled
+                if not send:
+                    connection.close()
+                    return
+                connection.request("POST", url.path, body=body, headers=headers)
                 response = connection.getresponse()
                 outcome.put(_Response(response.status, response.read()))
             except BaseException as error:
@@ -116,7 +119,7 @@ class CodysseyGptProvider:
         except queue.Empty:
             with guard:
                 cancelled = True
-                _cancel(connection)
+            _cancel(connection)
             logger.warning("event=gpt_call_ended outcome=timeout elapsed_ms=%s", _elapsed_ms(started))
             raise ProviderTimeout from None
         connection.close()
@@ -146,9 +149,12 @@ class CodysseyGptProvider:
             logger.warning("event=gpt_call_ended outcome=invalid_response elapsed_ms=%s", elapsed_ms)
             raise ProviderFailed
         # Only a natural end is a whole answer; one cut by the length limit or a content
-        # filter, or with no stated reason, is stored as a failure, never as completed.
+        # filter, with no stated reason or with a reason that is not a string, is stored as
+        # a failure, never as completed.
         if finish_reason != "stop":
-            reason = finish_reason if finish_reason in KNOWN_UNFINISHED else "other"
+            # An array or object cannot be looked up in the set, so only a string is named.
+            known = isinstance(finish_reason, str) and finish_reason in KNOWN_UNFINISHED
+            reason = finish_reason if known else "other"
             logger.warning("event=gpt_call_ended outcome=incomplete finish_reason=%s elapsed_ms=%s", reason, elapsed_ms)
             raise ProviderFailed
         logger.info("event=gpt_call_ended outcome=completed status=200 elapsed_ms=%s", elapsed_ms)

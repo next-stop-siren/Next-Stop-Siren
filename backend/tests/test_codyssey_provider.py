@@ -172,8 +172,21 @@ def test_a_failure_is_one_request_with_no_retry_or_other_model(gpt, reply):
         (None, "other"),
         (..., "other"),
         ("fixture-unknown-reason", "other"),
+        # Not a string: never completed, and no TypeError that would leave the answer pending.
+        (["stop"], "other"),
+        ({"reason": "stop"}, "other"),
+        (1, "other"),
     ],
-    ids=["length limit", "content filter", "null reason", "no reason", "unknown reason"],
+    ids=[
+        "length limit",
+        "content filter",
+        "null reason",
+        "no reason",
+        "unknown reason",
+        "array reason",
+        "object reason",
+        "number reason",
+    ],
 )
 def test_an_answer_that_did_not_end_naturally_is_a_failure(gpt, caplog, finish_reason, logged):
     caplog.set_level(logging.INFO)
@@ -235,6 +248,35 @@ def test_a_connection_that_opens_after_the_deadline_sends_nothing(gpt, monkeypat
     assert gpt.requests == []
 
 
+def test_a_send_that_stalls_still_ends_at_the_deadline(gpt, monkeypatch):
+    """The send itself blocks past the deadline; the timeout must not wait for it, and it then fails."""
+    sending = threading.Event()
+    release = threading.Event()
+    send_ended = threading.Event()
+
+    class StalledSendConnection(codyssey.HTTPConnection):
+        def send(self, data):
+            if not sending.is_set():
+                sending.set()
+                release.wait(5)
+            try:
+                super().send(data)
+            finally:
+                send_ended.set()
+
+    monkeypatch.setattr(codyssey, "HTTPConnection", StalledSendConnection)
+    started = time.monotonic()
+    with pytest.raises(ProviderTimeout):
+        ask(gpt, timeout_seconds=0.3)
+    assert sending.is_set() and not send_ended.is_set()
+    assert time.monotonic() - started < 1.5
+    release.set()
+    assert send_ended.wait(5)
+    # The socket was shut down at the deadline, so the stalled request never arrives.
+    time.sleep(0.5)
+    assert gpt.requests == []
+
+
 def test_logs_hold_only_status_and_time(gpt, caplog):
     caplog.set_level(logging.INFO)
     ask(gpt)
@@ -278,7 +320,11 @@ def test_through_the_api_an_answer_is_stored_and_the_unfinished_pair_stays_out_o
     assert len(chat.gpt.requests) == 3
 
 
-@pytest.mark.parametrize("finish_reason", ["length", "content_filter"])
+@pytest.mark.parametrize(
+    "finish_reason",
+    ["length", "content_filter", ["stop"], {"reason": "stop"}],
+    ids=["length limit", "content filter", "array reason", "object reason"],
+)
 def test_through_the_api_a_cut_answer_is_502_and_never_stored_as_completed(chat, finish_reason):
     chat.gpt.reply = (200, completion("잘린 답변", finish_reason))
     response = send()
