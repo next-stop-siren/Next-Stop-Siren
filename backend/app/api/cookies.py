@@ -1,4 +1,4 @@
-"""Refresh and CSRF cookie creation after a successful session commit."""
+"""Refresh and CSRF cookie creation and expiration after a successful session commit."""
 
 from datetime import datetime, timezone
 
@@ -51,3 +51,15 @@ def set_auth_cookies(
             samesite=settings.cookie_samesite,
         )
     return csrf_token
+
+
+def clear_auth_cookies(response: Response, settings: AuthSettings) -> None:
+    """DB 폐기 커밋 후 호출한다. 발급과 같은 Path·속성의 호스트 전용 쿠키를 만료시킨다."""
+    for name in (REFRESH_COOKIE_NAME, CSRF_COOKIE_NAME):
+        response.delete_cookie(
+            key=name,
+            path=settings.cookie_path,
+            secure=settings.cookie_secure,
+            httponly=settings.cookie_httponly,
+            samesite=settings.cookie_samesite,
+        )

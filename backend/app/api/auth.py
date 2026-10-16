@@ -10,7 +10,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.api.cookies import AuthCookieError, set_auth_cookies
+from app.api.cookies import AuthCookieError, CSRF_COOKIE_NAME, REFRESH_COOKIE_NAME, set_auth_cookies
 from app.api.errors import ApiError, unauthenticated
 from app.db import get_session
 from app.observability import (
@@ -26,7 +26,8 @@ from app.schemas.auth import LoginRequest, LoginResponse, RegisterRequest, Regis
 from app.schemas.errors import ErrorResponse
 from app.security.settings import AuthSettings
 from app.security.login_limits import LoginFailureLimiter
-from app.security.tokens import TokenVerifyError, verify_access_token
+from app.security.session_values import verify_csrf_token
+from app.security.tokens import TokenVerifyError, VerifiedToken, verify_access_token, verify_refresh_token
 from app.services.login import (
     InvalidCredentials,
     LoginUnavailable,
@@ -73,6 +74,34 @@ def require_allowed_origin(request: Request, settings: Annotated[AuthSettings, D
     origins = request.headers.getlist("origin")
     if len(origins) != 1 or origins[0] not in settings.allowed_origins:
         raise ApiError("csrf_failed")
+
+
+def current_refresh(
+    request: Request, settings: Annotated[AuthSettings, Depends(request_auth_settings)]
+) -> VerifiedToken:
+    """refresh 쿠키의 JWT만 검증한다. DB의 존재·폐기 상태는 서비스에서 확인한다."""
+    token = request.cookies.get(REFRESH_COOKIE_NAME)
+    if not token:
+        raise unauthenticated()
+    try:
+        return verify_refresh_token(token, settings)
+    except TokenVerifyError:
+        raise unauthenticated() from None
+
+
+def require_refresh_csrf(
+    request: Request,
+    origin: Annotated[None, Depends(require_allowed_origin)],
+    refresh: Annotated[VerifiedToken, Depends(current_refresh)],
+    settings: Annotated[AuthSettings, Depends(request_auth_settings)],
+) -> VerifiedToken:
+    """refresh·logout의 변경 전 검증. 실패해도 DB나 쿠키를 변경하지 않는다."""
+    headers = request.headers.getlist("x-csrf-token")
+    if len(headers) != 1 or not verify_csrf_token(
+        refresh.jti, request.cookies.get(CSRF_COOKIE_NAME), headers[0], settings
+    ):
+        raise ApiError("csrf_failed")
+    return refresh
 
 
 def registration_session() -> Iterator[Session]:
