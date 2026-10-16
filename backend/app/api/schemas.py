@@ -113,6 +113,14 @@ class QuestionIn(BaseModel):
     request_key: Annotated[str, Field(min_length=1, max_length=MAX_REQUEST_KEY_LENGTH), AfterValidator(storable_text)]
 
 
+class RetryIn(BaseModel):
+    """A manual retry of a question; the key identifies one attempt and has the request key's limits."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    retry_key: Annotated[str, Field(min_length=1, max_length=MAX_REQUEST_KEY_LENGTH), AfterValidator(storable_text)]
+
+
 class QuestionAnswer(BaseModel):
     question: MessageOut
     answer: MessageOut

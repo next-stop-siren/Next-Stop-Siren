@@ -1,4 +1,4 @@
-"""Create, list and read the signed-in user's own conversations, and send questions to them."""
+"""Create, list and read the signed-in user's own conversations, send questions to them and retry answers."""
 
 from collections.abc import Callable, Sequence
 from typing import Annotated, Protocol
@@ -14,6 +14,8 @@ from app.api.errors import (
     provider_failed,
     provider_timeout,
     request_key_conflict,
+    retry_not_allowed,
+    retry_not_latest,
 )
 from app.api.schemas import (
     ConversationCreated,
@@ -26,6 +28,7 @@ from app.api.schemas import (
     MessagePage,
     QuestionAnswer,
     QuestionIn,
+    RetryIn,
 )
 from app.db import get_session
 from app.integrations.provider import AnswerProvider, get_provider
@@ -48,6 +51,9 @@ CHAT_ERRORS: dict[type[chat.ChatError], Callable[[], ApiError]] = {
     chat.ConversationNotFound: not_found,
     chat.RequestKeyConflict: request_key_conflict,
     chat.ConversationBusy: conversation_busy,
+    chat.QuestionNotFound: not_found,
+    chat.RetryNotAllowed: retry_not_allowed,
+    chat.NotLatestQuestion: retry_not_latest,
 }
 Limit = Annotated[int, Query(ge=1, le=100)]
 
@@ -126,6 +132,44 @@ def send_question(
         )
     except chat.ChatError as error:
         raise CHAT_ERRORS[type(error)]() from None
+    return exchange_response(exchange, response)
+
+
+@router.post(
+    "/{conversation_id}/messages/{message_id}/retry",
+    status_code=201,
+    responses={
+        200: {"model": QuestionAnswer, "description": "The retry key was already used and its attempt has ended."},
+        202: {"model": QuestionAnswer, "description": "The retry key was already used and its attempt is pending."},
+        404: {"model": ErrorBody},
+        409: {"model": ErrorBody},
+        502: {"model": ErrorBody},
+        504: {"model": ErrorBody},
+    },
+)
+def retry_answer(
+    conversation_id: Annotated[DecimalId, Path()],
+    message_id: Annotated[DecimalId, Path()],
+    body: RetryIn,
+    user_id: UserId,
+    session: DbSession,
+    provider: Provider,
+    request: Request,
+    response: Response,
+) -> QuestionAnswer:
+    """Answer the question `message_id` again as a new attempt."""
+    trace_id = request_trace_id(request)
+    try:
+        exchange = chat.retry_answer(
+            session, provider, user_id, conversation_id, message_id, body.retry_key, trace_id=trace_id
+        )
+    except chat.ChatError as error:
+        raise CHAT_ERRORS[type(error)]() from None
+    return exchange_response(exchange, response)
+
+
+def exchange_response(exchange: chat.Exchange, response: Response) -> QuestionAnswer:
+    """201 for a new answer that completed, 200/202 for a stored one, and the provider error for a new failure."""
     status = exchange.answer.status
     if not exchange.created:
         response.status_code = 202 if status == "pending" else 200

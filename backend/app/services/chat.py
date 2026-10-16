@@ -4,6 +4,8 @@ The question and its pending answer are committed before the provider is called,
 and the outcome is saved in a second transaction, so no transaction stays open
 during the call. A pending answer that is never finished, for example after a
 crash between the two, is closed by the next send to the same conversation.
+A manual retry stores a new pending attempt for the same question and follows the
+same two transactions; it never changes an earlier attempt.
 
 Refusals are raised as the business errors below; the API layer turns them into
 HTTP responses. Log entries carry the caller's trace ID and row IDs only, never a
@@ -25,6 +27,9 @@ logger = logging.getLogger(__name__)
 # open longer than the provider is allowed to take.
 ANSWER_TIME_LIMIT_SECONDS = 30
 STALE_PENDING_SECONDS = 60
+# The PM's D4 decision for S13: an answer that failed or whose outcome is unknown may
+# be tried again, and only for the latest question of the conversation.
+RETRYABLE_STATUSES = frozenset({"failed", "interrupted"})
 
 
 class ChatError(Exception):
@@ -41,6 +46,18 @@ class RequestKeyConflict(ChatError):
 
 class ConversationBusy(ChatError):
     """Another question's answer is still pending."""
+
+
+class QuestionNotFound(ChatError):
+    """The message is not a question of the conversation."""
+
+
+class RetryNotAllowed(ChatError):
+    """The question's latest answer is in a state that D4 does not allow to retry, such as completed."""
+
+
+class NotLatestQuestion(ChatError):
+    """A later question exists in the conversation, so this one may not be retried."""
 
 
 @dataclass(frozen=True)
@@ -92,7 +109,77 @@ def send_question(
     answer_id = answer.id
     session.commit()
     logger.info("Question saved, trace_id=%s, answer_id=%s", trace_id, answer_id)
+    answer = _answer(session, provider, conversation_id, answer_id, context, trace_id=trace_id)
+    return Exchange(question, answer, created=True)
 
+
+def retry_answer(
+    session: Session,
+    provider: AnswerProvider,
+    user_id: int,
+    conversation_id: int,
+    question_id: int,
+    retry_key: str,
+    *,
+    trace_id: str,
+) -> Exchange:
+    """Answer a stored question again as a new attempt, once per retry key.
+
+    A retry key already used for the question returns that attempt as stored, even if
+    the question is no longer the latest, and makes no provider call.
+    """
+    logger.info("Retry received, trace_id=%s, conversation_id=%s", trace_id, conversation_id)
+    if not repository.lock_conversation(session, user_id, conversation_id):
+        raise ConversationNotFound
+    closed = repository.close_stale_pending(session, conversation_id, STALE_PENDING_SECONDS)
+    if closed:
+        logger.warning("Stale pending answer interrupted, trace_id=%s, conversation_id=%s", trace_id, conversation_id)
+
+    question = repository.find_question_by_id(session, conversation_id, question_id)
+    if question is None:
+        raise QuestionNotFound
+    answer = repository.find_retry(session, question.id, retry_key)
+    if answer is not None:
+        logger.info("Stored retry returned, trace_id=%s, answer_id=%s, status=%s", trace_id, answer.id, answer.status)
+        # Keeps a stale answer closed.
+        session.commit()
+        return Exchange(question, answer, created=False)
+    if repository.has_pending_answer(session, conversation_id):
+        raise ConversationBusy
+    latest = repository.latest_answer(session, question.id)
+    if latest.status not in RETRYABLE_STATUSES:
+        raise RetryNotAllowed
+    if repository.has_later_question(session, conversation_id, question.id):
+        raise NotLatestQuestion
+
+    # The question is the latest, so every other completed message came before it.
+    stored = repository.list_context_messages(session, user_id, conversation_id) or []
+    context = [ContextMessage(message.role, message.content or "") for message in stored if message.id != question.id]
+    context.append(ContextMessage("user", question.content or ""))
+    # Every answer has an attempt number; `or 0` only satisfies the column's optional type.
+    attempt_no = (latest.attempt_no or 0) + 1
+    answer = repository.add_retry(session, conversation_id, question.id, attempt_no, retry_key)
+    answer_id = answer.id
+    session.commit()
+    logger.info("Retry saved, trace_id=%s, answer_id=%s, attempt_no=%s", trace_id, answer_id, answer.attempt_no)
+    answer = _answer(session, provider, conversation_id, answer_id, context, trace_id=trace_id)
+    return Exchange(question, answer, created=True)
+
+
+def _answer(
+    session: Session,
+    provider: AnswerProvider,
+    conversation_id: int,
+    answer_id: int,
+    context: list[ContextMessage],
+    *,
+    trace_id: str,
+) -> Message:
+    """Call the provider for the committed pending answer and store the outcome.
+
+    Returns the answer as stored; recovery may have closed it during the call, and
+    then the late outcome is dropped.
+    """
     text = None
     status, error_code = "completed", None
     try:
@@ -113,4 +200,4 @@ def send_question(
     stored_status = answer.status
     session.commit()
     logger.info("Answer saved, trace_id=%s, answer_id=%s, status=%s", trace_id, answer_id, stored_status)
-    return Exchange(question, answer, created=True)
+    return answer
