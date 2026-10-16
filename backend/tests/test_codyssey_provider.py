@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.integrations import codyssey
 from app.integrations.codyssey import (
     APPROVED_BASE_URL,
     APPROVED_MODEL,
@@ -34,8 +35,11 @@ ANSWER = "합성 답변 fixture-answer"
 APPROVED = {"CODYSSEY_API_KEY": KEY, "CODYSSEY_BASE_URL": APPROVED_BASE_URL, "CODYSSEY_MODEL": APPROVED_MODEL}
 
 
-def completion(content=ANSWER):
-    return {"choices": [{"message": {"role": "assistant", "content": content}}]}
+def completion(content=ANSWER, finish_reason="stop"):
+    choice = {"message": {"role": "assistant", "content": content}, "finish_reason": finish_reason}
+    if finish_reason is ...:
+        del choice["finish_reason"]
+    return {"choices": [choice]}
 
 
 class FakeGpt:
@@ -160,6 +164,27 @@ def test_a_failure_is_one_request_with_no_retry_or_other_model(gpt, reply):
     assert len(gpt.requests) == 1 and gpt.requests[0].body["model"] == "gpt-5.5"
 
 
+@pytest.mark.parametrize(
+    ("finish_reason", "logged"),
+    [
+        ("length", "length"),
+        ("content_filter", "content_filter"),
+        (None, "other"),
+        (..., "other"),
+        ("fixture-unknown-reason", "other"),
+    ],
+    ids=["length limit", "content filter", "null reason", "no reason", "unknown reason"],
+)
+def test_an_answer_that_did_not_end_naturally_is_a_failure(gpt, caplog, finish_reason, logged):
+    caplog.set_level(logging.INFO)
+    gpt.reply = (200, completion("잘린 답변", finish_reason))
+    with pytest.raises(ProviderFailed):
+        ask(gpt)
+    assert len(gpt.requests) == 1
+    assert f"outcome=incomplete finish_reason={logged}" in caplog.text
+    assert "잘린 답변" not in caplog.text and "fixture-unknown-reason" not in caplog.text
+
+
 def test_an_unreachable_server_is_a_failure():
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
@@ -179,6 +204,35 @@ def test_the_wait_ends_at_the_deadline_and_the_connection_is_cancelled(gpt):
     assert gpt.handled.wait(5)
     assert gpt.peer_closed is True
     assert len(gpt.requests) == 1
+
+
+def test_a_connection_that_opens_after_the_deadline_sends_nothing(gpt, monkeypatch):
+    """The connection is still opening at the deadline; once it opens, no request may follow."""
+    opening = threading.Event()
+    opened = threading.Event()
+    closed_after_opening = threading.Event()
+
+    class SlowConnection(codyssey.HTTPConnection):
+        def connect(self):
+            opening.wait(5)
+            super().connect()
+            opened.set()
+
+        def close(self):
+            if opened.is_set():
+                closed_after_opening.set()
+            super().close()
+
+    monkeypatch.setattr(codyssey, "HTTPConnection", SlowConnection)
+    started = time.monotonic()
+    with pytest.raises(ProviderTimeout):
+        ask(gpt, timeout_seconds=0.3)
+    assert time.monotonic() - started < 1.5
+    opening.set()
+    assert opened.wait(5) and closed_after_opening.wait(5)
+    # Give a stray request time to arrive, then check that none did.
+    time.sleep(0.5)
+    assert gpt.requests == []
 
 
 def test_logs_hold_only_status_and_time(gpt, caplog):
@@ -222,6 +276,18 @@ def test_through_the_api_an_answer_is_stored_and_the_unfinished_pair_stays_out_o
     # A resend of the failed question shows it without another request.
     assert send(content="둘", request_key="q-2").status_code == 200
     assert len(chat.gpt.requests) == 3
+
+
+@pytest.mark.parametrize("finish_reason", ["length", "content_filter"])
+def test_through_the_api_a_cut_answer_is_502_and_never_stored_as_completed(chat, finish_reason):
+    chat.gpt.reply = (200, completion("잘린 답변", finish_reason))
+    response = send()
+    assert response.status_code == 502 and error_of(response)["code"] == "provider_failed"
+    assert stored(chat.store)[1] == ("assistant", "failed", None, "provider_failed")
+    # The cut pair stays out of the next context.
+    chat.gpt.reply = (200, completion())
+    assert send(content="하나 더", request_key="q-demo-2").status_code == 201
+    assert chat.gpt.requests[-1].body["messages"] == [{"role": "user", "content": "하나 더"}]
 
 
 def test_through_the_api_a_timeout_is_504_and_stored_as_interrupted(chat, monkeypatch):

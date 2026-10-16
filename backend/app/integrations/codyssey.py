@@ -6,7 +6,9 @@ It is used only by the explicit, isolated smoke test.
 
 One call is one HTTP request. There is no automatic retry and no fallback to another
 model or provider. The caller's wait ends at the deadline, when the connection is
-closed; whether the provider stops generating or charging is not guaranteed.
+closed; a connection still opening then is closed without sending the request.
+Whether the provider stops generating or charging is not guaranteed. Only an answer
+that ended naturally (`finish_reason` "stop") is returned as complete.
 
 Logs carry the HTTP status and elapsed time only, never the key, a question, an
 answer or the provider's response body.
@@ -31,6 +33,8 @@ logger = logging.getLogger(__name__)
 # The approved values in docs/04-reference/ai.md.
 APPROVED_BASE_URL = "https://copa.codyssey.kr/v1"
 APPROVED_MODEL = "gpt-5.5"
+# Unfinished reasons logged by name; any other value is logged as "other", never echoed.
+KNOWN_UNFINISHED = frozenset({"length", "content_filter", "tool_calls", "function_call"})
 
 
 class GptSettingsError(ValueError):
@@ -84,11 +88,22 @@ class CodysseyGptProvider:
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
+        # A closed connection must not reopen by itself and send the request after the deadline.
+        connection.auto_open = 0
         outcome: queue.Queue[_Response | BaseException] = queue.Queue(maxsize=1)
+        # Held while sending and while cancelling: the request is either sent before the
+        # deadline or not at all, even when the connection opens only after it.
+        guard = threading.Lock()
+        cancelled = False
 
         def request() -> None:
             try:
-                connection.request("POST", url.path, body=body, headers=headers)
+                connection.connect()
+                with guard:
+                    if cancelled:
+                        connection.close()
+                        return
+                    connection.request("POST", url.path, body=body, headers=headers)
                 response = connection.getresponse()
                 outcome.put(_Response(response.status, response.read()))
             except BaseException as error:
@@ -99,7 +114,9 @@ class CodysseyGptProvider:
         try:
             result = outcome.get(timeout=timeout_seconds)
         except queue.Empty:
-            _cancel(connection)
+            with guard:
+                cancelled = True
+                _cancel(connection)
             logger.warning("event=gpt_call_ended outcome=timeout elapsed_ms=%s", _elapsed_ms(started))
             raise ProviderTimeout from None
         connection.close()
@@ -121,11 +138,18 @@ class CodysseyGptProvider:
             logger.warning("event=gpt_call_ended outcome=http_error status=%s elapsed_ms=%s", result.status, elapsed_ms)
             raise ProviderFailed
         try:
-            content = json.loads(result.body)["choices"][0]["message"]["content"]
-        except (ValueError, LookupError, TypeError):
-            content = None
+            choice = json.loads(result.body)["choices"][0]
+            content, finish_reason = choice["message"]["content"], choice.get("finish_reason")
+        except (ValueError, LookupError, TypeError, AttributeError):
+            content, finish_reason = None, None
         if not isinstance(content, str):
             logger.warning("event=gpt_call_ended outcome=invalid_response elapsed_ms=%s", elapsed_ms)
+            raise ProviderFailed
+        # Only a natural end is a whole answer; one cut by the length limit or a content
+        # filter, or with no stated reason, is stored as a failure, never as completed.
+        if finish_reason != "stop":
+            reason = finish_reason if finish_reason in KNOWN_UNFINISHED else "other"
+            logger.warning("event=gpt_call_ended outcome=incomplete finish_reason=%s elapsed_ms=%s", reason, elapsed_ms)
             raise ProviderFailed
         logger.info("event=gpt_call_ended outcome=completed status=200 elapsed_ms=%s", elapsed_ms)
         return content
