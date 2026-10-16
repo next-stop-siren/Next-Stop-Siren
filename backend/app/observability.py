@@ -2,8 +2,8 @@
 
 from dataclasses import dataclass
 import logging
-import re
 from typing import Literal
+from urllib.parse import unquote, urlsplit, urlunsplit
 from uuid import uuid4
 
 from fastapi import Request
@@ -15,20 +15,30 @@ logger = logging.getLogger(__name__)
 class GoogleCallbackQueryFilter(logging.Filter):
     """Remove callback queries while preserving Uvicorn's structured access log arguments."""
 
-    _query = re.compile(r"(/api/auth/google/callback/?)\?[^\s\"']*")
+    _paths = {"/api/auth/google/callback", "/api/auth/google/callback/"}
+
+    @classmethod
+    def _safe_url(cls, value: object) -> object:
+        try:
+            parts = urlsplit(str(value))
+        except ValueError:
+            return "[invalid URL]"
+        if unquote(parts.path) not in cls._paths:
+            return value
+        return urlunsplit(parts._replace(query="", fragment=""))
 
     def filter(self, record: logging.LogRecord) -> bool:
-        if record.name == "httpx":
-            # HTTPX passes a URL object rather than a string as a formatting argument.
-            record.msg = self._query.sub(r"\1", record.getMessage())
-            record.args = ()
-            return True
-        if isinstance(record.msg, str):
-            record.msg = self._query.sub(r"\1", record.msg)
-        if isinstance(record.args, tuple):
-            record.args = tuple(
-                self._query.sub(r"\1", value) if isinstance(value, str) else value for value in record.args
-            )
+        position = None
+        if record.name == "uvicorn.access" and record.msg == '%s - "%s %s HTTP/%s" %d':
+            position = 2
+        elif record.name == "httpx" and record.msg == 'HTTP Request: %s %s "%s %d %s"':
+            position = 1
+        if position is None or not isinstance(record.args, tuple) or len(record.args) != 5:
+            # Drop unfamiliar callback formats rather than risk logging their credentials.
+            return "/api/auth/google/callback" not in unquote(record.getMessage())
+        values = list(record.args)
+        values[position] = self._safe_url(values[position])
+        record.args = tuple(values)
         return True
 
 
