@@ -104,6 +104,9 @@ class RegistrationTraceMiddleware:
         ("POST", "/api/auth/register"): "registration",
         ("POST", "/api/auth/login"): "login",
         ("GET", "/api/auth/google/callback"): "google_callback",
+        ("GET", "/api/auth/csrf"): "csrf",
+        ("POST", "/api/auth/refresh"): "refresh",
+        ("POST", "/api/auth/logout"): "logout",
     }
 
     def __init__(self, app: ASGIApp) -> None:

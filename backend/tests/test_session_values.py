@@ -5,7 +5,9 @@ from dataclasses import replace
 import hashlib
 import hmac
 
-from app.security.session_values import create_csrf_token, create_refresh_digest
+import pytest
+
+from app.security.session_values import create_csrf_token, create_refresh_digest, verify_csrf_token
 from app.security.settings import AuthSettings
 from app.security.tokens import issue_refresh_token
 
@@ -62,3 +64,22 @@ def test_digest_and_csrf_use_separate_keys(auth_settings: AuthSettings) -> None:
     changed_digest = replace(auth_settings, refresh_digest_key=b"fixture-different-digest-key-32bytes")
     assert create_refresh_digest(refresh.token, changed_digest) != digest
     assert create_csrf_token(refresh.jti, changed_digest) == csrf
+
+
+@pytest.mark.parametrize("value", [None, "", "invalid", "x" * 43, "한" * 43, "x" * 10000])
+@pytest.mark.parametrize("field", ["cookie", "header"])
+def test_csrf_verification_safely_rejects_missing_or_invalid_values(auth_settings, value, field):
+    refresh = issue_refresh_token(101, auth_settings)
+    csrf = create_csrf_token(refresh.jti, auth_settings)
+    cookie, header = (value, csrf) if field == "cookie" else (csrf, value)
+    assert not verify_csrf_token(refresh.jti, cookie, header, auth_settings)
+
+
+def test_csrf_verification_requires_current_jti_and_csrf_key(auth_settings):
+    refresh = issue_refresh_token(101, auth_settings)
+    csrf = create_csrf_token(refresh.jti, auth_settings)
+    assert verify_csrf_token(refresh.jti, csrf, csrf, auth_settings)
+    other = issue_refresh_token(101, auth_settings)
+    assert not verify_csrf_token(other.jti, csrf, csrf, auth_settings)
+    changed = replace(auth_settings, csrf_key=b"fixture-different-csrf-key-32bytes")
+    assert not verify_csrf_token(refresh.jti, csrf, csrf, changed)
