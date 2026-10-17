@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import conversations, google_auth, me
+from app.api import conversations, cookie_sessions, google_auth, me
 from app.api.auth import router as auth_router
 from app.api.errors import register_error_handlers
 from app.observability import RegistrationTraceMiddleware, protect_google_callback_logs
@@ -78,6 +78,7 @@ def create_app(auth_settings: AuthSettings | None = None, google_settings: Googl
     application.add_api_route("/api/health", health, methods=["GET"])
     application.add_api_route("/api/ready", ready, methods=["GET"], response_model=None)
     application.include_router(auth_router)
+    application.include_router(cookie_sessions.router)
     application.include_router(google_auth.router)
     application.include_router(me.router)
     application.include_router(conversations.router)

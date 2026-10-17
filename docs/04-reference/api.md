@@ -50,9 +50,9 @@
 | 504 | `provider_timeout` | 모의 제공자 시간 초과가 중단 상태로 저장됨 |
 | 503 | `temporarily_unavailable` | 저장 전 서비스·DB 실패 |
 
-## 인증 요청·응답 — 후속 구현 기준
+## 인증 요청·응답
 
-정책과 브라우저 절차는 [인증 구현 기준](authentication.md)을 따른다. 현재 이 경로들은 동작하지 않는다. 예시 계정·토큰·시각은 가짜 테스트 데이터다.
+정책과 브라우저 절차는 [인증 구현 기준](authentication.md)을 따른다. 인증 경로는 백엔드에 구현되어 있으며, 화면의 복구·재시도 연결은 별도 작업이다. 예시 계정·토큰·시각은 가짜 테스트 데이터다.
 
 모든 인증 오류도 위의 `error`/`fields`/`trace_id` 형식을 쓴다. 없는 계정과 틀린 비밀번호는 같은 `401 unauthenticated` 문구다. 로컬 가입·로그인 및 refresh·logout `POST`에는 정확히 허용된 `Origin`(요청을 시작한 화면의 출처)이 필요하다. Google의 top-level 시작·callback `GET`은 state·nonce·PKCE로 검증한다.
 

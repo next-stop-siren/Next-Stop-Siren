@@ -165,3 +165,31 @@ def rotate_refresh_session(token: str, session: Session, settings: AuthSettings)
         raise rejection
     assert result is not None
     return result
+
+
+def cancel_refresh_rotation(user_id: int, issued: IssuedToken, session: Session, settings: AuthSettings) -> None:
+    """응답 준비 실패 후 전달하지 못한 후임의 계보를 폐기한다. 전임을 되살리지 않는다.
+
+    응답 준비 중 후임이 다시 회전했더라도 그 후임까지 동일한 사용자 잠금 아래 폐기한다.
+    다른 독립 로그인은 보존하며, 만료 직전 실패도 처리하도록 JWT 만료 검증은 반복하지 않는다.
+    """
+    try:
+        locked = lock_refresh_lineage(session, user_id, create_refresh_digest(issued.token, settings))
+        if locked is None:
+            session.rollback()
+            return
+        current = locked.current
+        if (
+            issued.token_type != "refresh"
+            or current.issued_at != issued.issued_at
+            or current.expires_at != issued.expires_at
+        ):
+            raise CorruptRefreshLineage()
+        revoke_refresh_lineage(locked.sessions, datetime.now(timezone.utc))
+        session.commit()
+    except (SQLAlchemyError, CorruptRefreshLineage) as exc:
+        _rollback(session)
+        raise RefreshUnavailable(failure=FailureDetails.from_exception("compensation", exc)) from None
+    except Exception:
+        _rollback(session)
+        raise

@@ -113,3 +113,19 @@ class MeResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     user: PublicUser
+
+
+class CsrfResponse(BaseModel):
+    """현재 refresh에 연결된 메모리용 CSRF 값. 토큰과 사용자 정보는 포함하지 않는다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    csrf_token: StrictStr = Field(repr=False)
+
+
+class RefreshResponse(CsrfResponse):
+    """회전 성공 본문. refresh 원문은 쿠키로만 전달한다."""
+
+    access_token: StrictStr = Field(repr=False)
+    token_type: Literal["Bearer"] = "Bearer"
+    expires_in: Literal[900] = 900

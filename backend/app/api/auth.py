@@ -5,7 +5,7 @@ from ipaddress import ip_address
 import re
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Header, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -94,8 +94,15 @@ def require_refresh_csrf(
     origin: Annotated[None, Depends(require_allowed_origin)],
     refresh: Annotated[VerifiedToken, Depends(current_refresh)],
     settings: Annotated[AuthSettings, Depends(request_auth_settings)],
+    csrf_header: Annotated[
+        str | None,
+        Header(
+            alias="X-CSRF-Token", description="GET /api/auth/csrf 또는 최근 refresh 응답의 csrf_token을 입력하세요."
+        ),
+    ] = None,
 ) -> VerifiedToken:
     """refresh·logout의 변경 전 검증. 실패해도 DB나 쿠키를 변경하지 않는다."""
+    # Header 선언은 Swagger 입력용이다. 중복 헤더 거부와 검증은 원본 목록을 사용한다.
     headers = request.headers.getlist("x-csrf-token")
     if len(headers) != 1 or not verify_csrf_token(
         refresh.jti, request.cookies.get(CSRF_COOKIE_NAME), headers[0], settings
