@@ -190,13 +190,8 @@ def test_pieces_of_a_failed_stream_do_not_enter_the_next_context(store, provider
     send(content="셋", request_key="q-3")
     provider.pieces, provider.ending = ["네 번째 답변"], lambda: None
     assert events_of(send(content="넷", request_key="q-4"))[-1][0] == "done"
-    assert provider.calls[-1].context == [
-        ("user", "하나"),
-        ("assistant", "안녕하세요."),
-        ("user", "둘"),
-        ("user", "셋"),
-        ("user", "넷"),
-    ]
+    # A failed or interrupted pair leaves the context whole, its question too.
+    assert provider.calls[-1].context == [("user", "하나"), ("assistant", "안녕하세요."), ("user", "넷")]
     assert [row.content for row in store.rows if row.role == "assistant"] == ["안녕하세요.", None, None, "네 번째 답변"]
 
 
@@ -332,7 +327,7 @@ def test_a_reader_that_leaves_gets_no_done_and_the_answer_is_stored_as_interrupt
     # The conversation is not blocked, and the abandoned pieces are not in the next context.
     provider.before_piece = lambda index: None
     assert events_of(send(content="하나 더", request_key="q-demo-2"))[-1][0] == "done"
-    assert provider.calls[-1].context == [("user", "안녕?"), ("user", "하나 더")]
+    assert provider.calls[-1].context == [("user", "하나 더")]
 
 
 def test_closing_the_service_stream_part_way_interrupts_and_closing_it_after_the_end_changes_nothing(store, provider):

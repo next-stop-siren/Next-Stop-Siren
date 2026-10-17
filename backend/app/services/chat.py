@@ -12,6 +12,7 @@ question, a request key, an answer or a provider's error message.
 """
 
 import logging
+import time
 from collections.abc import Callable, Generator
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -106,12 +107,28 @@ def begin_question(
 
 
 def _store_outcome(
-    session: Session, started: Started, status: str, text: str | None, error_code: str | None, *, trace_id: str
+    session: Session,
+    started: Started,
+    status: str,
+    text: str | None,
+    error_code: str | None,
+    *,
+    called_at: float,
+    trace_id: str,
 ) -> Message:
-    """Store how the provider call ended and return the answer as stored, which recovery may have closed first."""
+    """Store how the provider call ended and return the answer as stored, which recovery may have closed first.
+
+    `called_at` is the `time.monotonic()` reading taken when the provider was called.
+    """
     answer_id = started.answer_id
     log = logger.info if status == "completed" else logger.warning
-    log("Provider call ended, trace_id=%s, answer_id=%s, outcome=%s", trace_id, answer_id, error_code or status)
+    log(
+        "Provider call ended, trace_id=%s, answer_id=%s, outcome=%s, elapsed_ms=%s",
+        trace_id,
+        answer_id,
+        error_code or status,
+        round((time.monotonic() - called_at) * 1000),
+    )
     answer = repository.finish_answer(
         session, started.conversation_id, answer_id, status=status, content=text, error_code=error_code
     )
@@ -137,6 +154,7 @@ def send_question(
         return begun
     text = None
     status, error_code = "completed", None
+    called_at = time.monotonic()
     try:
         text = provider.complete(begun.context, timeout_seconds=ANSWER_TIME_LIMIT_SECONDS)
     except ProviderFailed:
@@ -146,7 +164,7 @@ def send_question(
     else:
         if not text.strip():
             text, status, error_code = None, "failed", "provider_failed"
-    answer = _store_outcome(session, begun, status, text, error_code, trace_id=trace_id)
+    answer = _store_outcome(session, begun, status, text, error_code, called_at=called_at, trace_id=trace_id)
     return Exchange(begun.question, answer, created=True)
 
 
@@ -169,6 +187,7 @@ def stream_answer(
     pieces: list[str] = []
     text: str | None = None
     status, error_code = "completed", None
+    called_at = time.monotonic()
     try:
         for piece in provider.stream(started.context, timeout_seconds=ANSWER_TIME_LIMIT_SECONDS):
             pieces.append(piece)
@@ -180,12 +199,14 @@ def stream_answer(
     except GeneratorExit:
         logger.warning("Stream abandoned, trace_id=%s, answer_id=%s", trace_id, started.answer_id)
         with open_session() as session:
-            _store_outcome(session, started, "interrupted", None, "outcome_unknown", trace_id=trace_id)
+            _store_outcome(
+                session, started, "interrupted", None, "outcome_unknown", called_at=called_at, trace_id=trace_id
+            )
         raise
     else:
         text = "".join(pieces)
         if not text.strip():
             text, status, error_code = None, "failed", "provider_failed"
     with open_session() as session:
-        answer = _store_outcome(session, started, status, text, error_code, trace_id=trace_id)
+        answer = _store_outcome(session, started, status, text, error_code, called_at=called_at, trace_id=trace_id)
     yield answer
