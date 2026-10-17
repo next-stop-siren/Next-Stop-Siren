@@ -239,6 +239,10 @@ def stream_question(
     if isinstance(begun, chat.Exchange):
         status_code = 202 if begun.answer.status == "pending" else 200
         return JSONResponse(status_code=status_code, content=pair.model_dump(mode="json"))
+    # Reading the committed rows for `start` may have begun a transaction, as a session
+    # that expires rows on commit reloads them. The request session is not used again,
+    # so close it now: no transaction may stay open while the provider is called.
+    session.close()
     events = chat.AnswerStream(open_session, provider, begun, trace_id=trace_id)
     return StreamingResponse(
         answer_events(sse("start", pair), events, question, trace_id),

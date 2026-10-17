@@ -64,6 +64,13 @@ def store(monkeypatch, auth_user_a):
         if not name.startswith("_") and hasattr(repository, name):
             monkeypatch.setattr(repository, name, getattr(fake, name))
     fake.opened = 0
+    # The stream route closes the request session before calling the provider.
+    fake.closed = 0
+
+    def close():
+        fake.closed += 1
+
+    fake.close = close
 
     def open_session():
         fake.opened += 1
@@ -129,7 +136,7 @@ def test_new_question_is_streamed_and_done_carries_the_stored_answer(store, prov
     # One call, made after the question and its pending answer were committed; the answer
     # was committed in a session of its own.
     (made,) = provider.calls
-    assert made.observed == 1 and (store.commits, store.opened) == (2, 1)
+    assert made.observed == 1 and (store.commits, store.opened, store.closed) == (2, 1, 1)
     assert made.context == [("user", "안녕?")]
     assert made.timeout_seconds == ANSWER_TIME_LIMIT_SECONDS < STALE_PENDING_SECONDS
 
