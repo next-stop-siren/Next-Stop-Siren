@@ -142,6 +142,19 @@ def _error_response(
     return JSONResponse(status_code=status_code, content=body.model_dump(mode="json"))
 
 
+def api_error_body(error: ApiError, trace_id: str) -> ErrorResponse:
+    """상태 코드를 이미 보낸 스트림에서 같은 오류 본문을 이벤트로 보낼 때 쓴다."""
+    return ErrorResponse(error=ErrorDetail(code=error.code, message=error.public_message, trace_id=trace_id))
+
+
+def database_unavailable_body(exc: Exception, trace_id: str) -> ErrorResponse:
+    # 응답과 로그를 같은 trace ID로 연결하며, 예외 원문은 기록하지 않는다.
+    logger.error("Database unavailable, trace_id=%s, error=%s", trace_id, loggable(exc))
+    return ErrorResponse(
+        error=ErrorDetail(code="temporarily_unavailable", message="잠시 후 다시 시도해 주세요.", trace_id=trace_id)
+    )
+
+
 async def api_error_handler(request: Request, exc: Exception) -> JSONResponse:
     if not isinstance(exc, ApiError):
         raise exc
@@ -222,10 +235,8 @@ async def validation_error_handler(request: Request, exc: Exception) -> JSONResp
 
 
 async def database_unavailable_handler(request: Request, exc: Exception) -> JSONResponse:
-    # 응답과 로그를 같은 trace ID로 연결하며, 예외 원문은 기록하지 않는다.
-    trace_id = request_trace_id(request)
-    logger.error("Database unavailable, trace_id=%s, error=%s", trace_id, loggable(exc))
-    return _error_response(503, "temporarily_unavailable", "잠시 후 다시 시도해 주세요.", {}, trace_id=trace_id)
+    body = database_unavailable_body(exc, request_trace_id(request))
+    return JSONResponse(status_code=503, content=body.model_dump(mode="json"))
 
 
 def register_error_handlers(app: FastAPI) -> None:
