@@ -142,22 +142,25 @@ def create_login_session(request: LoginRequest, session: Session, settings: Auth
 
 def cancel_login(result: LoginResult, session: Session, settings: AuthSettings) -> None:
     """쿠키 설정에 실패한 이번 로그인 세션만 취소한다. 기존 사용자와 다른 세션은 보존한다."""
+    cancel_login_refresh_session(int(result.user.id), result.refresh, session, settings)
+
+
+def cancel_login_refresh_session(user_id: int, issued: IssuedToken, session: Session, settings: AuthSettings) -> None:
+    """Cancel one committed login root while preserving its user and other sessions."""
     try:
-        user = find_user_for_update(session, int(result.user.id))
+        user = find_user_for_update(session, user_id)
         if user is None:
             _rollback(session, "compensation_rollback")
             return
-        refresh = find_refresh_session_for_update(
-            session, user.id, create_refresh_digest(result.refresh.token, settings)
-        )
+        refresh = find_refresh_session_for_update(session, user.id, create_refresh_digest(issued.token, settings))
         if refresh is None:
             _rollback(session, "compensation_rollback")
             return
         if (
             refresh.rotated_from_id is not None
             or refresh.revoked_at is not None
-            or refresh.issued_at != result.refresh.issued_at
-            or refresh.expires_at != result.refresh.expires_at
+            or refresh.issued_at != issued.issued_at
+            or refresh.expires_at != issued.expires_at
         ):
             raise LoginUnavailable(failure=FailureDetails(stage="compensation", error_type="LoginStateChanged"))
         delete_refresh_session(session, refresh)
