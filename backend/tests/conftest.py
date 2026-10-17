@@ -22,6 +22,22 @@ from auth_helpers import load_auth_cases
 from db_guard import guarded_live_url
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--run-live", action="store_true", help="실제 Codyssey GPT를 호출하는 격리 스모크 시험도 실행합니다."
+    )
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """A real provider call never runs by default, in CI or by `-m db`."""
+    if config.getoption("--run-live"):
+        return
+    skip = pytest.mark.skip(reason="실제 GPT 호출은 --run-live로만 실행합니다.")
+    for item in items:
+        if "live" in item.keywords:
+            item.add_marker(skip)
+
+
 @pytest.fixture
 def auth_environment() -> dict[str, str]:
     """테스트마다 독립적으로 사용하는 가짜 인증 키와 127.0.0.1 설정."""
