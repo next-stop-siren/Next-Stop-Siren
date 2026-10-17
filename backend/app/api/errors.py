@@ -50,7 +50,17 @@ _VALIDATION_MESSAGES = {
     "json_invalid": "올바른 JSON 본문을 보내 주세요.",
 }
 _LOCATIONS = {"body", "path", "query", "header", "cookie"}
-_PUBLIC_FIELDS = {"email", "password", "limit", "before_id", "after_id", "conversation_id", "content", "request_key"}
+_PUBLIC_FIELDS = {
+    "email",
+    "password",
+    "limit",
+    "before_id",
+    "after_id",
+    "conversation_id",
+    "content",
+    "request_key",
+    "return_to",
+}
 
 
 class ApiError(Exception):

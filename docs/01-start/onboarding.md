@@ -90,6 +90,105 @@ PY
 
 설정 저장 후 `./local.sh dev` 또는 `.\local.ps1 dev`로 실행한다. 이미 실행 중이라면 해당 개발 터미널에서 `Ctrl+C`로 종료한 뒤 다시 실행한다. 앱은 생성 시 인증 설정을 읽으므로 `.env` 저장만으로 실행 중인 서버 설정이 갱신되지 않는다. Swagger는 `http://127.0.0.1:8000/docs`에서 열고 `POST /api/auth/register`의 **Try it out → Execute**로 새로운 테스트 이메일의 가입 `201`을 확인한다. 동일한 로컬 이메일의 재가입은 `409`다.
 
+### 2-2. Google 로그인용 .env 설정
+
+Google 로그인까지 사용할 팀원은 기존 인증 키 4개와 별도로 아래 네 항목을 자신의 `.env`에 준비한다. Google 설정이 없어도 로컬 가입·비밀번호 로그인은 사용할 수 있다.
+
+| 설정 | 준비 방법 |
+| --- | --- |
+| `GOOGLE_CLIENT_ID` | 개발용 Google OAuth client에서 발급받은 ID 입력 |
+| `GOOGLE_CLIENT_SECRET` | 같은 client의 secret 입력 |
+| `GOOGLE_REDIRECT_URI` | 기본 개발 주소 `http://127.0.0.1:8000/api/auth/google/callback` 유지 |
+| `GOOGLE_TRANSACTION_KEY` | 각 팀원이 자신의 컴퓨터에서 독립적인 암호화 키 생성 |
+
+**새 값을 직접 준비하는 것은 ID·secret·트랜잭션 키 세 개다.** redirect URI는 `.env.example`에 기본값이 있다. 다만 이미 존재하는 `.env`에는 새 항목이 자동 추가되지 않으므로, 빠진 항목이 있다면 아래 네 줄을 추가한다. 기존 DB·인증 설정은 유지하고 `.env` 전체를 덮어쓰지 않는다.
+
+```dotenv
+GOOGLE_CLIENT_ID=발급받은_client_ID
+GOOGLE_CLIENT_SECRET=같은_client의_secret
+GOOGLE_REDIRECT_URI=http://127.0.0.1:8000/api/auth/google/callback
+GOOGLE_TRANSACTION_KEY=직접_생성한_Base64_키
+```
+
+#### Google client ID·secret 준비
+
+팀에서 사용하는 개발용 OAuth client가 있으면 담당자에게 ID·secret을 안전한 경로로 전달받고 등록된 callback을 확인한다. 없다면 [Google Cloud Console](https://console.cloud.google.com/)에서 개인 개발용 client를 만든다.
+
+1. 개발용 프로젝트를 선택하거나 생성한다.
+2. Google Auth Platform에서 앱 이름·연락처 등 동의 화면을 설정한다. 테스트 사용자 제한을 사용하는 경우 검사할 팀원 계정을 등록한다.
+3. Clients에서 OAuth client를 만들고 유형은 **Web application**을 선택한다.
+4. **Authorized redirect URIs**에 아래 주소를 등록한다. Authorized JavaScript origins 입력란과 구분한다.
+
+   ```text
+   http://127.0.0.1:8000/api/auth/google/callback
+   ```
+
+5. 발급된 client ID·secret을 `.env`의 같은 이름 항목에 입력한다. ID와 secret은 반드시 같은 client의 값이어야 한다.
+
+등록된 URI·`.env`의 `GOOGLE_REDIRECT_URI`·`AUTH_API_ORIGIN`에 callback 경로를 붙인 값은 정확히 일치해야 한다. 개발에서는 `localhost`, 다른 포트, 끝의 `/`를 섞지 않는다. Google 자격 증명 발급과 redirect 일치 기준은 [공식 OIDC 안내](https://developers.google.com/identity/openid-connect/openid-connect)를 따른다.
+
+#### 트랜잭션 암호화 키 생성
+
+이 키는 Google에서 발급받지 않는다. 아래 명령으로 독립 난수 32바이트를 Base64로 변환하고, 출력된 한 줄을 `.env`의 `GOOGLE_TRANSACTION_KEY` 항목에 넣는다. 기존 `AUTH_*_KEY`를 복사해서 사용하지 않는다. 이미 유효한 키가 있으면 다시 생성하지 않는다.
+
+macOS:
+
+```sh
+backend/.venv/bin/python -c 'import base64,secrets; print("GOOGLE_TRANSACTION_KEY=" + base64.b64encode(secrets.token_bytes(32)).decode("ascii"))'
+```
+
+Windows PowerShell:
+
+```powershell
+& .\backend\.venv\Scripts\python.exe -c 'import base64,secrets; print("GOOGLE_TRANSACTION_KEY=" + base64.b64encode(secrets.token_bytes(32)).decode("ascii"))'
+```
+
+실제 secret·암호화 키는 `.env`에만 보관한다. 명령 출력이나 값이 담긴 파일을 Git·PR·채팅에 올리지 않는다.
+
+#### 값 노출 없이 검증하고 실행
+
+저장소 루트에서 아래 명령을 실행한다. 기존 인증 설정과 Google 설정의 누락·키 형식·callback 일치를 검사하며, Google에 요청하거나 실제 설정값을 출력하지 않는다.
+
+macOS:
+
+```sh
+backend/.venv/bin/python - <<'PY'
+from pathlib import Path
+import sys
+
+sys.path.insert(0, "backend")
+sys.path.insert(0, "backend/tests")
+from app.security.settings import GoogleSettings
+from db_guard import read_settings
+
+GoogleSettings.from_env(read_settings(Path(".env")))
+print("Google settings validated")
+PY
+```
+
+Windows PowerShell:
+
+```powershell
+@'
+from pathlib import Path
+import sys
+
+sys.path.insert(0, "backend")
+sys.path.insert(0, "backend/tests")
+from app.security.settings import GoogleSettings
+from db_guard import read_settings
+
+GoogleSettings.from_env(read_settings(Path(".env")))
+print("Google settings validated")
+'@ | & .\backend\.venv\Scripts\python.exe -
+```
+
+PowerShell 명령은 Windows에서 실제 실행하지 않았다.
+
+`Google settings validated`가 출력되면 설정 형식 검사는 통과한 것이다. 실제 ID·secret의 유효성은 Google 로그인에서 확인한다. `.env`를 저장한 뒤 실행 중인 개발 서버를 해당 터미널의 `Ctrl+C`로 종료하고 `./local.sh dev` 또는 `.\local.ps1 dev`로 다시 실행한다.
+
+브라우저 주소창에서 `http://127.0.0.1:8000/api/auth/google/start`로 이동해 Google 로그인 후 Network의 callback 요청이 **302**, 응답에 refresh·CSRF 쿠키가 있는지 확인한다. 이동한 최종 `/` 페이지의 404와 callback 결과를 구분한다. Swagger의 `/start` Execute는 브라우저 전체 이동을 대신하지 않는다.
+
 ### 3. 화면과 API 실행
 
 첫 터미널에서 `./local.sh dev`를 실행한다. 두 DB의 `SELECT 1 passed`, Vite의 `ready`, API와 UI 주소가 나오면 둘째 터미널에서 확인한다.
@@ -202,6 +301,8 @@ print("Auth settings validated")
 ```
 
 이 절차는 Windows에서 실제 실행하지 않았다. Python 실행 파일이 없으면 `setup` 완료 여부와 현재 디렉터리를 먼저 확인한다.
+
+Google 로그인도 사용할 경우 [Google 로그인용 .env 설정](#2-2-google-로그인용-env-설정)의 client 발급 안내와 PowerShell 키 생성·검증 명령을 이어서 실행한다.
 
 ### 실행
 

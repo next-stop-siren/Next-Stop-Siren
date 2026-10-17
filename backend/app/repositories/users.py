@@ -1,4 +1,4 @@
-"""Local user queries using PostgreSQL's email comparison semantics."""
+"""User queries and inserts for separate local and Google accounts."""
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -29,6 +29,14 @@ def find_local_user_by_email(session: Session, email: str) -> User | None:
 def add_local_user(session: Session, email: str, password_hash: str) -> User:
     """커밋 없이 flush로 ID와 생성 시각을 확보한다."""
     user = User(email=email, password_hash=password_hash)
+    session.add(user)
+    session.flush()
+    return user
+
+
+def add_google_user(session: Session, email: str) -> User:
+    """Add a Google-only user without looking up or modifying local accounts by email."""
+    user = User(email=email, password_hash=None)
     session.add(user)
     session.flush()
     return user

@@ -8,12 +8,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import conversations, me
+from app.api import conversations, google_auth, me
 from app.api.auth import router as auth_router
 from app.api.errors import register_error_handlers
-from app.observability import RegistrationTraceMiddleware
+from app.observability import RegistrationTraceMiddleware, protect_google_callback_logs
 from app.security.login_limits import LoginFailureLimiter
-from app.security.settings import AuthSettings, AuthSettingsError, get_auth_settings
+from app.security.settings import AuthSettings, AuthSettingsError, GoogleSettings, get_auth_settings
 
 
 def health() -> dict[str, str]:
@@ -44,18 +44,26 @@ def ready() -> dict[str, str] | JSONResponse:
     return {"status": "ready"}
 
 
-def create_app(auth_settings: AuthSettings | None = None) -> FastAPI:
+def create_app(auth_settings: AuthSettings | None = None, google_settings: GoogleSettings | None = None) -> FastAPI:
     """앱 생성 시 인증 설정을 고정하며, 잘못된 설정은 인증 요청을 차단한다."""
     # 기존 로그 설정이 없으면 요청·저장 성공의 INFO 기록도 출력한다.
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    protect_google_callback_logs()
     if auth_settings is None:
         try:
             auth_settings = get_auth_settings()
         except AuthSettingsError:
             # 인증 설정이 없어도 기존 상태 확인 경로는 사용할 수 있다.
             auth_settings = None
+    if google_settings is None and auth_settings is not None:
+        try:
+            google_settings = GoogleSettings.from_env(auth_settings=auth_settings)
+        except AuthSettingsError:
+            # Google 설정이 없어도 로컬 가입·로그인과 상태 확인 경로는 유지한다.
+            google_settings = None
     application = FastAPI(title="B7-1 API")
     application.state.auth_settings = auth_settings
+    application.state.google_settings = google_settings
     application.state.login_failure_limiter = LoginFailureLimiter()
     register_error_handlers(application)
     application.add_middleware(RegistrationTraceMiddleware)
@@ -70,6 +78,7 @@ def create_app(auth_settings: AuthSettings | None = None) -> FastAPI:
     application.add_api_route("/api/health", health, methods=["GET"])
     application.add_api_route("/api/ready", ready, methods=["GET"], response_model=None)
     application.include_router(auth_router)
+    application.include_router(google_auth.router)
     application.include_router(me.router)
     application.include_router(conversations.router)
     return application
