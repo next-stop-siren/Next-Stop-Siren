@@ -25,7 +25,7 @@ Windows PowerShell에서는 같은 명령 이름을 `.\local.ps1 frontend-setup`
 
 저장소 루트에서 실행한다. Git과 Docker 엔진·Compose는 팀원이 먼저 준비한다. `setup`은 Node.js/npm, Python, uv를 프로젝트 안에 설치하고 기존 `.env`와 DB 볼륨을 보존한다.
 
-## macOS: 검증된 경로
+## macOS 전체 환경: 설치와 API 확인
 
 ### 1. 도구 준비와 버전 확인
 
@@ -111,9 +111,11 @@ PY
 
 오류가 발생하면 표시된 설정 항목을 확인한다. 키는 빈 값이 아니고 Base64로 해석한 결과가 최소 32바이트여야 하며, 네 키가 서로 달라야 한다. 로컬 API·허용 Origin·쿠키 설정도 아래 실행 안내와 일치해야 한다.
 
-설정 저장 후 `./local.sh dev` 또는 `.\local.ps1 dev`로 실행한다. 이미 실행 중이라면 해당 개발 터미널에서 `Ctrl+C`로 종료한 뒤 다시 실행한다. 앱은 생성 시 인증 설정을 읽으므로 `.env` 저장만으로 실행 중인 서버 설정이 갱신되지 않는다. Swagger는 `http://127.0.0.1:8000/docs`에서 열고 `POST /api/auth/register`의 **Try it out → Execute**로 새로운 테스트 이메일의 가입 `201`을 확인한다. 동일한 로컬 이메일의 재가입은 `409`다.
+설정 검증을 마치면 아래 `db-init` → `dev` → API 확인 순서로 진행한다. 앱은 생성 시 인증 설정을 읽으므로 기존 `dev`가 실행 중이면 해당 터미널에서 `Ctrl+C`로 종료한다. `.env` 저장만으로 실행 중인 서버 설정은 갱신되지 않는다.
 
 ### 2-2. Google 로그인용 .env 설정
+
+**선택 절차다.** 로컬 가입·로그인과 모의 채팅만 확인하려면 이 절을 건너뛰고 [개발 DB 생성](#2-3-개발-db의-누락-테이블-생성)으로 이동한다.
 
 Google 로그인까지 사용할 팀원은 기존 인증 키 4개와 별도로 아래 네 항목을 자신의 `.env`에 준비한다. Google 설정이 없어도 로컬 가입·비밀번호 로그인은 사용할 수 있다.
 
@@ -208,9 +210,21 @@ print("Google settings validated")
 
 PowerShell 명령은 Windows에서 실제 실행하지 않았다.
 
-`Google settings validated`가 출력되면 설정 형식 검사는 통과한 것이다. 실제 ID·secret의 유효성은 Google 로그인에서 확인한다. `.env`를 저장한 뒤 실행 중인 개발 서버를 해당 터미널의 `Ctrl+C`로 종료하고 `./local.sh dev` 또는 `.\local.ps1 dev`로 다시 실행한다.
+`Google settings validated`가 출력되면 설정 형식 검사는 통과한 것이다. 실제 ID·secret의 유효성은 Google 로그인에서 확인한다. `.env`를 저장한 뒤 [개발 DB 생성](#2-3-개발-db의-누락-테이블-생성)과 `dev`까지 마친 상태에서 아래 선택 로그인을 확인한다. 이미 실행 중인 서버는 해당 터미널의 `Ctrl+C`로 종료한 뒤 다시 실행한다.
 
-브라우저 주소창에서 `http://127.0.0.1:8000/api/auth/google/start`로 이동해 Google 로그인 후 Network의 callback 요청이 **302**, 응답에 refresh·CSRF 쿠키가 있는지 확인한다. 이동한 최종 `/` 페이지의 404와 callback 결과를 구분한다. Swagger의 `/start` Execute는 브라우저 전체 이동을 대신하지 않는다.
+브라우저 주소창에서 `http://127.0.0.1:8000/api/auth/google/start`로 이동해 Google 로그인 후 Network의 callback 요청이 **302**, 응답에 refresh·CSRF 쿠키가 있는지 확인한다. 현재 상대 redirect의 최종 `/`는 API `:8000`에 남으므로 그 페이지의 404와 callback 성공을 구분한다. 프런트엔드 `:5173` 복귀와 화면 세션 완료는 아직 미구현이다([#17](https://github.com/next-stop-siren/Next-Stop-Siren/issues/17), [#19](https://github.com/next-stop-siren/Next-Stop-Siren/issues/19)). Swagger의 `/start` Execute는 브라우저 전체 이동을 대신하지 않는다.
+
+### 2-3. 개발 DB의 누락 테이블 생성
+
+`setup`이 시작한 개발 DB를 대상으로 저장소 루트에서 실행한다. 인증 키 검증을 마친 뒤 진행하며 Google·AI 설정은 일반 모의 대화에 필요하지 않다.
+
+```sh
+./local.sh db-init
+```
+
+Windows는 `.\local.ps1 db-init`이다. 현재 등록된 `users`, `auth_identities`, `refresh_sessions`, `conversations`, `messages` 5개 테이블을 확인하고 없는 테이블만 만든다. 출력의 개수는 이번에 새로 만든 수가 아니라 등록 모델 수다. `setup`은 이 작업을 대신하지 않는다.
+
+`create_all()`은 기존 테이블의 컬럼·제약을 바꾸지 않으며 데이터도 삭제하지 않는다. 오래된 스키마가 있으면 `db-init` 성공만으로 호환성을 보장할 수 없다. 삭제·재생성으로 해결하지 말고 백업·적용·복구 계획을 먼저 검토한다. 마이그레이션과 운영 준비 상태 검사는 별도 후속 작업이다.
 
 ### 3. 화면과 API 실행
 
@@ -223,9 +237,56 @@ curl -f http://127.0.0.1:5173/api/ready    # {"status":"ready"}
 curl -f http://127.0.0.1:8000/api/ready    # {"status":"ready"}
 ```
 
-모두 HTTP 200이어야 한다. 첫 터미널에서 `Ctrl+C`로 `dev`를 끝낸다. 이 명령이 시작한 프로세스만 종료한다.
+모두 HTTP 200이어야 한다. `health`는 API 프로세스 응답, `ready`는 DB의 `SELECT 1` 성공만 뜻한다. 인증 키·Google 설정·5개 테이블의 존재와 스키마 호환성을 확인하지 않으므로 아래 실제 API 절차도 필요하다. 현재 화면은 비회원 소개와 인증 모달이며 API 인증·회원 채팅 연결은 아직 없다. 아래 실제 API 확인까지 마친 뒤 첫 터미널에서 `Ctrl+C`로 `dev`가 시작한 프로세스를 종료한다.
 
 인증 개발은 `http://127.0.0.1`을 기준으로 한다. `.env`의 `AUTH_API_ORIGIN`은 `http://127.0.0.1:8000`, `AUTH_ALLOWED_ORIGINS`는 `http://127.0.0.1:5173,http://127.0.0.1:8000`으로 설정한다. 화면은 5173, Swagger UI는 8000의 `/docs`에서 제공하므로 두 실제 Origin을 모두 허용하고 `localhost`는 제외한다. Origin에는 `/docs` 경로를 포함하지 않는다. `.env` 변경은 실행 중인 앱 설정에 적용되지 않으므로 직접 관리하는 API 개발 프로세스를 재시작한다. Google 로그인 callback은 `http://127.0.0.1:8000/api/auth/google/callback`을 등록한다.
+
+### 3-1. Swagger로 가입·로그인과 모의 대화 확인
+
+개발용 계정·대화가 DB에 저장되는 수동 확인 절차다. 본인 로컬 개발 DB에서 가짜 이메일·합성 질문만 사용한다. 자동 테스트 DB와 구분하고, 응답의 토큰·쿠키·비밀번호를 공유하지 않는다. 이번 문서 검토에서 이 절차를 실제 실행한 것은 아니다.
+
+`dev`를 켜 둔 채 [Swagger UI](http://127.0.0.1:8000/docs)를 연다. `localhost`나 저장한 HTML 파일을 사용하지 않는다. 가입·로그인 POST의 브라우저 Origin은 `http://127.0.0.1:8000`이며 `.env` 허용 목록과 일치해야 한다. 403이면 Network의 실제 Origin과 설정을 확인한다.
+
+| 순서 | Swagger에서 실행 | 기대 결과 |
+| --- | --- | --- |
+| 1 가입 | `POST /api/auth/register` → Try it out → 아래 가입 본문 | 새 로컬 이메일 `201`; 같은 이메일 재가입 `409 local_email_exists` |
+| 2 로그인 | `POST /api/auth/login`, 같은 이메일·비밀번호 | `200`, `user`·`access_token`·`csrf_token`; 브라우저에 refresh·CSRF 쿠키 설정 |
+| 3 인증 | Authorize → AccessBearer에 access 문자열만 입력 → `GET /api/me` | Bearer 접두사 자동 추가, 같은 사용자 정보와 `200` |
+| 4 대화 생성 | `POST /api/conversations`, 본문 `{}` | `201`, `conversation.id` 기록 |
+| 5 대화 확인 | `GET /api/conversations` | 자신의 대화가 목록에 표시 |
+| 6 질문 | `POST /api/conversations/{conversation_id}/messages`, 아래 질문 본문 | `201`, 질문과 `completed` 답변 `모의 답변입니다.` |
+| 7 저장 확인 | `GET /api/conversations/{conversation_id}/messages` | 같은 질문·답변 ID와 내용 재조회 |
+
+가입·로그인 본문 예시다. 아직 쓰지 않은 가짜 이메일로 바꾼다. 비밀번호는 12~128자·UTF-8 1024바이트 이하다.
+
+```json
+{"email":"local-demo@example.test","password":"local-demo-password-2026"}
+```
+
+질문 본문 예시다. 새 질문에는 새 `request_key`를 사용한다.
+
+```json
+{"content":"교통법 안내 예시를 보여 주세요.","request_key":"local-demo-question-1"}
+```
+
+ID는 숫자로 변환하지 않고 문자열로 유지한다. Swagger 페이지를 새로고침한 뒤 필요하면 로그인·Authorize를 다시 하고 **같은 대화 ID**로 조회한다. 같은 본문·키 재전송은 기존 쌍을 `200`으로 반환하며 새 답변을 만들지 않는다. 없는 대화·타인 대화는 동일한 `404`다.
+
+일반 API는 `MockProvider`를 사용하므로 Google·Codyssey 키나 실제 AI 호출이 필요 없다. 실제 2인 소유권·브라우저 통합 검사는 [품질 기준](../03-development/quality.md)에 따라 별도 수행한다.
+
+#### 쿠키 세션 확인
+
+같은 Swagger 브라우저·API 주소를 유지한다. HttpOnly 쿠키는 브라우저가 관리하며 값을 복사하거나 JavaScript로 읽지 않는다. Bearer만으로 refresh·logout을 수행할 수 없다.
+
+| 순서 | 요청 | 입력·기대 결과 |
+| --- | --- | --- |
+| 1 | `GET /api/auth/csrf` | 현재 쿠키에 맞는 `csrf_token` 반환 |
+| 2 | `POST /api/auth/refresh` | X-CSRF-Token에 위 값을 입력, 본문 없음; 브라우저가 쿠키·Origin 전송, 새 access·CSRF와 교체 쿠키 반환 |
+| 3 | Authorize 갱신 | 새 access 사용; 다음 세션 변경에는 새 CSRF 사용 |
+| 4 | `POST /api/auth/logout` | 최신 X-CSRF-Token과 쿠키·Origin, 본문 없음; 성공 `204` |
+
+access는 15분 유효하고 보호 API는 쿠키만으로 인증되지 않는다. logout도 이미 발급된 access를 즉시 무효화하지 않으므로 남은 유효 시간 안에는 통과할 수 있다.
+
+프런트엔드 `:5173`의 로그인 모달·Google 버튼·채팅 화면에 위 절차가 연결됐다는 뜻은 아니다. Google은 [선택 설정](#2-2-google-로그인용-env-설정)을 준비한 뒤 브라우저 주소창 이동으로 시작한다. 현재 `:8000` callback의 상대 redirect는 `:8000`에 남는다. `:5173` 복귀와 화면의 CSRF·refresh 완료 연결은 아직 미구현이다([#17](https://github.com/next-stop-siren/Next-Stop-Siren/issues/17), [#19](https://github.com/next-stop-siren/Next-Stop-Siren/issues/19)).
 
 ### 4. 테스트와 품질 검사
 
@@ -237,13 +298,13 @@ curl -f http://127.0.0.1:8000/api/ready    # {"status":"ready"}
 export TEST_DATABASE_URL="$(backend/.venv/bin/python -c 'import sys; from pathlib import Path; from urllib.parse import quote; sys.path.insert(0, "backend/tests"); from db_guard import read_settings; s=read_settings(Path(".env")); print("postgresql://"+quote(s["TEST_DB_USER"],safe="")+":"+quote(s["TEST_DB_PASSWORD"],safe="")+"@127.0.0.1:55433/"+quote(s["TEST_DB_NAME"],safe=""))')"
 ./local.sh test-unit
 ./local.sh test-db
-./local.sh db-init-test  # 등록된 앱 모델만; 현재는 0개
+./local.sh db-init-test  # 보호된 테스트 DB에 등록된 5개 제품 테이블 확인·누락 생성
 ./local.sh test-e2e
 ./local.sh quality
 ./local.sh build
 ```
 
-첫 실패에서는 다음 명령으로 넘어가지 않는다. 기대 결과는 백엔드 단위 검사·프런트엔드 2개, 테스트 DB의 `SELECT 1` 및 ORM 롤백 검사, Chromium E2E 1개, 정적 검사 정상 종료와 Vite 빌드 성공이다. 전체 테스트 묶음은 `./local.sh test`로도 실행할 수 있다.
+첫 실패에서는 다음 명령으로 넘어가지 않는다. 현재 백엔드에는 인증·세션·대화·메시지·GPT 대체 서버 검사가 있고, 프런트엔드에는 비회원·모달 단위 검사와 브라우저 키보드 검사가 있다. Chromium readiness 검사는 페이지 안에서 `/api/ready`를 fetch하고 503을 모의하며 실제 로그인→채팅 E2E를 대신하지 않는다. 각 도구가 보고한 실제 실행·skip·실패 수를 기록한다. 전체 테스트 묶음은 `./local.sh test`로도 실행할 수 있다.
 
 ### 5. 정리와 중지
 
@@ -256,7 +317,7 @@ export TEST_DATABASE_URL="$(backend/.venv/bin/python -c 'import sys; from pathli
 
 ### macOS 검증 범위
 
-이 Mac에서 프로젝트 전용 언어 도구 설치와 재실행, 잠금 설치·DB 준비·기본 검사를 확인했다. Docker와 Git은 이미 준비된 호스트였으므로 새 OS 전체 설치를 검증한 기록은 아니다.
+과거 이 Mac에서 프로젝트 전용 언어 도구 설치와 재실행, 잠금 설치·DB 준비·기본 검사를 확인한 기록이 있다. 이번 문서 검토에서는 소스의 라우트·스키마·모델 선언을 대조했으며 실제 개발 DB 초기화·가입·Google·AI 호출을 재실행하지 않았다. Docker와 Git은 이미 준비된 호스트였으므로 새 OS 전체 설치를 검증한 기록은 아니다.
 
 ## Windows PowerShell: **NOT RUN**
 
@@ -317,9 +378,10 @@ print("Auth settings validated")
 '@ | & .\backend\.venv\Scripts\python.exe -
 ```
 
-5. 개발 서버를 실행한다. 이미 실행 중이면 해당 터미널에서 `Ctrl+C`로 종료한 후 다시 실행한다. 브라우저에서 `http://127.0.0.1:8000/docs`를 열고 가입 API의 **Try it out → Execute**로 새 테스트 이메일의 `201`을 확인한다.
+5. 개발 DB의 누락 테이블을 만든 뒤 서버를 실행한다. 기존 테이블을 마이그레이션하는 명령은 아니다. 이미 실행 중인 `dev`는 해당 터미널에서 `Ctrl+C`로 종료한다. 이어서 [Swagger API 확인](#3-1-swagger로-가입로그인과-모의-대화-확인)을 따른다.
 
 ```powershell
+.\local.ps1 db-init
 .\local.ps1 dev
 ```
 

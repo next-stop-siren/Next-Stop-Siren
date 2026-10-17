@@ -1,6 +1,6 @@
 # 인증 구현 기준
 
-이 문서는 승인된 D1 A·B·C 정책의 팀 구현 기준이다. 앱 JWT는 PyJWT, Google OAuth/OIDC는 Authlib, 비밀번호 해시는 `argon2-cffi`를 선택했다. 이 라이브러리는 아직 프로젝트 의존성에 추가되지 않았다. [기술 구성](../01-start/stack.md)에 현재 상태를 정리했다. 경로별 요청·응답은 [공통 API 형식](api.md), 저장 제약은 [DB 설계](database.md)를 따른다. 현재 앱의 인증 경로는 아직 구현되지 않았으며 운영 Origin·키·Google 자격 증명과 공유 로그인 제한 방식은 배포 전에 정한다.
+이 문서는 승인된 D1 A·B·C 정책의 팀 구현 기준이다. 앱 JWT는 PyJWT, Google OAuth/OIDC는 Authlib, 비밀번호 해시는 `argon2-cffi`를 선택했다. 세 라이브러리는 현재 잠금 의존성에 포함된다. [기술 구성](../01-start/stack.md)에 현재 상태를 정리했다. 경로별 요청·응답은 [공통 API 형식](api.md), 저장 제약은 [DB 설계](database.md)를 따른다. 로컬·Google 인증, Bearer 현재 사용자, CSRF·refresh·logout 경로와 관련 검사가 구현되어 있다. 화면 연결과 실제 브라우저 통합·운영 검증은 별도다. 운영 Origin·키·Google 자격 증명과 공유 로그인 제한 방식은 배포 전에 정한다.
 
 여기서 **확인된 사용자 정보(principal)**는 서버가 로그인 자격을 검사해 얻은 사용자 ID다. **계보(lineage)**는 한 번의 로그인에서 시작해 refresh 토큰을 교체하며 이어진 세션들의 연결이다.
 
@@ -45,7 +45,7 @@
 
 1. 화면은 서버의 `/api/auth/google/start`로 top-level 이동한다. 서버는 요청과 callback을 연결하는 `state`, ID 토큰을 해당 로그인에 묶는 `nonce`, code 교환을 보호하는 PKCE(S256)를 만든다. 서버는 state·nonce·PKCE verifier를 암호화·무결성 보호된 짧은 수명의 앱 호스트 전용 트랜잭션 쿠키에 담아 설정한다. 그런 다음 브라우저를 Google로 이동시킨다.
 2. `/api/auth/google/callback`은 일회용 code를 교환하고 state·nonce·verifier, JWKS 서명·허용 알고리즘·`iss`·client `aud`·`exp`·`iat`·`nonce`·`email_verified=true`·필수 이메일을 검증한다. 검증된 `(issuer, subject)`로만 사용자를 찾는다.
-3. 성공 시 서버는 자체 refresh·CSRF 쿠키를 설정하고 허용 목록의 상대 경로로 이동한다. 화면은 `/csrf`와 `/refresh`를 호출해 메모리 access를 얻는다. redirect URL·쿠키에 access를 넣지 않는다.
+3. 성공 시 서버는 자체 refresh·CSRF 쿠키를 설정하고 허용 목록의 상대 경로로 이동한다. 화면은 `/csrf`와 `/refresh`를 호출해 메모리 access를 얻어야 한다. 현재 callback의 상대 경로는 API `:8000`에 남으므로 프런트엔드 `:5173` 복귀와 세션 완료 연결은 아직 미구현이다([#17](https://github.com/next-stop-siren/Next-Stop-Siren/issues/17), [#19](https://github.com/next-stop-siren/Next-Stop-Siren/issues/19)). Swagger Execute 대신 브라우저 전체 이동으로 시작한다. redirect URL·쿠키에 access를 넣지 않는다.
 
 트랜잭션 쿠키의 삭제만으로 callback 단일 사용을 보장하지 않는다. 제공자의 code 1회 교환과 state/nonce 검증에 의존한다. 중복 callback 또는 code 교환 실패에는 세션을 발급하지 않는다.
 
