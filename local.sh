@@ -1,7 +1,10 @@
 #!/bin/sh
 set -eu
 cd "$(dirname "$0")"
-if [ "${1:-}" = setup ]; then ./bootstrap.sh; fi
+case "${1:-}" in
+  setup) ./bootstrap.sh ;;
+  frontend-setup) ./bootstrap.sh --frontend ;;
+esac
 case $(uname -m) in arm64) arch=arm64 ;; x86_64) arch=x64 ;; *) arch=unsupported ;; esac
 tools_dir="$(pwd -P)/.cache/host-tools"
 if [ -z "${B71_NODE:-}" ] && [ -x "$tools_dir/node-24.21.0-darwin-$arch/bin/node" ]; then
@@ -10,6 +13,12 @@ fi
 if [ -z "${B71_NPM:-}" ] && [ -n "${B71_NODE:-}" ] && [ -f "$(dirname "$B71_NODE")/npm" ]; then
   B71_NPM="$(dirname "$B71_NODE")/npm"; export B71_NPM
 fi
+# Route frontend commands before resolving any Python or backend tools.
+case "${1:-}" in
+  frontend-*)
+    node_command=${B71_NODE:-node}
+    exec "$node_command" scripts/frontend.mjs "$@" ;;
+esac
 if [ -z "${B71_UV:-}" ] && [ -x "$tools_dir/uv-0.11.19-darwin-$arch/uv" ]; then
   B71_UV="$tools_dir/uv-0.11.19-darwin-$arch/uv"; export B71_UV
 fi

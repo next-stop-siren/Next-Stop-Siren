@@ -1,5 +1,27 @@
 # Next-Stop-Siren
 
+## 프런트엔드만 준비하고 실행하기
+
+화면 작업에는 Git과 Node.js/npm만 필요하다. macOS는 저장소 루트에서 다음을 실행한다.
+
+```sh
+./local.sh frontend-setup
+./local.sh frontend-dev
+# 별도 터미널에서
+./local.sh frontend-check
+./local.sh frontend-test
+./local.sh frontend-build
+```
+
+Windows PowerShell에서는 같은 명령 이름을 `.\local.ps1 frontend-setup`, `.\local.ps1 frontend-dev`, `.\local.ps1 frontend-check`, `.\local.ps1 frontend-test`, `.\local.ps1 frontend-build`로 실행한다.
+
+`frontend-setup`은 고정 Node.js 24.21.0/npm 11.19.0을 프로젝트 캐시에 설치·검증하고 `npm ci`만 실행한다. Python·uv·백엔드·Docker·`.env`·인증 키 없이 실행하며 Playwright 브라우저는 설치하지 않는다. `B71_NODE`/`B71_NPM`으로 지정한 도구도 실행 버전이 일치해야 한다. `frontend-check`는 Biome 포맷·린트·타입, `frontend-test`는 프런트엔드 단위 검사, `frontend-build`는 정적 빌드를 수행한다.
+
+`frontend-dev`는 http://127.0.0.1:5173 에서 실행하며 `Ctrl+C`로 이 명령이 시작한 화면 프로세스를 종료한다. 포트가 사용 중이면 다른 포트로 넘어가지 않고 실패한다. 기존 프로세스의 소유자를 확인해 수동으로 중지한다. `stop`은 DB용 명령이며 화면 종료 명령이 아니다.
+
+현재 UI의 정적 예시·임시 상태와 단위 검사의 mock은 화면 개발용이다. 이 경로는 API 서버나 실제 로그인·저장·Google 연동을 제공하지 않는다. `/api` 요청은 기존처럼 127.0.0.1:8000으로 전달되므로 API가 없으면 실패한다. 실제 API·DB 통합은 아래 전체 `setup`/`dev` 환경에서 검증한다.
+
+
 Next-Stop-Siren은 사용자 질문에 답하는 챗봇을 만들기 위한 프로젝트입니다. 현재 구현은 화면에서 API와 PostgreSQL 연결 상태를 확인하는 준비 단계입니다. 로그인, 채팅, AI 호출은 아직 구현되지 않았습니다.
 
 제품 범위와 향후 계획은 [서비스 범위](docs/01-start/service-scope.md), [기술 구성](docs/01-start/stack.md), [API 기준](docs/04-reference/api.md), [DB 설계](docs/04-reference/database.md), [인증 기준](docs/04-reference/authentication.md), [S11 GPT 기준](docs/04-reference/ai.md)을 참고하세요. 팀 작업은 [처음 맡을 작업과 인계](docs/02-team/team-handoff.md), 실행 세부사항은 [온보딩](docs/01-start/onboarding.md)과 [품질·테스트 지침](docs/03-development/quality.md)에 있습니다.
@@ -10,7 +32,7 @@ Next-Stop-Siren은 사용자 질문에 답하는 챗봇을 만들기 위한 프�
 
 [문서 지도](docs/README.md)에서 시작하세요. 실행은 [온보딩](docs/01-start/onboarding.md), 담당별 작업은 [팀 인계](docs/02-team/team-handoff.md), API·DB·인증 정책은 [참조 문서](docs/README.md)를 확인하세요.
 
-## 빠른 시작
+## 전체 API·DB 환경 빠른 시작
 
 공개 저장소 복제에는 GitHub 인증이 필요하지 않습니다. 변경 사항을 원격 저장소에 올리려면 별도 쓰기 권한이 필요합니다. Git, 실행 중인 Docker 엔진 및 Compose는 먼저 준비하세요. `setup`은 Node.js·npm·Python·uv를 프로젝트 캐시에 설치하거나 재사용하고, 잠금 파일 기준으로 React/FastAPI 의존성을 설치합니다. PostgreSQL은 Compose로 실행합니다. 화면과 API는 호스트에서 실행합니다.
 
@@ -84,3 +106,5 @@ Windows 전체 환경 검사는 저장소 루트에서 `.\windows-check.ps1`을 
 ## 확인 범위
 
 macOS Colima 환경에서 프로젝트 도구 설치·재사용, 잠금 의존성 설치, DB 준비와 기본 검사를 확인했습니다. Git과 Docker는 이미 준비된 호스트였습니다. Windows PowerShell의 실제 실행은 **NOT RUN**입니다. [온보딩 문서](docs/01-start/onboarding.md)에서 확인된 조건과 Windows 체크 결과를 확인하세요.
+
+Compose는 항상 `b7-1`과 현재 checkout의 루트·환경·파일을 명시합니다. 기존 다른 이름의 볼륨·컨테이너는 자동 이전·삭제하지 않습니다. 포트 충돌이나 다른 checkout 소유권 오류는 [기존 볼륨 전환 안내](docs/01-start/onboarding.md#compose-프로젝트-식별과-기존-볼륨)에 따라 확인하세요.

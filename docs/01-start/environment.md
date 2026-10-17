@@ -11,6 +11,8 @@
 - **채택 기준:** Node.js 24.21.0 LTS와 함께 제공되는 npm 11.19.0
 - **현재 잠금 파일:** `frontend/package-lock.json`
 
+프런트엔드만 작업할 때는 `frontend-setup`/`frontend-dev`와 `frontend-check`/`frontend-test`/`frontend-build`를 사용한다. 이 경로는 Node.js/npm만 준비하며 아래 Python·uv·PostgreSQL·Docker, `.env`와 인증 키는 요구하지 않는다. Playwright 브라우저도 설치하지 않는다. 전체 API 연결은 별도 `setup`/`dev`가 필요하다. 명령 예시는 [온보딩](onboarding.md#프런트엔드만-준비하고-실행하기)에 있다.
+
 ### Python·uv
 
 - **채택 기준:** Python 3.13.15 안정판과 uv 0.11.19
@@ -21,7 +23,7 @@
 - **채택 기준:** 지원 중인 17.11 안정판
 - **현재 구성:** `compose.yaml`의 개발·테스트 DB 서비스
 
-macOS 터미널과 Windows PowerShell에서 Node.js, npm, Python, uv, Docker/Compose, PostgreSQL 서버의 실제 버전을 출력해 기록한다. 설치된 버전이 저장소의 고정 버전과 다르면 설치를 멈추고 안내에 맞춘다.
+전체 환경에서는 macOS 터미널과 Windows PowerShell에서 Node.js, npm, Python, uv, Docker/Compose, PostgreSQL 서버의 실제 버전을 출력해 기록한다. 설치된 버전이 저장소의 고정 버전과 다르면 설치를 멈추고 안내에 맞춘다.
 
 npm은 잠금 파일을 따르는 깨끗한 설치, uv는 잠금 파일의 변경을 막는 동기화를 기본으로 한다.
 

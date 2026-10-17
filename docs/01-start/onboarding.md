@@ -1,5 +1,28 @@
 # 팀원 로컬 실행 체크리스트
 
+## 프런트엔드만 준비하고 실행하기
+
+화면 작업에는 Git과 Node.js/npm만 필요하다. macOS는 저장소 루트에서 다음을 실행한다.
+
+```sh
+./local.sh frontend-setup
+./local.sh frontend-dev
+# 별도 터미널에서
+./local.sh frontend-check
+./local.sh frontend-test
+./local.sh frontend-build
+```
+
+Windows PowerShell에서는 같은 명령 이름을 `.\local.ps1 frontend-setup`, `.\local.ps1 frontend-dev`, `.\local.ps1 frontend-check`, `.\local.ps1 frontend-test`, `.\local.ps1 frontend-build`로 실행한다.
+
+`frontend-setup`은 고정 Node.js 24.21.0/npm 11.19.0을 프로젝트 캐시에 설치·검증하고 `npm ci`만 실행한다. Python·uv·백엔드·Docker·`.env`·인증 키 없이 실행하며 Playwright 브라우저는 설치하지 않는다. `B71_NODE`/`B71_NPM`으로 지정한 도구도 실행 버전이 일치해야 한다. `frontend-check`는 Biome 포맷·린트·타입, `frontend-test`는 프런트엔드 단위 검사, `frontend-build`는 정적 빌드를 수행한다.
+
+`frontend-dev`는 http://127.0.0.1:5173 에서 실행하며 `Ctrl+C`로 이 명령이 시작한 화면 프로세스를 종료한다. 포트가 사용 중이면 다른 포트로 넘어가지 않고 실패한다. 기존 프로세스의 소유자를 확인해 수동으로 중지한다. `stop`은 DB용 명령이며 화면 종료 명령이 아니다.
+
+현재 UI의 정적 예시·임시 상태와 단위 검사의 mock은 화면 개발용이다. 이 경로는 API 서버나 실제 로그인·저장·Google 연동을 제공하지 않는다. `/api` 요청은 기존처럼 127.0.0.1:8000으로 전달되므로 API가 없으면 실패한다. 실제 API·DB 통합은 아래 전체 `setup`/`dev` 환경에서 검증한다.
+
+## 전체 환경(API·DB 연동)
+
 저장소 루트에서 실행한다. Git과 Docker 엔진·Compose는 팀원이 먼저 준비한다. `setup`은 Node.js/npm, Python, uv를 프로젝트 안에 설치하고 기존 `.env`와 DB 볼륨을 보존한다.
 
 ## macOS: 검증된 경로
@@ -330,6 +353,25 @@ Windows 팀원의 실제 실행 결과는 아직 **NOT RUN**이다. macOS 모의
 
 - 버전 오류: 고정 버전의 실행 파일과 `B71_*` 경로를 확인한다.
 - Docker 오류: daemon, Compose, 현재 컨텍스트를 확인한다. Colima에서 `docker-credential-osxkeychain`이 없다는 오류가 나오면 Docker CLI의 자격 증명 도우미 설정을 확인한다. 기존 설정이 `osxkeychain`을 지정한다면 공식 Homebrew `docker-credential-helper` 패키지 설치를 검토한다. 이 Mac에서는 설치 후 공개 PostgreSQL 이미지와 `./local.sh setup`을 확인했으며 전역 Docker 설정은 바꾸지 않았다.
-- DB 준비 실패: `docker compose ps --all`로 이 프로젝트 서비스 상태를 확인한다. 복구 지시 없이 `down -v`를 실행하지 않는다.
+- DB 준비 실패: [Compose 상태 확인 명령](#compose-프로젝트-식별과-기존-볼륨)로 이 프로젝트 서비스 상태를 확인한다. 복구 지시 없이 `down -v`를 실행하지 않는다.
 - DB URL 거부: `.env`의 전용 `TEST_DB_*`에서 다시 URL을 만들고 개발 DB 주소를 사용하지 않는다.
 - E2E 포트 오류: 8000·5173 포트 사용 여부를 확인한다. 검증 Mac의 첫 시도에서 원인 미상의 포트 오류가 한 번 있었고, 점유 프로세스가 보이지 않은 뒤 재시도에서 통과했다.
+
+## Compose 프로젝트 식별과 기존 볼륨
+
+모든 로컬 Compose 호출은 프로젝트 `b7-1`, 현재 저장소의 정확한 루트, 루트 `.env`, 루트 `compose.yaml`을 명시한다. 개발·테스트 볼륨은 각각 `b7-1_db-dev-data`, `b7-1_db-test-data`다. `setup`/`dev`/`stop`은 기존 같은 프로젝트 컨테이너의 checkout 경로와 Compose 파일 label을 확인하고 다른 checkout 소유이면 변경 전에 거부한다. 테스트 DB·초기화의 기존 대상·소유권 보호도 유지한다.
+
+이전 기본 프로젝트 이름으로 만든 컨테이너·볼륨은 자동 이동·삭제하지 않는다. 새 이름의 빈 볼륨은 이전 데이터가 사라졌다는 뜻이 아니다. 이전 환경이 55432/55433 포트를 사용 중이면 새 시작이 실패할 수 있다. 기존 컨테이너 label, 프로젝트 이름, 포트, 볼륨과 필요한 데이터를 먼저 확인하고 소유자와 백업·전환 계획을 정한다. 다른 환경을 임의로 중지하거나 `down -v`, 볼륨 삭제, 이름 변경으로 해결하지 않는다. 기존 데이터 이전은 이 준비 절차의 범위 밖이다.
+
+수동 상태 확인도 저장소 루트에서 정확한 대상을 지정한다.
+
+```sh
+docker compose --project-directory "$PWD" --env-file "$PWD/.env" -f "$PWD/compose.yaml" -p b7-1 ps --all
+```
+
+PowerShell에서는 `$PWD` 대신 `$PSScriptRoot`가 아닌 현재 저장소 절대 경로를 변수로 지정한다.
+
+```powershell
+$repo = (Get-Location).Path
+docker compose --project-directory $repo --env-file "$repo/.env" -f "$repo/compose.yaml" -p b7-1 ps --all
+```

@@ -1,11 +1,18 @@
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 if ($args.Count -gt 0 -and $args[0] -eq 'setup') { & (Join-Path $PSScriptRoot 'bootstrap.ps1') }
+if ($args.Count -gt 0 -and $args[0] -eq 'frontend-setup') { & (Join-Path $PSScriptRoot 'bootstrap.ps1') -FrontendOnly }
 $tools = Join-Path $PSScriptRoot '.cache/host-tools'
 $nodeDir = Join-Path $tools 'node-24.21.0-win-x64'
 if (-not $env:B71_NODE -and (Test-Path (Join-Path $nodeDir 'node.exe'))) { $env:B71_NODE = Join-Path $nodeDir 'node.exe' }
 if (-not $env:B71_NPM -and $env:B71_NODE -and (Test-Path (Join-Path (Split-Path $env:B71_NODE) 'npm.cmd'))) {
     $env:B71_NPM = Join-Path (Split-Path $env:B71_NODE) 'npm.cmd'
+}
+# Route frontend commands before resolving Python or backend tools.
+if ($args.Count -gt 0 -and $args[0] -like 'frontend-*') {
+    $nodeCommand = if ($env:B71_NODE) { $env:B71_NODE } else { 'node' }
+    & $nodeCommand scripts/frontend.mjs @args
+    exit $LASTEXITCODE
 }
 if (-not $env:B71_PYTHON -and (Test-Path (Join-Path $tools 'python-3.13.15-win-x64/python/python.exe'))) {
     $env:B71_PYTHON = Join-Path $tools 'python-3.13.15-win-x64/python/python.exe'
