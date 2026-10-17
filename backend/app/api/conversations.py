@@ -1,6 +1,6 @@
 """Create, list and read the signed-in user's own conversations, and send questions to them."""
 
-from collections.abc import AsyncIterator, Callable, Generator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AbstractContextManager
 from typing import Annotated, Protocol
 
@@ -38,7 +38,6 @@ from app.api.schemas import (
 )
 from app.db import get_session, get_session_factory
 from app.integrations.provider import AnswerProvider, get_provider
-from app.models.conversation import Message
 from app.observability import request_trace_id
 from app.repositories import conversations as repository
 from app.services import chat
@@ -155,7 +154,7 @@ def sse(event: str, data: BaseModel) -> str:
     return f"event: {event}\ndata: {data.model_dump_json()}\n\n"
 
 
-def abandon(events: Generator[str | Message], trace_id: str) -> None:
+def abandon(events: chat.AnswerStream, trace_id: str) -> None:
     """End a stream nobody reads any more; the service stores an unfinished answer as interrupted.
 
     If that cannot be stored, the answer stays pending and the next send recovers it.
@@ -167,16 +166,17 @@ def abandon(events: Generator[str | Message], trace_id: str) -> None:
 
 
 async def answer_events(
-    opening: str, events: Generator[str | Message], question: MessageOut, trace_id: str
+    opening: str, events: chat.AnswerStream, question: MessageOut, trace_id: str
 ) -> AsyncIterator[str]:
     """The response body: `start`, a `delta` per piece, then `done` or `error`.
 
     `done` carries the answer as stored, so it is sent only after the commit. The status
     code has been sent by then, so an ending that the JSON route answers with 502, 504
-    or 503 is an `error` event with the same body.
+    or 503 is an `error` event with the same body. A reader that leaves at any point,
+    `start` included, reaches the `finally`, which closes the stream.
     """
-    yield opening
     try:
+        yield opening
         while True:
             try:
                 item = await run_in_threadpool(next, events, None)
@@ -239,7 +239,7 @@ def stream_question(
     if isinstance(begun, chat.Exchange):
         status_code = 202 if begun.answer.status == "pending" else 200
         return JSONResponse(status_code=status_code, content=pair.model_dump(mode="json"))
-    events = chat.stream_answer(open_session, provider, begun, trace_id=trace_id)
+    events = chat.AnswerStream(open_session, provider, begun, trace_id=trace_id)
     return StreamingResponse(
         answer_events(sse("start", pair), events, question, trace_id),
         media_type="text/event-stream",

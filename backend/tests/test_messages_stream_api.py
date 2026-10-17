@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import threading
+import time
 from contextlib import nullcontext
 from types import SimpleNamespace
 
@@ -261,14 +262,18 @@ def test_an_answer_that_ends_after_recovery_closed_it_is_not_stored(store, provi
     assert stored(store)[1] == ("assistant", "interrupted", None, "outcome_unknown")
 
 
-def leave_after_first_delta(provider) -> list[dict]:
-    """Send the question as an ASGI client that disconnects once the first `delta` is written.
+def leave_after(provider, event: str, path: str = PATH) -> list[dict]:
+    """Send the question as an ASGI client that disconnects once `event` (`start` or `delta`) is written.
 
-    The provider holds its second piece until the client has left, so the stream is
-    always abandoned part-way. Returns the messages the application sent.
+    The provider holds the piece after that event until the client has left, so the
+    stream is always abandoned before the provider ends: before its first piece after
+    `start`, between two pieces after the first `delta`. Returns the messages the
+    application sent.
     """
     left = threading.Event()
-    provider.before_piece = lambda index: index and left.wait(5)
+    held = {"start": 0, "delta": 1}[event]
+    provider.before_piece = lambda index: index == held and left.wait(5)
+    marker = f"event: {event}".encode()
     body = json.dumps({"content": "안녕?", "request_key": "q-demo-1"}).encode()
     scope = {
         "type": "http",
@@ -276,8 +281,8 @@ def leave_after_first_delta(provider) -> list[dict]:
         "http_version": "1.1",
         "method": "POST",
         "scheme": "http",
-        "path": PATH,
-        "raw_path": PATH.encode(),
+        "path": path,
+        "raw_path": path.encode(),
         "query_string": b"",
         "root_path": "",
         "headers": [(b"content-type", b"application/json")],
@@ -287,20 +292,20 @@ def leave_after_first_delta(provider) -> list[dict]:
 
     async def run() -> list[dict]:
         sent: list[dict] = []
-        first_delta = asyncio.Event()
+        written = asyncio.Event()
         requests = iter([{"type": "http.request", "body": body, "more_body": False}])
 
         async def receive() -> dict:
             for request in requests:
                 return request
-            await first_delta.wait()
+            await written.wait()
             left.set()
             return {"type": "http.disconnect"}
 
         async def send(message: dict) -> None:
             sent.append(message)
-            if b"event: delta" in message.get("body", b""):
-                first_delta.set()
+            if marker in message.get("body", b""):
+                written.set()
 
         await app(scope, receive, send)
         return sent
@@ -308,43 +313,88 @@ def leave_after_first_delta(provider) -> list[dict]:
     return asyncio.run(run())
 
 
-def test_a_reader_that_leaves_gets_no_done_and_the_answer_is_stored_as_interrupted(store, provider, caplog):
+def written_events(sent: list[dict]) -> list[str]:
+    assert sent[0]["status"] == 200
+    return [name for name, _data in parse_events(b"".join(message.get("body", b"") for message in sent[1:]).decode())]
+
+
+@pytest.mark.parametrize("event", ["start", "delta"], ids=["before the first piece", "between two pieces"])
+def test_a_reader_that_leaves_gets_no_done_and_the_answer_is_stored_as_interrupted(store, provider, caplog, event):
     provider.pieces = ["안녕", "하세요", "."]
     with caplog.at_level(logging.WARNING, logger="app"):
-        sent = leave_after_first_delta(provider)
-    assert sent[0]["status"] == 200
+        names = written_events(leave_after(provider, event))
     assert "Stream abandoned" in caplog.text
-    written = b"".join(message.get("body", b"") for message in sent[1:]).decode()
-    names = [name for name, _data in parse_events(written)]
-    assert names[:2] == ["start", "delta"] and "done" not in names
+    assert names[0] == "start" and "done" not in names
     # No piece is stored, although some were sent.
     assert stored(store) == [ASKED, ("assistant", "interrupted", None, "outcome_unknown")]
-    # The screen asks again with the same key: the stored state, without a second call.
+    # The screen asks again with the same key: the stored state, without another call.
+    # After `start` the reader may leave before the provider is even called.
+    calls = len(provider.calls)
     again = send()
     assert again.status_code == 200
     assert again.json() == {"question": QUESTION, "answer": INTERRUPTED}
-    assert len(provider.calls) == 1
+    assert len(provider.calls) == calls <= 1
     # The conversation is not blocked, and the abandoned pieces are not in the next context.
     provider.before_piece = lambda index: None
     assert events_of(send(content="하나 더", request_key="q-demo-2"))[-1][0] == "done"
     assert provider.calls[-1].context == [("user", "하나 더")]
 
 
-def test_closing_the_service_stream_part_way_interrupts_and_closing_it_after_the_end_changes_nothing(store, provider):
+def test_closing_the_service_stream_interrupts_an_unfinished_answer_at_any_point(store, provider):
     def stream(request_key):
         started = chat.begin_question(store, store.owner, 501, request_key, request_key, trace_id="t")
-        return chat.stream_answer(lambda: nullcontext(store), provider, started, trace_id="t")
+        return chat.AnswerStream(lambda: nullcontext(store), provider, started, trace_id="t")
 
-    abandoned = stream("q-1")
+    unread = stream("q-1")
+    unread.close()
+    assert stored(store)[1] == ("assistant", "interrupted", None, "outcome_unknown")
+    # Closed before it was read, so the provider was never called.
+    assert provider.calls == []
+
+    abandoned = stream("q-2")
     assert next(abandoned) == "안녕"
     abandoned.close()
-    assert stored(store)[1] == ("assistant", "interrupted", None, "outcome_unknown")
+    assert stored(store)[3] == ("assistant", "interrupted", None, "outcome_unknown")
 
-    finished = stream("q-2")
+    finished = stream("q-3")
     *pieces, answer = finished
     finished.close()
-    assert pieces == ["안녕", "하세요."] and answer is store.rows[3]
-    assert stored(store)[3] == ("assistant", "completed", "안녕하세요.", None)
+    assert pieces == ["안녕", "하세요."] and answer is store.rows[5]
+    assert stored(store)[5] == ("assistant", "completed", "안녕하세요.", None)
+
+
+# Short enough to wait out in a test; the stalls below are longer.
+SHORT_LIMIT = 0.2
+STALL = 0.6
+
+
+@pytest.mark.parametrize(
+    ("stall_at", "delta_count"),
+    [(0, 0), (1, 1), (2, 2)],
+    ids=["before the first piece", "between two pieces", "after the last piece"],
+)
+def test_a_stream_past_the_time_limit_is_interrupted_without_done(store, provider, monkeypatch, stall_at, delta_count):
+    """The provider really stalls; the stream ends at the limit, not when the provider resumes."""
+    monkeypatch.setattr(chat, "ANSWER_TIME_LIMIT_SECONDS", SHORT_LIMIT)
+    provider.before_piece = lambda index: index == stall_at and time.sleep(STALL)
+    provider.ending = lambda: stall_at == 2 and time.sleep(STALL)
+    began = time.monotonic()
+    events = events_of(send())
+    took = time.monotonic() - began
+    assert [name for name, _data in events] == ["start", *["delta"] * delta_count, "error"]
+    assert error_event(events)["code"] == "provider_timeout"
+    assert stored(store)[1] == ("assistant", "interrupted", None, "outcome_unknown")
+    assert SHORT_LIMIT <= took < STALL
+    # The screen reads the stored state, and the next question is answered.
+    assert send().json() == {"question": QUESTION, "answer": INTERRUPTED}
+    provider.before_piece = provider.ending = lambda *_args: None
+    assert events_of(send(content="하나 더", request_key="q-demo-2"))[-1][0] == "done"
+
+
+def test_a_piece_that_arrives_just_in_time_still_completes(store, provider, monkeypatch):
+    monkeypatch.setattr(chat, "ANSWER_TIME_LIMIT_SECONDS", STALL * 2)
+    provider.before_piece = lambda index: index == 1 and time.sleep(SHORT_LIMIT)
+    assert events_of(send())[-1] == ("done", {"question": QUESTION, "answer": ANSWER})
 
 
 def test_what_the_json_route_refuses_is_refused_as_json_before_a_stream_starts(store, provider, auth_user_b):
