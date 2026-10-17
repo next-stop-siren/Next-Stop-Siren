@@ -146,6 +146,13 @@ async def api_error_handler(request: Request, exc: Exception) -> JSONResponse:
     if not isinstance(exc, ApiError):
         raise exc
     trace_id = request_trace_id(request)
+    cookie_operation = {
+        "/api/auth/csrf": "csrf",
+        "/api/auth/refresh": "refresh",
+        "/api/auth/logout": "logout",
+    }.get(request.url.path)
+    if cookie_operation is not None and exc.failure is None:
+        logger.warning("event=%s_rejected trace_id=%s code=%s", cookie_operation, trace_id, exc.code)
     if exc.failure is not None:
         operation = {
             "/api/auth/login": "login",

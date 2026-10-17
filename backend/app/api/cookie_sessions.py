@@ -20,7 +20,9 @@ from app.services.csrf import read_csrf_token
 from app.services.logout import logout_refresh_session
 from app.services.refresh import (
     InvalidRefresh,
+    RefreshLimitReached,
     RefreshRace,
+    RefreshReuseDetected,
     RefreshUnavailable,
     cancel_refresh_rotation,
     rotate_refresh_session,
@@ -62,6 +64,7 @@ def csrf(
         raise unauthenticated() from None
     except RefreshUnavailable as exc:
         raise ApiError("temporarily_unavailable", failure=exc.failure) from None
+    logger.info("event=csrf_read trace_id=%s", request_trace_id(request))
     prevent_auth_caching(response)
     return CsrfResponse(csrf_token=value)
 
@@ -81,10 +84,17 @@ def refresh(
         result = rotate_refresh_session(request.cookies[REFRESH_COOKIE_NAME], session, settings)
     except RefreshRace as exc:
         raise ApiError("refresh_race", retry_after=exc.retry_after) from None
+    except (RefreshReuseDetected, RefreshLimitReached) as exc:
+        # 이 예외들은 계보 폐기 커밋 이후에만 서비스에서 전달된다.
+        reason = "reuse" if isinstance(exc, RefreshReuseDetected) else "limit"
+        logger.info("event=refresh_lineage_revoked trace_id=%s reason=%s", request_trace_id(request), reason)
+        raise ApiError("unauthenticated", clear_cookies=True) from None
     except InvalidRefresh as exc:
         raise ApiError("unauthenticated", clear_cookies=exc.clear_cookies) from None
     except RefreshUnavailable as exc:
         raise ApiError("temporarily_unavailable", failure=exc.failure) from None
+    # 저장 결과와 HTTP 응답 결과는 구분한다. 이후 응답 준비 실패는 보상 로그로 연결한다.
+    logger.info("event=refresh_rotated trace_id=%s", request_trace_id(request))
     try:
         # 부분 Set-Cookie와 직렬화 실패가 응답 밖으로 새지 않게 모두 준비한 뒤 반환한다.
         cookies = Response()
@@ -128,6 +138,7 @@ def logout(
         raise unauthenticated() from None
     except RefreshUnavailable as exc:
         raise ApiError("temporarily_unavailable", failure=exc.failure) from None
+    logger.info("event=logout_saved trace_id=%s", request_trace_id(request))
     response = Response(status_code=204)
     try:
         clear_auth_cookies(response, settings)
