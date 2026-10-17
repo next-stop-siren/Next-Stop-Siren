@@ -14,7 +14,7 @@ from app.repositories.refresh_sessions import add_initial_refresh_session
 from app.repositories.users import add_google_user, add_local_user
 from app.security.session_values import create_refresh_digest
 from app.security.tokens import TokenIssueError, issue_refresh_token, verify_access_token, verify_refresh_token
-from app.services.refresh import InvalidRefresh, RefreshUnavailable, rotate_refresh_session
+from app.services.refresh import InvalidRefresh, RefreshRace, RefreshUnavailable, rotate_refresh_session
 
 pytestmark = pytest.mark.db
 
@@ -133,7 +133,7 @@ def test_revoked_refresh_does_not_create_another_successor(stored, auth_settings
         rotate_refresh_session(original.token, session, auth_settings)
     before = snapshot(stored)
     with factory() as session:
-        with pytest.raises(InvalidRefresh):
+        with pytest.raises(RefreshRace):
             rotate_refresh_session(original.token, session, auth_settings)
     assert snapshot(stored) == before
 
