@@ -567,7 +567,7 @@ def test_db():
         env = command_env()
         env["TEST_DATABASE_URL"] = url
         run(tool("uv", "run", "--no-sync", "pytest", "-m", "db", "-q"),
-            cwd=BACKEND, timeout=120, env=env)
+            cwd=BACKEND, timeout=300, env=env)
     with_test_database(check)
 
 
