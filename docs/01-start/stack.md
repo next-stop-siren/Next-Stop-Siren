@@ -8,7 +8,7 @@
 | 서버 | FastAPI 라우터·서비스·저장소, health/ready·인증·대화 API | 화면과의 통합·배포 검증 |
 | 저장 | PostgreSQL, SQLAlchemy 2.0.44 동기 Session, 제품 5개 테이블 | 기존 스키마 변경 절차·운영 백업 |
 | 데이터 경계 | 별도 Pydantic 요청·응답과 ORM 모델 | 구현 변경마다 계약·소유권 검사 유지 |
-| 인증 | PyJWT·Authlib·Argon2id, refresh 회전·CSRF·Google callback | Google 후 `:5173` 복귀·화면 세션 완료, 공유 로그인 제한·운영 설정 |
+| 인증 | PyJWT·Authlib·Argon2id, refresh 회전·CSRF·Google callback, 명시한 Google 프런트 Origin으로 복귀 | 화면 세션 완료, 공유 로그인 제한·운영 설정 |
 | 외부 AI | Codyssey `gpt-5.5` 어댑터·격리 스모크 경로 | 일반 앱은 모의 제공자 유지; 실제 공개 연결은 후속 승인 |
 | 검사·설치 | npm·uv 잠금, pytest·Ruff·mypy·Vitest·Playwright·Biome | 실제 브라우저 가입→채팅 E2E, Windows 실행 |
 

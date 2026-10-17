@@ -71,7 +71,7 @@
 **Google 로그인**
 
 - `GET /api/auth/google/start`: top-level 이동으로 시작한다. 선택 `return_to`는 허용 목록의 상대 경로다. 성공은 Google authorization endpoint로 `302`와 트랜잭션 쿠키다. 복귀 경로 오류는 422, 설정·제공자 실패는 503이다.
-- `GET /api/auth/google/callback`: 제공자의 `code`, `state`와 트랜잭션 쿠키를 받는다. 성공은 허용된 상대 경로로 `302`와 refresh·CSRF 쿠키다. 검증 실패는 401, 제공자·설정 실패는 503이며 실패 시 세션은 없다.
+- `GET /api/auth/google/callback`: 제공자의 `code`, `state`와 트랜잭션 쿠키를 받는다. 성공은 `302`와 refresh·CSRF 쿠키다. `GOOGLE_FRONTEND_ORIGIN`이 있으면 검증된 설정 Origin + 허용 상대 경로로 이동하고 없으면 기존 상대 경로를 유지한다. callback URL은 바뀌지 않는다. 검증 실패는 401, 제공자·설정 실패는 503이며 실패 시 세션은 없다.
 
 로컬 이메일은 앞뒤 공백 제거, 유효한 형식과 최대 320자이며 로컬 계정에서만 `lower(email)`로 중복 판정한다. 비밀번호는 정규화 없이 Unicode 코드 포인트 12~128자와 UTF-8 1024바이트 이하를 모두 만족해야 한다. 두 값 모두 필수 문자열이다. 가입 중복의 `409` 코드는 `local_email_exists`이며 Google과 이메일이 같아도 중복이 아니다. 미인증 이메일은 소유 증명이 아니다.
 

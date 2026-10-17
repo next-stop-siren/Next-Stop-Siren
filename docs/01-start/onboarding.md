@@ -117,7 +117,7 @@ PY
 
 **선택 절차다.** 로컬 가입·로그인과 모의 채팅만 확인하려면 이 절을 건너뛰고 [개발 DB 생성](#2-3-개발-db의-누락-테이블-생성)으로 이동한다.
 
-Google 로그인까지 사용할 팀원은 기존 인증 키 4개와 별도로 아래 네 항목을 자신의 `.env`에 준비한다. Google 설정이 없어도 로컬 가입·비밀번호 로그인은 사용할 수 있다.
+Google 로그인까지 사용할 팀원은 기존 인증 키 4개와 별도로 아래 Google 항목을 자신의 `.env`에 준비한다. Google 설정이 없어도 로컬 가입·비밀번호 로그인은 사용할 수 있다.
 
 | 설정 | 준비 방법 |
 | --- | --- |
@@ -125,15 +125,19 @@ Google 로그인까지 사용할 팀원은 기존 인증 키 4개와 별도로 �
 | `GOOGLE_CLIENT_SECRET` | 같은 client의 secret 입력 |
 | `GOOGLE_REDIRECT_URI` | 기본 개발 주소 `http://127.0.0.1:8000/api/auth/google/callback` 유지 |
 | `GOOGLE_TRANSACTION_KEY` | 각 팀원이 자신의 컴퓨터에서 독립적인 암호화 키 생성 |
+| `GOOGLE_FRONTEND_ORIGIN` | 선택 복귀 목적지 `http://127.0.0.1:5173`; callback URL과 구분 |
 
-**새 값을 직접 준비하는 것은 ID·secret·트랜잭션 키 세 개다.** redirect URI는 `.env.example`에 기본값이 있다. 다만 이미 존재하는 `.env`에는 새 항목이 자동 추가되지 않으므로, 빠진 항목이 있다면 아래 네 줄을 추가한다. 기존 DB·인증 설정은 유지하고 `.env` 전체를 덮어쓰지 않는다.
+**새 값을 직접 준비하는 것은 ID·secret·트랜잭션 키 세 개다.** redirect URI는 `.env.example`에 기본값이 있다. 다만 이미 존재하는 `.env`에는 새 항목이 자동 추가되지 않으므로, 아래 항목 중 빠진 것만 직접 추가한다. `GOOGLE_FRONTEND_ORIGIN`은 비밀값이 아니며 프런트로 돌아오려면 이 값도 추가해야 한다. 기존 DB·인증 설정은 유지하고 `.env` 전체를 덮어쓰지 않는다.
 
 ```dotenv
 GOOGLE_CLIENT_ID=발급받은_client_ID
 GOOGLE_CLIENT_SECRET=같은_client의_secret
 GOOGLE_REDIRECT_URI=http://127.0.0.1:8000/api/auth/google/callback
+GOOGLE_FRONTEND_ORIGIN=http://127.0.0.1:5173
 GOOGLE_TRANSACTION_KEY=직접_생성한_Base64_키
 ```
+
+`GOOGLE_FRONTEND_ORIGIN`은 경로·끝 `/`·쿼리·fragment 없는 정확한 Origin이어야 한다. `AUTH_ALLOWED_ORIGINS`에 포함되고 API와 scheme·hostname이 같아야 하며 포트만 달라도 된다. 로컬에서는 `http://127.0.0.1:5173`을 쓴다. 설정 항목 자체를 생략하면 기존 상대 redirect를 유지하지만, 빈 값이나 잘못된 값을 명시하면 Google 경로만 503으로 차단된다. 로컬 비밀번호 인증 설정은 유지된다.
 
 #### Google client ID·secret 준비
 
@@ -212,7 +216,17 @@ PowerShell 명령은 Windows에서 실제 실행하지 않았다.
 
 `Google settings validated`가 출력되면 설정 형식 검사는 통과한 것이다. 실제 ID·secret의 유효성은 Google 로그인에서 확인한다. `.env`를 저장한 뒤 [개발 DB 생성](#2-3-개발-db의-누락-테이블-생성)과 `dev`까지 마친 상태에서 아래 선택 로그인을 확인한다. 이미 실행 중인 서버는 해당 터미널의 `Ctrl+C`로 종료한 뒤 다시 실행한다.
 
-브라우저 주소창에서 `http://127.0.0.1:8000/api/auth/google/start`로 이동해 Google 로그인 후 Network의 callback 요청이 **302**, 응답에 refresh·CSRF 쿠키가 있는지 확인한다. 현재 상대 redirect의 최종 `/`는 API `:8000`에 남으므로 그 페이지의 404와 callback 성공을 구분한다. 프런트엔드 `:5173` 복귀와 화면 세션 완료는 아직 미구현이다([#17](https://github.com/next-stop-siren/Next-Stop-Siren/issues/17), [#19](https://github.com/next-stop-siren/Next-Stop-Siren/issues/19)). Swagger의 `/start` Execute는 브라우저 전체 이동을 대신하지 않는다.
+기존 `.env`에는 새 항목이 자동 반영되지 않는다. 프런트 복귀를 사용할 때 비밀값이 아닌 `GOOGLE_FRONTEND_ORIGIN=http://127.0.0.1:5173`을 직접 추가·저장하고 자신이 실행한 API를 재시작한다. callback 등록 주소는 계속 `http://127.0.0.1:8000/api/auth/google/callback`이다.
+
+| 확인 순서 | 기대 결과 |
+| --- | --- |
+| `dev`로 화면 `:5173`과 API `:8000` 실행 후 브라우저 주소창에서 `http://127.0.0.1:8000/api/auth/google/start`로 이동 | Google 로그인 화면으로 이동; Swagger Execute로 대신하지 않음 |
+| 로그인 후 Network의 `:8000/api/auth/google/callback` 응답 확인 | `302`, `Location: http://127.0.0.1:5173/`, refresh·CSRF 쿠키 설정과 트랜잭션 쿠키 제거 |
+| 프런트 복귀 화면 확인 | 화면은 여전히 비회원 UI일 수 있음; 이것만으로 로그인 상태 완료를 판단하지 않음 |
+
+목적지는 서버 설정과 허용된 `return_to`(현재 `/`만)로 결정하며 요청 헤더·쿼리의 임의 URL은 사용하지 않는다. 설정 항목이 없으면 예전처럼 `Location: /`가 되어 API `:8000`에 남는다. 그 최종 페이지의 404와 callback 성공을 구분한다.
+
+쿠키는 host-only이므로 같은 `127.0.0.1`의 포트가 달라도 API 요청에 사용할 수 있다. `Path=/api/auth`, HttpOnly·SameSite·Secure 정책은 그대로이며 JavaScript가 쿠키를 직접 읽지 않는다. 화면에서 credentials를 포함한 `/api/auth/csrf` → `/api/auth/refresh`로 access를 받아 메모리에 두는 연결은 아직 후속 작업이다([#17](https://github.com/next-stop-siren/Next-Stop-Siren/issues/17), [#19](https://github.com/next-stop-siren/Next-Stop-Siren/issues/19)). URL이나 브라우저 저장소에 토큰을 넣지 않는다.
 
 ### 2-3. 개발 DB의 누락 테이블 생성
 
@@ -286,7 +300,7 @@ ID는 숫자로 변환하지 않고 문자열로 유지한다. Swagger 페이지
 
 access는 15분 유효하고 보호 API는 쿠키만으로 인증되지 않는다. logout도 이미 발급된 access를 즉시 무효화하지 않으므로 남은 유효 시간 안에는 통과할 수 있다.
 
-프런트엔드 `:5173`의 로그인 모달·Google 버튼·채팅 화면에 위 절차가 연결됐다는 뜻은 아니다. Google은 [선택 설정](#2-2-google-로그인용-env-설정)을 준비한 뒤 브라우저 주소창 이동으로 시작한다. 현재 `:8000` callback의 상대 redirect는 `:8000`에 남는다. `:5173` 복귀와 화면의 CSRF·refresh 완료 연결은 아직 미구현이다([#17](https://github.com/next-stop-siren/Next-Stop-Siren/issues/17), [#19](https://github.com/next-stop-siren/Next-Stop-Siren/issues/19)).
+프런트엔드 `:5173`의 로그인 모달·Google 버튼·채팅 화면에 위 절차가 연결됐다는 뜻은 아니다. Google은 [선택 설정](#2-2-google-로그인용-env-설정)을 준비한 뒤 브라우저 주소창 이동으로 시작한다. `GOOGLE_FRONTEND_ORIGIN`을 설정하면 callback 성공 후 `:5173`으로 이동하며, 없으면 기존 `:8000` 상대 경로를 유지한다. 화면의 CSRF·refresh 완료와 로그인 상태 연결은 아직 미구현이다([#17](https://github.com/next-stop-siren/Next-Stop-Siren/issues/17), [#19](https://github.com/next-stop-siren/Next-Stop-Siren/issues/19)).
 
 ### 4. 테스트와 품질 검사
 

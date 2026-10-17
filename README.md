@@ -67,7 +67,7 @@ Set-Location Next-Stop-Siren
 
 [온보딩의 API 확인 순서](docs/01-start/onboarding.md#3-1-swagger로-가입로그인과-모의-대화-확인)를 따르세요. Swagger에서 가입 `201`, 로그인 `200`, **Authorize → AccessBearer**에 access 토큰 입력, `/api/me`, 대화 생성·메시지 전송·재조회를 확인합니다. 일반 mock 채팅에는 Google·실제 AI 키가 필요하지 않습니다. refresh·logout은 브라우저의 HttpOnly 쿠키와 최신 `X-CSRF-Token`을 함께 사용합니다.
 
-`/api/health`는 프로세스 응답, `/api/ready`는 DB의 `SELECT 1`만 확인합니다. 둘이 성공해도 인증 설정이나 제품 스키마·로그인·채팅이 정상이라는 뜻은 아닙니다. Google callback 후 화면 `:5173` 복귀·세션 연결은 [후속 화면 연동](https://github.com/next-stop-siren/Next-Stop-Siren/issues/19)에서 구현해야 하며 Swagger Execute는 Google 브라우저 이동을 대신하지 않습니다.
+`/api/health`는 프로세스 응답, `/api/ready`는 DB의 `SELECT 1`만 확인합니다. 둘이 성공해도 인증 설정이나 제품 스키마·로그인·채팅이 정상이라는 뜻은 아닙니다. Google callback은 `:8000`을 유지합니다. 성공 후 `:5173`로 이동하려면 기존 `.env`에 `GOOGLE_FRONTEND_ORIGIN=http://127.0.0.1:5173`을 직접 추가하고 API를 재시작하세요([설정 절차](docs/01-start/onboarding.md#2-2-google-로그인용-env-설정)). 설정이 없으면 기존 상대 경로로 돌아옵니다. 화면의 CSRF·refresh·로그인 상태 연결은 [후속 작업](https://github.com/next-stop-siren/Next-Stop-Siren/issues/19)이며 Swagger Execute는 Google 브라우저 이동을 대신하지 않습니다.
 
 ## 저장소 구조
 
