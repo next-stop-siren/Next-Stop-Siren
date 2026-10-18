@@ -1,6 +1,6 @@
 # 서비스 범위와 첫 작업
 
-현재 앱은 화면에서 API와 DB 연결만 확인한다. 아래 기능은 후속 작업이며 아직 동작하지 않는다.
+현재 백엔드는 로컬·Google 인증, 쿠키 세션, 본인 대화·메시지 저장·재조회를 구현했다. 일반 채팅 응답은 무료 모의 답변이다. 화면은 비회원 소개·인증 모달이며 실제 인증·채팅 연결은 후속 작업이다. 아래 제품 요구사항과 구현 상태를 구분한다.
 
 ## 확정된 범위
 
@@ -23,19 +23,17 @@
 
 다음 결정과 구현 검증이 남아 있다.
 
-- 초기 ORM 모델·빈 개발/테스트 DB 초기화 검증, 이후 스키마 변경 절차와 데이터 보존 기간·일괄 삭제·백업 처리
-- 승인된 [인증 구현 기준](../04-reference/authentication.md)의 실제 구현과 검증, 배포 Origin·키·Google client 및 로그인 제한 방식
-- 승인된 [S11 GPT 연결 기준](../04-reference/ai.md)의 구현·격리 시험, 회원 한도
-- 수동 재시도 규칙
+- 기존 스키마 변경·복구 절차와 데이터 보존 기간·일괄 삭제·백업 처리; 등록 모델 5개와 누락 테이블 초기화 명령은 구현됨
+- 구현된 [인증](../04-reference/authentication.md)의 화면 연결·실제 통합 검증, Google의 프런트엔드 복귀, 배포 Origin·키·Google client 및 공유 로그인 제한 방식
+- [S11 GPT 어댑터](../04-reference/ai.md)의 격리 시험 증거와 공개 연결 경계 유지, 회원 한도
+- 스트리밍(PR #44는 이 기준 커밋에 미포함)과 수동 재시도·화면 연결
 
-이 문서는 실행된 DB 초기화나 인증 기능을 뜻하지 않는다. D1 A·B·C 인증 정책은 승인되어 문서화됐고, 운영 입력과 구현 검증은 남아 있다. 실제 구현 이슈는 선행 작업을 확인한 뒤 시작한다.
+이 문서 정리는 실제 로컬 DB 초기화나 가입 실행 증거가 아니다. health/ready 성공도 인증 설정·제품 스키마 완성을 증명하지 않는다. 운영 입력과 전체 화면 통합 검증은 남아 있다.
 
-## 처음 맡을 수 있는 작업
+## 담당과 작업 의존 관계
 
 담당자별 실제 이슈 번호와 시작 순서는 [팀 작업 인계](../02-team/team-handoff.md)에 있다.
 
-1. 인증 백엔드 `yejoo0310`: [#2](https://github.com/next-stop-siren/Next-Stop-Siren/issues/2)에서 후속 검사에 재사용할 pytest fixture를 만들고 인증 없는 요청의 401 응답을 확인한다.
-2. 채팅·데이터 백엔드 `davekim-dev`: 공통 ORM 준비가 main에 병합됐다. [#3](https://github.com/next-stop-siren/Next-Stop-Siren/issues/3)의 검증·병합 뒤 [#9](https://github.com/next-stop-siren/Next-Stop-Siren/issues/9)에서 대화·메시지 ORM 모델을 만들고 DB 제약을 검사한다. #9 검증·병합 뒤 [#8](https://github.com/next-stop-siren/Next-Stop-Siren/issues/8)의 소유권 조회 함수와 pytest 검사를 맡는다.
-3. 프론트엔드 `gittul-123`: [#16](https://github.com/next-stop-siren/Next-Stop-Siren/issues/16)에서 비회원 소개와 사람이 작성한 고정 예시 화면을 만든다.
+인증 `yejoo0310`은 #2 fixture와 #3 이후 인증·세션 흐름, 채팅·데이터 `davekim-dev`는 #3 → #9 → #8 → #10 → #11, 프런트엔드 `gittul-123`는 #16 → #17·#18 → #19 연결을 담당한다. 이 번호는 고정 작업 ID와 의존 관계이며 미구현 목록이 아니다. 이미 있는 구현·테스트를 먼저 읽고 실제 남은 범위와 검토 상태는 이슈·PR로 확인한다.
 
 담당 역할은 [역할과 인계](../02-team/roles.md)를, 구현과 검증 흐름은 [협업 안내](../03-development/workflow.md)를 확인한다.

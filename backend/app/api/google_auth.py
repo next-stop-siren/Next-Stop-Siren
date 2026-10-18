@@ -117,7 +117,9 @@ def _callback_headers(response: Response) -> None:
     response.headers["Referrer-Policy"] = "no-referrer"
 
 
-def _finish_google_login(verified: VerifiedGoogleLogin, request: Request, settings: AuthSettings) -> RedirectResponse:
+def _finish_google_login(
+    verified: VerifiedGoogleLogin, request: Request, settings: AuthSettings, google_settings: GoogleSettings
+) -> RedirectResponse:
     """Open and close the synchronous DB session in one worker, after OIDC verification."""
     with contextmanager(login_session)() as session:
         try:
@@ -128,7 +130,9 @@ def _finish_google_login(verified: VerifiedGoogleLogin, request: Request, settin
             ) from None
         login_saved(request)
         try:
-            destination = validate_google_return_to(verified.return_to)
+            path = validate_google_return_to(verified.return_to)
+            # Only validated server configuration and an allowlisted relative path decide the destination.
+            destination = (google_settings.frontend_origin or "") + path
             response = RedirectResponse(url=destination, status_code=302)
             set_auth_cookies(response, result.refresh, settings)
             clear_google_transaction_cookie(response, settings)
@@ -177,7 +181,7 @@ async def google_callback(
         verified = await verify_google_login(
             code, state, request.cookies.get(GOOGLE_TRANSACTION_COOKIE_NAME), google_settings, client
         )
-        return await run_in_threadpool(_finish_google_login, verified, request, settings)
+        return await run_in_threadpool(_finish_google_login, verified, request, settings, google_settings)
     except (GoogleIdentityError, GoogleTransactionError):
         google_callback_verification_failed(request)
         failure = ApiError("unauthenticated")

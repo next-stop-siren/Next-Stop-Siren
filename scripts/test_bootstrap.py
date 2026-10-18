@@ -65,6 +65,16 @@ class BootstrapTest(unittest.TestCase):
         self.assertIn("failed verification", failure.stderr)
         self.assertEqual((self.target / "bin" / "node").read_text(), "tampered")
 
+    def test_frontend_bootstrap_installs_only_node_without_backend_overrides(self):
+        self.env.pop("B71_PYTHON")
+        self.env.pop("B71_UV")
+        result = subprocess.run(["sh", "bootstrap.sh", "--frontend"], cwd=self.root,
+                                env=self.env, capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.target / "bin" / "node").exists())
+        self.assertFalse(any((self.root / ".cache/host-tools").glob("python-*")))
+        self.assertFalse(any((self.root / ".cache/host-tools").glob("uv-*")))
+
     def test_bad_download_leaves_no_install_or_stage(self):
         (self.stub / "curl").write_text("#!/bin/sh\nexit 99\n")
         failure = self.run_bootstrap()

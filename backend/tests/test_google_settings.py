@@ -146,3 +146,80 @@ def test_google_loader_uses_process_environment(google_environment, monkeypatch)
     monkeypatch.delenv("GOOGLE_CLIENT_SECRET")
     with pytest.raises(AuthSettingsError, match="GOOGLE_CLIENT_SECRET"):
         get_google_settings()
+
+
+def test_frontend_origin_is_optional_and_independent_of_allowlist_order(google_environment):
+    assert GoogleSettings.from_env(google_environment).frontend_origin is None
+    google_environment.update(
+        GOOGLE_FRONTEND_ORIGIN="http://127.0.0.1:5173",
+        AUTH_ALLOWED_ORIGINS="http://127.0.0.1:8000,http://127.0.0.1:5173",
+    )
+    settings = GoogleSettings.from_env(google_environment)
+    assert settings.frontend_origin == "http://127.0.0.1:5173"
+    assert settings.redirect_uri == "http://127.0.0.1:8000/api/auth/google/callback"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        " ",
+        "http://127.0.0.1:5173/",
+        "http://127.0.0.1:5173/path",
+        "http://127.0.0.1:5173?next=evil",
+        "http://127.0.0.1:5173#evil",
+        "http://user:secret@127.0.0.1:5173",
+        "//127.0.0.1:5173",
+        "http://*.example.test",
+        "http://127.0.0.1:5173\r\nLocation: https://evil.test",
+        "http://127.0.0.1:5999",
+        "http://localhost:5173",
+        "https://127.0.0.1:5173",
+        "https://evil.test",
+    ],
+)
+def test_invalid_frontend_origin_fails_google_only_without_echo(google_environment, value):
+    google_environment["GOOGLE_FRONTEND_ORIGIN"] = value
+    with pytest.raises(AuthSettingsError, match="GOOGLE_FRONTEND_ORIGIN") as caught:
+        GoogleSettings.from_env(google_environment)
+    if value.strip():
+        assert value not in str(caught.value)
+    assert AuthSettings.from_env(google_environment).api_origin == "http://127.0.0.1:8000"
+
+
+@pytest.mark.parametrize("frontend", ["https://app.example.test", "http://api.example.test"])
+def test_allowlisted_cross_host_or_scheme_frontend_still_fails(google_environment, frontend):
+    google_environment.update(
+        AUTH_ENV="production",
+        AUTH_API_ORIGIN="https://api.example.test",
+        AUTH_ALLOWED_ORIGINS=frontend,
+        AUTH_COOKIE_SECURE="true",
+        GOOGLE_REDIRECT_URI="https://api.example.test/api/auth/google/callback",
+        GOOGLE_FRONTEND_ORIGIN=frontend,
+    )
+    # Auth rejects insecure production origins first; a secure different host is rejected by Google.
+    with pytest.raises(AuthSettingsError):
+        GoogleSettings.from_env(google_environment)
+
+
+def test_production_frontend_may_change_port_but_not_site(google_environment):
+    google_environment.update(
+        AUTH_ENV="production",
+        AUTH_API_ORIGIN="https://api.example.test",
+        AUTH_ALLOWED_ORIGINS="https://api.example.test:8443",
+        AUTH_COOKIE_SECURE="true",
+        GOOGLE_REDIRECT_URI="https://api.example.test/api/auth/google/callback",
+        GOOGLE_FRONTEND_ORIGIN="https://api.example.test:8443",
+    )
+    assert GoogleSettings.from_env(google_environment).frontend_origin == "https://api.example.test:8443"
+
+
+def test_even_auth_allowlisted_scheme_change_is_rejected_by_google(google_environment):
+    google_environment.update(
+        AUTH_ALLOWED_ORIGINS="https://127.0.0.1:5173",
+        AUTH_COOKIE_SECURE="true",
+        GOOGLE_FRONTEND_ORIGIN="https://127.0.0.1:5173",
+    )
+    auth = AuthSettings.from_env(google_environment)
+    with pytest.raises(AuthSettingsError, match="GOOGLE_FRONTEND_ORIGIN"):
+        GoogleSettings.from_env(google_environment, auth_settings=auth)

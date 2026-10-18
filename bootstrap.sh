@@ -83,6 +83,10 @@ install_one() {
   printf 'Host tools: %s %s installed.\n' "$name" "$version"
 }
 install_one node
+if [ "${1:-}" = --frontend ]; then
+  printf 'Frontend host tools ready; Python, uv and Docker are not required.\n'
+  exit 0
+fi
 install_one python
 install_one uv
 printf 'Host tools ready. Docker Compose and a running daemon are required for setup.\n'

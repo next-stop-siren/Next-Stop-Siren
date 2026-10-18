@@ -128,6 +128,8 @@ def test_start_returns_302_and_matching_encrypted_transaction(google_start_clien
         "/\\evil",
         "/%2fevil",
         "/\n",
+        "/\r\nLocation: https://evil.test",
+        "/%0d%0aLocation:evil",
     ],
 )
 def test_invalid_return_to_fails_before_google_or_database(google_start_client, return_to):
@@ -311,3 +313,25 @@ def test_openapi_documents_start_and_expected_errors(auth_settings, google_setti
     operation = schema["paths"][PATH]["get"]
     assert {"302", "422", "503"} <= set(operation["responses"])
     assert any(parameter["name"] == "return_to" for parameter in operation["parameters"])
+
+
+def test_bad_explicit_frontend_origin_disables_only_google(
+    google_start_client, google_environment, auth_settings, monkeypatch
+):
+    client, calls, _, sessions, app = google_start_client
+    for name, value in {**google_environment, "GOOGLE_FRONTEND_ORIGIN": "https://evil.example.test"}.items():
+        monkeypatch.setenv(name, value)
+    app.state.google_settings = create_app(auth_settings).state.google_settings
+    assert app.state.google_settings is None
+    assert app.state.auth_settings is auth_settings
+    assert_error(client.get(PATH), 503, "temporarily_unavailable")
+    callback = client.get("/api/auth/google/callback", params={"code": "fixture", "state": "fixture"})
+    assert callback.status_code == 503 and "location" not in callback.headers
+    assert callback.headers["cache-control"] == "no-store"
+    assert callback.headers["referrer-policy"] == "no-referrer"
+    assert calls == []
+    sessions.assert_not_called()
+    assert client.get("/api/health").status_code == 200
+    assert client.get("/api/me").status_code == 401
+    # Local auth still reaches its normal input/Origin boundary rather than settings503.
+    assert client.post("/api/auth/login", json={}, headers={"Origin": "https://evil.test"}).status_code == 403

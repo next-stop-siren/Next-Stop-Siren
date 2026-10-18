@@ -23,9 +23,11 @@ from google_helpers import ACCESS_TOKEN, CODE
 PATH = "/api/auth/google/callback"
 
 
-@pytest.fixture
-def callback(google_callback_flow, auth_settings):
+@pytest.fixture(params=[None, "http://127.0.0.1:5173"])
+def callback(google_callback_flow, auth_settings, request):
     flow = google_callback_flow
+    flow.app.state.google_settings = replace(flow.settings, frontend_origin=request.param)
+    flow.destination = (request.param or "") + "/"
     session = MagicMock(spec=Session)
     result = GoogleLoginResult(
         user=PublicUser(id="101", email="fixture@example.test", created_at=datetime.now(timezone.utc)),
@@ -77,7 +79,7 @@ def test_success_verifies_before_opening_db_and_returns_only_refresh_cookies(cal
     with caplog.at_level(logging.INFO):
         response = callback.client.get(PATH, params=callback.params)
     callback.saved.side_effect = original
-    assert response.status_code == 302 and response.headers["location"] == "/"
+    assert response.status_code == 302 and response.headers["location"] == callback.destination
     assert response.content == b""
     values = cookies(response)
     assert set(values) == {"refresh_token", "csrf_token", GOOGLE_TRANSACTION_COOKIE_NAME}
@@ -273,7 +275,7 @@ def test_access_log_filter_preserves_uvicorn_formatter_and_removes_entire_query(
 
 def test_callback_ignores_untrusted_return_to_query(callback):
     response = callback.client.get(PATH, params={**callback.params, "return_to": "https://evil.example.test"})
-    assert response.status_code == 302 and response.headers["location"] == "/"
+    assert response.status_code == 302 and response.headers["location"] == callback.destination
 
 
 def test_failure_keeps_preexisting_refresh_and_csrf_cookies(callback):
@@ -293,3 +295,25 @@ def test_secure_cookie_policy_applies_to_success_and_error_cleanup(callback, aut
     response = callback.client.get(PATH, params={"state": "wrong"})
     assert_callback_error(response, 401, "unauthenticated")
     assert cookies(response)[GOOGLE_TRANSACTION_COOKIE_NAME]["secure"]
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Host": "evil.example.test"},
+        {"Origin": "https://evil.example.test"},
+        {"Forwarded": 'host="evil.example.test";proto=https'},
+        {"X-Forwarded-Host": "evil.example.test", "X-Forwarded-Proto": "https"},
+    ],
+)
+def test_frontend_destination_ignores_request_headers_and_extra_queries(callback, headers):
+    response = callback.client.get(
+        PATH,
+        params={**callback.params, "return_to": "//evil.example.test", "frontend_origin": "https://evil.test"},
+        headers=headers,
+    )
+    assert response.status_code == 302
+    assert response.headers["location"] == callback.destination
+    assert "?" not in response.headers["location"] and "#" not in response.headers["location"]
+    assert callback.result.refresh.token not in response.headers["location"]
+    assert CODE not in response.headers["location"]
