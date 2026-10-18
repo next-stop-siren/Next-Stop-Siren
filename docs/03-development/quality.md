@@ -38,6 +38,14 @@ PR에는 변경 범위에 맞춰 실행한 검사 명령과 결과를 적고, �
 
 `.github/workflows/ci.yml`은 PR과 `main` push에서 단일 작업 **`B7-1 required checks`**를 정의한다. 프런트엔드 Biome 포맷·린트와 TypeScript 타입 검사, 백엔드 Ruff 포맷·린트와 mypy 타입 검사, 단위·로컬 자동화 테스트, 전용 테스트 DB 통합 검사, Playwright E2E, 빌드를 순서대로 실행한다.
 
+자동화 단계에서 다음 검사를 실행한다. 하나라도 실패하면 다음 명령으로 넘어가지 않으며 기존 필수 검사도 유지한다.
+
+- `python -m unittest discover -s scripts -p 'test_*.py' -v`: 개발 명령·설치 도구와 Windows 검사 도구의 실행 순서·결과 보고서 검사.
+- `node --test scripts/test_frontend.mjs`: 프런트엔드만 준비하는 명령과 포트 충돌 검사.
+- `node --test .github/scripts/pr-issue-metadata.test.cjs`: PR에 이슈 정보를 연결하는 도구 검사.
+
+Ubuntu에서는 macOS 전용 설치 검사와 실제 Windows 프로세스 종료 검사가 `skip`으로 표시된다. Windows 검사 도구의 실행 순서·보고서는 검사하지만 실제 PowerShell 실행은 아직 미검증이다. 프런트 셸 명령 검사는 Ubuntu에서 실행하고 Windows에서만 건너뛴다. 자세한 출력에서 성공·건너뜀·실패를 구분하며, 로컬 macOS 통과를 원격 Ubuntu CI 통과로 표시하지 않는다.
+
 Node 24.21.0/npm 11.19.0, Python 3.13.15/uv 0.11.19, Compose PostgreSQL 17.11을 사용한다. CI의 새 체크아웃에서만 `.env.example`을 `.env`로 복사하고 예시 테스트 DB 주소를 명시한다. 개발 DB를 시작하는 `setup`·`dev` 명령은 호출하지 않는다.
 
 테스트 보호 로직이 주소와 실제 로컬 테스트 컨테이너·포트·볼륨을 확인한다. GitHub 호스티드 실행의 통과 여부는 해당 Actions 결과에서 확인하며 로컬 검사 통과로 대신하지 않는다.
