@@ -1,3 +1,4 @@
+
 .modalBackdrop {
   position: fixed;
   z-index: 1000;
@@ -48,6 +49,7 @@
   background: transparent;
   color: var(--color-muted);
   font-size: 1.6rem;
+  cursor: pointer;
 }
 
 .modalClose:hover {
@@ -83,6 +85,56 @@
 }
 
 .googleButton:hover {
+  background: var(--color-sidebar);
+}
+
+.googleFailurePreviewButton {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px dashed var(--color-border);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--color-muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.googleFailurePreviewButton:hover {
+  background: var(--color-sidebar);
+}
+
+.googleFailureIcon {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  margin: 28px 0 20px;
+  place-items: center;
+  border-radius: 50%;
+  background: rgb(192 57 43 / 10%);
+  color: #c0392b;
+  font-size: 1.8rem;
+  font-weight: 700;
+}
+
+.googleFailureActions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.googleFailureSecondary {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.googleFailureSecondary:hover {
   background: var(--color-sidebar);
 }
 
@@ -127,6 +179,7 @@
   background: transparent;
   color: var(--color-muted);
   font-weight: 600;
+  cursor: pointer;
 }
 
 .authTabs button.active {
@@ -174,6 +227,7 @@
   background: var(--color-primary);
   color: #ffffff;
   font-weight: 700;
+  cursor: pointer;
 }
 
 .authSubmit:hover {
@@ -183,6 +237,11 @@
 .authSubmit:disabled {
   background: var(--color-muted);
   cursor: not-allowed;
+}
+
+.googleFailureActions .authSubmit {
+  margin-top: 0;
+  cursor: pointer;
 }
 
 @media (max-width: 760px) {
