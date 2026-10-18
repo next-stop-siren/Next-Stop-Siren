@@ -3,12 +3,53 @@
 from dataclasses import dataclass
 import logging
 from typing import Literal
+from urllib.parse import unquote, urlsplit, urlunsplit
 from uuid import uuid4
 
 from fastapi import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
+
+
+class GoogleCallbackQueryFilter(logging.Filter):
+    """Remove callback queries while preserving Uvicorn's structured access log arguments."""
+
+    _paths = {"/api/auth/google/callback", "/api/auth/google/callback/"}
+
+    @classmethod
+    def _safe_url(cls, value: object) -> object:
+        try:
+            parts = urlsplit(str(value))
+        except ValueError:
+            return "[invalid URL]"
+        if unquote(parts.path) not in cls._paths:
+            return value
+        return urlunsplit(parts._replace(query="", fragment=""))
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        position = None
+        if record.name == "uvicorn.access" and record.msg == '%s - "%s %s HTTP/%s" %d':
+            position = 2
+        elif record.name == "httpx" and record.msg == 'HTTP Request: %s %s "%s %d %s"':
+            position = 1
+        if position is None or not isinstance(record.args, tuple) or len(record.args) != 5:
+            # Drop unfamiliar callback formats rather than risk logging their credentials.
+            return "/api/auth/google/callback" not in unquote(record.getMessage())
+        values = list(record.args)
+        values[position] = self._safe_url(values[position])
+        record.args = tuple(values)
+        return True
+
+
+def protect_google_callback_logs() -> None:
+    """Cover server access logs and HTTPX request summaries, including local TestClient runs."""
+    for name in ("uvicorn.access", "httpx"):
+        target = logging.getLogger(name)
+        if not any(isinstance(item, GoogleCallbackQueryFilter) for item in target.filters):
+            target.addFilter(GoogleCallbackQueryFilter())
+
+
 FailureStage = Literal[
     "session",
     "password_hash",
@@ -25,6 +66,13 @@ FailureStage = Literal[
     "cookie",
     "compensation",
     "compensation_rollback",
+    "google_settings",
+    "google_discovery",
+    "google_transaction",
+    "google_code_exchange",
+    "google_jwks",
+    "google_identity_lookup",
+    "google_identity_insert",
 ]
 
 
@@ -50,22 +98,33 @@ def request_trace_id(request: Request) -> str:
 
 
 class RegistrationTraceMiddleware:
-    """본문을 읽기 전에 가입·로그인 요청 수신을 기록한다."""
+    """Assign a server trace ID and record supported authentication requests before validation."""
+
+    _operations = {
+        ("POST", "/api/auth/register"): "registration",
+        ("POST", "/api/auth/login"): "login",
+        ("GET", "/api/auth/google/callback"): "google_callback",
+        ("GET", "/api/auth/csrf"): "csrf",
+        ("POST", "/api/auth/refresh"): "refresh",
+        ("POST", "/api/auth/logout"): "logout",
+    }
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if (
-            scope["type"] == "http"
-            and scope["method"] == "POST"
-            and scope["path"] in {"/api/auth/register", "/api/auth/login"}
-        ):
-            trace_id = str(uuid4())
-            scope.setdefault("state", {})["trace_id"] = trace_id
-            operation = "login" if scope["path"] == "/api/auth/login" else "registration"
-            logger.info("event=%s_received trace_id=%s", operation, trace_id)
+        if scope["type"] == "http":
+            operation = self._operations.get((scope["method"], scope["path"]))
+            if operation is not None:
+                trace_id = str(uuid4())
+                scope.setdefault("state", {})["trace_id"] = trace_id
+                logger.info("event=%s_received trace_id=%s", operation, trace_id)
         await self.app(scope, receive, send)
+
+
+def google_callback_verification_failed(request: Request) -> None:
+    """Correlate rejected callbacks without recording credentials or provider error text."""
+    logger.warning("event=google_callback_verification_failed trace_id=%s", request_trace_id(request))
 
 
 def registration_saved(request: Request) -> None:

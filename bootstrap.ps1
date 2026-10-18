@@ -1,3 +1,4 @@
+param([switch]$FrontendOnly)
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 $store = Join-Path $PSScriptRoot '.cache/host-tools'
@@ -85,6 +86,7 @@ function Install-Tool([string]$name) {
     }
 }
 Install-Tool node
+if ($FrontendOnly) { Write-Host 'Frontend host tools ready; Python, uv and Docker are not required.'; return }
 Install-Tool python
 Install-Tool uv
 Write-Host 'Host tools ready. Docker Compose and a running daemon are required for setup.'

@@ -56,9 +56,14 @@ jobs:
           uv run --directory backend --no-sync ruff format --check app tests scripts
           uv run --directory backend --no-sync ruff check app tests scripts
           uv run --directory backend --no-sync mypy app
-      - name: Unit and automation tests
+      - name: Unit and automation tests (OS skips reported)
+        shell: bash
         run: |
-          python -m unittest discover -s scripts -p test_local.py
+          printf '%s\n' 'Ubuntu skips macOS bootstrap and native Windows process cases; verbose results report each skip.'
+          printf '%s\n' 'Portable Windows orchestration and frontend shell fixtures run here; native PowerShell is not tested.'
+          python -m unittest discover -s scripts -p 'test_*.py' -v
+          node --test scripts/test_frontend.mjs
+          node --test .github/scripts/pr-issue-metadata.test.cjs
           ./local.sh test-unit
       - name: Dedicated database integration and browser E2E
         run: |

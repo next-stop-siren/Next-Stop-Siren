@@ -2,15 +2,27 @@
 
 ## 로컬 검사
 
-현재 로컬 테스트 명령은 저장소 루트의 `./local.sh test-unit|test-db|test-e2e|test`이며 Windows PowerShell에서는 `.\local.ps1`을 사용한다. `test-unit`은 DB 없이 API의 HTTP 응답·오류 경계, 테스트 DB 주소 보호, 화면 로딩·오류·재시도를 검사한다. 나머지 DB 명령은 README의 `TEST_DATABASE_URL` 명시 설정이 필요하다.
+화면만 작업할 때는 `frontend-check`·`frontend-test`·`frontend-build`를 사용한다. 전체 검사 명령은 `./local.sh test-unit|test-db|test-e2e|test|quality`이며 Windows에서는 `.\local.ps1`을 사용한다. DB 명령에는 [온보딩](../01-start/onboarding.md#4-테스트와-품질-검사)의 `TEST_DATABASE_URL` 설정과 전용 테스트 DB 보호가 적용된다.
 
-`test-db`는 전용 테스트 DB에 `SELECT 1`과 테스트 전용 ORM 테이블 검사를 실행하고, `test-e2e`는 Chromium에서 실제 화면→API→테스트 DB 성공과 재현 가능한 오류 화면을 확인한다. `setup`은 잠금된 테스트 의존성과 프로젝트 Playwright 브라우저 캐시를 설치한다. 현재 인증·채팅·AI 기능과 해당 테스트는 아직 없다.
+현재 구현된 검사와 아직 필요한 통합 검증을 구분한다.
 
-백엔드는 pytest와 HTTPX로 API의 정상 응답·입력 거부·오류 경계를 확인한다. 인증에서는 신규·기존 로그인, 만료·위조된 자격 증명, 갱신 토큰 폐기, 비인증 요청과 타인 기록 접근을 확인한다. 프론트엔드는 Vitest와 React Testing Library로 사용자에게 보이는 상태와 상호작용을 확인한다.
+| 검사 | 현재 확인하는 코드 경계 | 대신 증명하지 않는 것 |
+| --- | --- | --- |
+| 백엔드 pytest | 가입·로그인·Bearer·refresh/CSRF/logout·Google 검증·모델 제약·소유권·메시지 저장/재전송/실패 회복 | 실제 Google 계정·운영 설정·브라우저 전체 흐름 |
+| 전용 DB pytest | 제품 ORM·세션·인증·대화·메시지 트랜잭션과 동시성; `test_auth_chat_db.py`는 실제 HTTP 가입·로그인 JWT로 모의 대화 저장·독립 세션/새 클라이언트 재조회·2인 격리·CSRF refresh를 연결 | 실제 프런트 로그인·채팅 UI, 실제 Google·AI 호출·운영 환경 |
+| Vitest | 비회원·모달·접근 경계와 실제 `checkApi`의 정상 상태·잘못된 응답·HTTP 오류·네트워크 실패 | 실제 API 로그인·회원 채팅 |
+| Playwright | 모달 키보드·초점, 실제 `checkApi`의 API·전용 DB readiness 성공과 모의 503 거부 | 실제 가입→로그인→대화 저장→새로고침 복구 E2E·사용자 오류 화면 완성 |
+| GPT 대체 서버 검사 | 고정 모델·실패·기한/취소·429·완성 쌍 문맥·저장 경계 | 실제 제공자 사용 가능성·할당·운영 공개 준비 |
 
-Playwright는 먼저 실행 가능한 최소 화면→API 연동 스모크 테스트를 만들고, 기능이 정해지면 핵심 흐름의 E2E로 확장한다. 외부 AI 호출은 자동 테스트에서 모의 응답으로 대체해 성공·실패·시간 초과를 재현한다. S11의 실제 스모크 시험과 모의 실패·취소·429 검사는 [GPT 기준](../04-reference/ai.md)을 따른다. 실제 호출은 합성 데이터의 격리 환경에서 명시적으로 실행하며 기본 CI에 포함하지 않는다.
+백엔드 HTTP·DB 검사는 신규·기존 로그인, 만료·위조된 자격 증명, refresh 폐기·경합·재사용, 비인증 요청과 타인 기록 접근을 계속 확인해야 한다. 프런트엔드는 사용자에게 보이는 상태·입력 보존·실패·재시도·키보드 접근을 검사한다.
 
-테스트 PostgreSQL은 개발 DB와 분리한다. 테스트 실행 전 URL과 컨테이너 작업 경로·포트·볼륨을 검사하고, 개발·공유 DB 주소면 중단한다. ORM 통합 픽스처는 테스트 전용 모델의 DDL과 행을 외부 트랜잭션에서 만들고 `Session.commit()`도 저장점으로 격리한 뒤 전체 트랜잭션을 롤백한다. 가짜 테스트 데이터(fixture)는 최소한만 만들고 테스트가 끝나면 정리한다.
+`test_auth_chat_db.py`는 기존 보호된 PostgreSQL 임시 스키마에 DB 세션 factory만 연결한다. principal·JWT 검증이나 기본 MockProvider를 대체하지 않고, 다른 DB 테스트의 인증 대체와 구분한다. 실행 결과는 해당 pytest 보고서로 확인한다.
+
+위 한계는 품질 요구사항을 낮추지 않는다. 실제 화면 연결 작업은 가입·로그인·세션 복구·로그아웃, 사용자별 대화 저장·재조회와 타인 접근 거부, 오류·재시도 UX를 HTTP·DB·브라우저 경계에서 검증해야 한다. 현재 준비 상태 fetch나 mock 인증 테스트의 통과를 그 완료로 표시하지 않는다.
+
+실제 AI는 [GPT 기준](../04-reference/ai.md)의 명시적 격리 스모크에서만 호출한다. 기본 CI·자동 테스트는 모의 제공자를 쓰며 live 테스트는 `--run-live` 없이는 skip한다. 외부 제공자의 실제 사용 가능성과 할당은 별도 실행 증거로 확인한다. `setup`은 전체 의존성과 Playwright 브라우저를 준비하지만 `frontend-setup`은 Node 의존성만 준비한다.
+
+테스트 PostgreSQL은 개발 DB와 분리한다. 실행 전 URL과 실제 컨테이너 경로·포트·볼륨을 확인한다. ORM fixture는 격리된 테스트 스키마·외부 트랜잭션·저장점으로 DDL·행·서비스 커밋을 분리하고 종료 시 롤백·정리한다. 어떤 fixture가 인증·제공자를 대체하는지 확인하고 실제 흐름과 혼동하지 않는다. 가짜 데이터만 사용한다.
 
 실제 사용자 대화, 개인 정보, 토큰, 비밀값을 픽스처나 스냅샷에 넣지 않는다. 테스트가 실패하면 원인과 재현 방법을 남기며 통과한 척하지 않는다.
 
@@ -25,6 +37,14 @@ Playwright는 먼저 실행 가능한 최소 화면→API 연동 스모크 테�
 PR에는 변경 범위에 맞춰 실행한 검사 명령과 결과를 적고, 실행하지 못한 검사는 이유를 적는다.
 
 `.github/workflows/ci.yml`은 PR과 `main` push에서 단일 작업 **`B7-1 required checks`**를 정의한다. 프런트엔드 Biome 포맷·린트와 TypeScript 타입 검사, 백엔드 Ruff 포맷·린트와 mypy 타입 검사, 단위·로컬 자동화 테스트, 전용 테스트 DB 통합 검사, Playwright E2E, 빌드를 순서대로 실행한다.
+
+자동화 단계에서 다음 검사를 실행한다. 하나라도 실패하면 다음 명령으로 넘어가지 않으며 기존 필수 검사도 유지한다.
+
+- `python -m unittest discover -s scripts -p 'test_*.py' -v`: 개발 명령·설치 도구와 Windows 검사 도구의 실행 순서·결과 보고서 검사.
+- `node --test scripts/test_frontend.mjs`: 프런트엔드만 준비하는 명령과 포트 충돌 검사.
+- `node --test .github/scripts/pr-issue-metadata.test.cjs`: PR에 이슈 정보를 연결하는 도구 검사.
+
+Ubuntu에서는 macOS 전용 설치 검사와 실제 Windows 프로세스 종료 검사가 `skip`으로 표시된다. Windows 검사 도구의 실행 순서·보고서는 검사하지만 실제 PowerShell 실행은 아직 미검증이다. 프런트 셸 명령 검사는 Ubuntu에서 실행하고 Windows에서만 건너뛴다. 자세한 출력에서 성공·건너뜀·실패를 구분하며, 로컬 macOS 통과를 원격 Ubuntu CI 통과로 표시하지 않는다.
 
 Node 24.21.0/npm 11.19.0, Python 3.13.15/uv 0.11.19, Compose PostgreSQL 17.11을 사용한다. CI의 새 체크아웃에서만 `.env.example`을 `.env`로 복사하고 예시 테스트 DB 주소를 명시한다. 개발 DB를 시작하는 `setup`·`dev` 명령은 호출하지 않는다.
 

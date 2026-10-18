@@ -10,9 +10,11 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
+from app.api.cookies import AuthCookieError, clear_auth_cookies
 from app.observability import FailureDetails, request_trace_id
 from app.schemas.errors import ErrorDetail, ErrorResponse
 from app.security.login_limits import LoginRateLimited
+from app.security.settings import AuthSettings
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +23,7 @@ DATABASE_UNAVAILABLE = (OperationalError, InterfaceError, PoolTimeoutError)
 ApiErrorCode = Literal[
     "local_email_exists",
     "csrf_failed",
+    "refresh_race",
     "temporarily_unavailable",
     "unauthenticated",
     "not_found",
@@ -36,6 +39,7 @@ ApiErrorCode = Literal[
 _API_ERRORS: dict[ApiErrorCode, tuple[int, str]] = {
     "local_email_exists": (409, "이미 가입된 이메일입니다."),
     "csrf_failed": (403, "요청 출처 또는 CSRF 값을 확인해 주세요."),
+    "refresh_race": (409, "다른 요청에서 인증 정보를 갱신했습니다. 잠시 후 다시 시도해 주세요."),
     "temporarily_unavailable": (503, "일시적으로 서비스를 이용할 수 없습니다."),
     "unauthenticated": (401, "로그인이 필요합니다."),
     "not_found": (404, "찾을 수 없습니다."),
@@ -65,6 +69,7 @@ _PUBLIC_FIELDS = {
     "content",
     "request_key",
     "retry_key",
+    "return_to",
 }
 
 
@@ -72,17 +77,28 @@ class ApiError(Exception):
     """예상 가능한 오류는 내부 메시지 대신 정해진 코드를 사용한다."""
 
     def __init__(
-        self, code: ApiErrorCode, *, failure: FailureDetails | None = None, retry_after: int | None = None
+        self,
+        code: ApiErrorCode,
+        *,
+        failure: FailureDetails | None = None,
+        retry_after: int | None = None,
+        clear_cookies: bool = False,
     ) -> None:
         if code == "rate_limited":
             if type(retry_after) is not int or retry_after < 1:
                 raise ValueError("로그인 제한에는 양의 정수 대기 시간이 필요합니다.")
+        elif code == "refresh_race":
+            if type(retry_after) is not int or retry_after != 1:
+                raise ValueError("refresh 경합에는 1초 대기 시간이 필요합니다.")
         elif retry_after is not None:
-            raise ValueError("대기 시간은 로그인 제한 오류에만 지정할 수 있습니다.")
+            raise ValueError("대기 시간은 로그인 제한 또는 refresh 경합 오류에만 지정할 수 있습니다.")
+        if clear_cookies and code != "unauthenticated":
+            raise ValueError("인증 쿠키 만료는 폐기 커밋 후 인증 실패에만 지정할 수 있습니다.")
         self.code = code
         self.status_code, self.public_message = _API_ERRORS[code]
         self.failure = failure
         self.retry_after = retry_after
+        self.clear_cookies = clear_cookies
         super().__init__(code)
 
 
@@ -140,18 +156,38 @@ def _error_response(
     return JSONResponse(status_code=status_code, content=body.model_dump(mode="json"))
 
 
+def api_error_body(error: ApiError, trace_id: str) -> ErrorResponse:
+    """상태 코드를 이미 보낸 스트림에서 같은 오류 본문을 이벤트로 보낼 때 쓴다."""
+    return ErrorResponse(error=ErrorDetail(code=error.code, message=error.public_message, trace_id=trace_id))
+
+
+def database_unavailable_body(exc: Exception, trace_id: str) -> ErrorResponse:
+    # 응답과 로그를 같은 trace ID로 연결하며, 예외 원문은 기록하지 않는다.
+    logger.error("Database unavailable, trace_id=%s, error=%s", trace_id, loggable(exc))
+    return ErrorResponse(
+        error=ErrorDetail(code="temporarily_unavailable", message="잠시 후 다시 시도해 주세요.", trace_id=trace_id)
+    )
+
+
 async def api_error_handler(request: Request, exc: Exception) -> JSONResponse:
     if not isinstance(exc, ApiError):
         raise exc
     trace_id = request_trace_id(request)
+    cookie_operation = {
+        "/api/auth/csrf": "csrf",
+        "/api/auth/refresh": "refresh",
+        "/api/auth/logout": "logout",
+    }.get(request.url.path)
+    if cookie_operation is not None and exc.failure is None:
+        logger.warning("event=%s_rejected trace_id=%s code=%s", cookie_operation, trace_id, exc.code)
     if exc.failure is not None:
-        operation = (
-            "login"
-            if request.url.path == "/api/auth/login"
-            else "registration"
-            if request.url.path == "/api/auth/register"
-            else "authentication"
-        )
+        operation = {
+            "/api/auth/login": "login",
+            "/api/auth/register": "registration",
+            "/api/auth/csrf": "csrf",
+            "/api/auth/refresh": "refresh",
+            "/api/auth/logout": "logout",
+        }.get(request.url.path, "authentication")
         logger.error(
             "event=%s_failed trace_id=%s stage=%s error_type=%s",
             operation,
@@ -164,6 +200,28 @@ async def api_error_handler(request: Request, exc: Exception) -> JSONResponse:
         response.headers["WWW-Authenticate"] = "Bearer"
     if exc.retry_after is not None:
         response.headers["Retry-After"] = str(exc.retry_after)
+    if exc.clear_cookies:
+        settings = getattr(request.app.state, "auth_settings", None)
+        if isinstance(settings, AuthSettings):
+            try:
+                clear_auth_cookies(response, settings)
+            except (AuthCookieError, ValueError, TypeError, OverflowError) as cookie_error:
+                logger.error(
+                    "event=authentication_cookie_failed trace_id=%s error_type=%s",
+                    trace_id,
+                    type(cookie_error).__name__,
+                )
+                # 부분적으로 준비한 쿠키 만료 헤더를 버리고 인증 정보 없는 503을 반환한다.
+                response = _error_response(
+                    503,
+                    "temporarily_unavailable",
+                    _API_ERRORS["temporarily_unavailable"][1],
+                    {},
+                    trace_id=trace_id,
+                )
+    if request.url.path.startswith("/api/auth/"):
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
     return response
 
 
@@ -191,10 +249,8 @@ async def validation_error_handler(request: Request, exc: Exception) -> JSONResp
 
 
 async def database_unavailable_handler(request: Request, exc: Exception) -> JSONResponse:
-    # 응답과 로그를 같은 trace ID로 연결하며, 예외 원문은 기록하지 않는다.
-    trace_id = request_trace_id(request)
-    logger.error("Database unavailable, trace_id=%s, error=%s", trace_id, loggable(exc))
-    return _error_response(503, "temporarily_unavailable", "잠시 후 다시 시도해 주세요.", {}, trace_id=trace_id)
+    body = database_unavailable_body(exc, request_trace_id(request))
+    return JSONResponse(status_code=503, content=body.model_dump(mode="json"))
 
 
 def register_error_handlers(app: FastAPI) -> None:

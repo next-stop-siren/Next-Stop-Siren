@@ -110,7 +110,9 @@ class FakeChatStore:
         return max(attempts, key=lambda row: row.attempt_no)
 
     def list_context_messages(self, _session, _user_id, _conversation_id):
-        return [row for row in self.rows if row.status == "completed"]
+        answers = [row for row in self.rows if row.role == "assistant" and row.status == "completed"]
+        answered = {row.reply_to_message_id for row in answers}
+        return [row for row in self.rows if row in answers or row.id in answered]
 
     def add_question(self, _session, _conversation_id, content, request_key, created=NOW):
         number = 9001 + len(self.rows)
@@ -150,23 +152,26 @@ class FakeProvider:
         return self.outcome()
 
 
+REPOSITORY_FUNCTIONS = (
+    "lock_conversation",
+    "close_stale_pending",
+    "has_pending_answer",
+    "find_question",
+    "find_question_by_id",
+    "find_retry",
+    "has_later_question",
+    "latest_answer",
+    "list_context_messages",
+    "add_question",
+    "add_retry",
+    "finish_answer",
+)
+
+
 @pytest.fixture
 def store(monkeypatch, auth_user_a):
     fake = FakeChatStore(auth_user_a["principal"]["user_id"])
-    for name in (
-        "lock_conversation",
-        "close_stale_pending",
-        "has_pending_answer",
-        "find_question",
-        "find_question_by_id",
-        "find_retry",
-        "has_later_question",
-        "latest_answer",
-        "list_context_messages",
-        "add_question",
-        "add_retry",
-        "finish_answer",
-    ):
+    for name in REPOSITORY_FUNCTIONS:
         monkeypatch.setattr(repository, name, getattr(fake, name))
     app.dependency_overrides[get_session] = lambda: fake
     sign_in(fake.owner)
@@ -333,7 +338,8 @@ def test_provider_failure_is_stored_and_a_resend_shows_it_without_a_second_call(
     assert len(store.rows) == 2 and len(provider.calls) == 1
 
 
-def test_a_failed_answer_does_not_block_the_conversation_or_enter_the_next_context(store, provider):
+def test_unfinished_pairs_leave_the_next_context_whole_but_stay_in_the_history(store, provider):
+    """Completed pairs in order, then the current question once; a failed or interrupted pair goes entirely."""
     send(content="하나", request_key="q-1")
     provider.outcome = failing(ProviderFailed())
     assert send(content="둘", request_key="q-2").status_code == 502
@@ -341,13 +347,17 @@ def test_a_failed_answer_does_not_block_the_conversation_or_enter_the_next_conte
     assert send(content="셋", request_key="q-3").status_code == 504
     provider.outcome = lambda: "네 번째 답변"
     assert send(content="넷", request_key="q-4").status_code == 201
+    provider.outcome = lambda: "다섯 번째 답변"
+    assert send(content="다섯", request_key="q-5").status_code == 201
     assert provider.calls[-1].context == [
         ("user", "하나"),
         ("assistant", "안녕하세요."),
-        ("user", "둘"),
-        ("user", "셋"),
         ("user", "넷"),
+        ("assistant", "네 번째 답변"),
+        ("user", "다섯"),
     ]
+    assert [row.content for row in store.rows if row.role == "user"] == ["하나", "둘", "셋", "넷", "다섯"]
+    assert len(store.rows) == 10
 
 
 def test_after_a_crash_the_pending_answer_stays_until_the_recovery_limit(store, provider):

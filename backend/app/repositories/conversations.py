@@ -8,8 +8,8 @@ through the conversation.
 from collections.abc import Sequence
 from datetime import timedelta
 
-from sqlalchemy import ColumnElement, Select, func, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy import ColumnElement, Select, func, or_, select, update
+from sqlalchemy.orm import Session, aliased
 
 from app.models.conversation import Conversation, Message
 
@@ -66,15 +66,22 @@ def list_messages(
 
 
 def list_context_messages(session: Session, user_id: int, conversation_id: int) -> Sequence[Message] | None:
-    """Return every completed message in ascending ID order as the next AI context.
+    """Return the completed question+answer pairs in ascending ID order as the next AI context.
 
-    Failed, interrupted and pending answers are left out. Whether a question whose
-    answer failed stays in the context is an open PM decision; it stays for now.
-    None has the same meaning as in `list_messages`.
+    A question whose answer is failed, interrupted or pending is left out together
+    with that answer (S11). The rows themselves stay in the history. None has the
+    same meaning as in `list_messages`.
     """
     if not owns_conversation(session, user_id, conversation_id):
         return None
-    statement = _owned_messages(user_id, conversation_id).where(Message.status == "completed")
+    answer = aliased(Message)
+    answered = select(answer.reply_to_message_id).where(
+        answer.conversation_id == conversation_id, answer.role == "assistant", answer.status == "completed"
+    )
+    statement = _owned_messages(user_id, conversation_id).where(
+        Message.status == "completed",
+        or_(Message.role == "assistant", Message.id.in_(answered)),
+    )
     return session.scalars(statement).all()
 
 

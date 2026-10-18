@@ -53,12 +53,34 @@ def tool(name, *args):
 
 def compose(*args, env=None, capture=False, timeout=120, test=False):
     options = ("--project-directory", str(ROOT), "--env-file", str(ENV),
-               "-f", str(ROOT / "compose.yaml"), "-p", "b7-1") if test else ()
+               "-f", str(ROOT / "compose.yaml"), "-p", "b7-1")
     try:
+        if not test and args and args[0] in {"up", "stop"}:
+            ensure_compose_ownership(options, env)
         return run(tool("docker", "compose", *options, *args), env=env,
                    capture=capture, timeout=timeout)
     except Failure as exc:
-        raise Failure(f"docker compose {args[0]} failed (exit {exc.code}); check Docker and project service status", exc.code) from exc
+        raise Failure(f"docker compose {args[0]} failed (exit {exc.code}): {exc}; check Docker and project service status", exc.code) from exc
+
+
+def ensure_compose_ownership(options, env=None):
+    """Refuse to recreate or stop same-project containers owned by another checkout."""
+    raw = run(tool("docker", "compose", *options, "ps", "--all", "-q"),
+              capture=True, env=env)
+    for container in raw.splitlines():
+        try:
+            details, = json.loads(run(tool("docker", "inspect", "--type", "container", container),
+                                      capture=True, env=env))
+            labels = details["Config"]["Labels"]
+            if (labels["com.docker.compose.project"] != "b7-1"
+                    or labels["com.docker.compose.project.working_dir"] != str(ROOT)
+                    or labels["com.docker.compose.project.config_files"] != str(ROOT / "compose.yaml")
+                    or labels["com.docker.compose.service"] not in SERVICES):
+                raise ValueError("another checkout owns the target")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise Failure("Compose b7-1 target is owned by another checkout or is ambiguous; "
+                          "inspect existing containers and volumes manually before transition. "
+                          "No service was changed.", 2) from exc
 
 
 def preflight(*, docker=False, frontend=False, backend=False):
@@ -567,7 +589,7 @@ def test_db():
         env = command_env()
         env["TEST_DATABASE_URL"] = url
         run(tool("uv", "run", "--no-sync", "pytest", "-m", "db", "-q"),
-            cwd=BACKEND, timeout=120, env=env)
+            cwd=BACKEND, timeout=300, env=env)
     with_test_database(check)
 
 

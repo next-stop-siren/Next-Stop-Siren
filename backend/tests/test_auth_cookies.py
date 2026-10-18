@@ -8,7 +8,7 @@ from http.cookies import SimpleCookie
 from fastapi import Response
 import pytest
 
-from app.api.cookies import AuthCookieError, CSRF_COOKIE_NAME, REFRESH_COOKIE_NAME, set_auth_cookies
+from app.api.cookies import AuthCookieError, CSRF_COOKIE_NAME, REFRESH_COOKIE_NAME, clear_auth_cookies, set_auth_cookies
 from app.security.session_values import create_csrf_token
 from app.security.settings import AuthSettings
 from app.security.tokens import issue_access_token, issue_refresh_token
@@ -108,3 +108,21 @@ def test_naive_timestamp_produces_no_cookies(auth_settings: AuthSettings, naive_
     with pytest.raises(AuthCookieError):
         set_auth_cookies(response, refresh, auth_settings, now=now)
     assert "set-cookie" not in response.headers
+
+
+@pytest.mark.parametrize("production", [False, True])
+def test_cookie_expiration_matches_issuance_attributes(auth_settings, production):
+    settings = replace(auth_settings, cookie_secure=production)
+    issued = Response()
+    set_auth_cookies(issued, issue_refresh_token(101, settings), settings)
+    cleared = Response(status_code=204)
+    clear_auth_cookies(cleared, settings)
+    before, after = response_cookies(issued), response_cookies(cleared)
+    assert set(after) == set(before) == {REFRESH_COOKIE_NAME, CSRF_COOKIE_NAME}
+    for name, cookie in after.items():
+        assert cookie.value == ""
+        assert cookie["max-age"] == "0"
+        assert parsedate_to_datetime(cookie["expires"]) <= datetime.now(timezone.utc)
+        for attribute in ("path", "domain", "secure", "httponly", "samesite"):
+            assert cookie[attribute] == before[name][attribute]
+    assert cleared.status_code == 204 and cleared.body == b""

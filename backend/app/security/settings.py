@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 
 class AuthSettingsError(ValueError):
-    """Configuration failure that identifies a field without echoing its value."""
+    """설정값을 노출하지 않고 문제가 있는 항목만 알려 주는 오류."""
 
 
 def _required(environ: Mapping[str, str], name: str) -> str:
@@ -48,7 +48,7 @@ def _claim(environ: Mapping[str, str], name: str) -> str:
 
 
 def _origin(value: str, name: str) -> tuple[str, str]:
-    """Require an exact HTTP origin without credentials, paths or wildcards."""
+    """사용자 정보, 경로, 와일드카드가 없는 정확한 HTTP Origin만 허용한다."""
     try:
         parsed = urlsplit(value)
         host = parsed.hostname
@@ -71,7 +71,7 @@ def _origin(value: str, name: str) -> tuple[str, str]:
         except ValueError:
             if any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) for label in host.split(".")):
                 raise ValueError
-        # Browsers serialize hostnames in lowercase; require the same spelling.
+        # 브라우저는 호스트 이름을 소문자로 표현하므로 설정도 같은 표기를 요구한다.
         if parsed.netloc != parsed.netloc.lower():
             raise ValueError
     except ValueError:
@@ -81,7 +81,7 @@ def _origin(value: str, name: str) -> tuple[str, str]:
 
 @dataclass(frozen=True, slots=True)
 class AuthSettings:
-    """Validated values for token issuance and cookie policy; no implicit keys."""
+    """토큰 발급과 쿠키 정책에 사용할 검증된 설정. 비밀키는 기본값 없이 명시적으로 받는다."""
 
     environment: Literal["development", "production"]
     access_key: bytes = field(repr=False)
@@ -104,7 +104,7 @@ class AuthSettings:
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "AuthSettings":
-        """Load process settings, or an explicit mapping for isolated tests."""
+        """환경 변수를 읽거나 테스트 격리를 위해 전달받은 설정을 사용한다."""
         values = os.environ if environ is None else environ
         environment = _required(values, "AUTH_ENV")
         if environment not in {"development", "production"}:
@@ -152,5 +152,69 @@ class AuthSettings:
 
 
 def get_auth_settings() -> AuthSettings:
-    """Dependency for later routes; configuration is not loaded at import time."""
+    """인증 경로에서 사용할 설정을 읽는다. 모듈을 불러올 때는 설정을 읽지 않는다."""
     return AuthSettings.from_env()
+
+
+@dataclass(frozen=True, slots=True)
+class GoogleSettings:
+    """Google 로그인 전용 설정. 로컬 인증 설정을 읽을 때는 필요하지 않다.
+
+    트랜잭션 키는 AES-256-GCM으로 로그인 쿠키를 암호화하고 무결성을 보호한다.
+    설정을 읽는 과정에서는 Google에 접속하거나 자격 증명의 실제 유효성을 확인하지 않는다.
+    """
+
+    client_id: str
+    client_secret: str = field(repr=False)
+    redirect_uri: str
+    transaction_key: bytes = field(repr=False)
+    frontend_origin: str | None = None
+
+    callback_path: ClassVar[str] = "/api/auth/google/callback"
+    discovery_url: ClassVar[str] = "https://accounts.google.com/.well-known/openid-configuration"
+    scopes: ClassVar[tuple[str, ...]] = ("openid", "email")
+    issuer: ClassVar[str] = "https://accounts.google.com"
+    accepted_issuers: ClassVar[tuple[str, ...]] = ("https://accounts.google.com", "accounts.google.com")
+    token_endpoint: ClassVar[str] = "https://oauth2.googleapis.com/token"
+    jwks_uri: ClassVar[str] = "https://www.googleapis.com/oauth2/v3/certs"
+    id_token_algorithms: ClassVar[tuple[str, ...]] = ("RS256",)
+
+    @classmethod
+    def from_env(
+        cls, environ: Mapping[str, str] | None = None, *, auth_settings: AuthSettings | None = None
+    ) -> "GoogleSettings":
+        """기존 인증 설정의 API Origin과 비밀키를 기준으로 Google 설정을 검증한다."""
+        values = os.environ if environ is None else environ
+        auth = auth_settings if auth_settings is not None else AuthSettings.from_env(values)
+        client_id = _required(values, "GOOGLE_CLIENT_ID")
+        if not re.fullmatch(r"[A-Za-z0-9_-]+\.apps\.googleusercontent\.com", client_id):
+            raise AuthSettingsError("GOOGLE_CLIENT_ID: Google OAuth client ID 형식이 필요합니다.")
+        client_secret = _claim(values, "GOOGLE_CLIENT_SECRET")
+        redirect_uri = _required(values, "GOOGLE_REDIRECT_URI")
+        # 정확히 일치해야 하므로 사용자 정보, 쿼리, 프래그먼트나 다른 호스트가 포함된 주소도 거부한다.
+        if redirect_uri != auth.api_origin + cls.callback_path:
+            raise AuthSettingsError("GOOGLE_REDIRECT_URI: API Origin과 Google callback 경로가 일치해야 합니다.")
+        frontend_origin = None
+        if "GOOGLE_FRONTEND_ORIGIN" in values:
+            frontend_origin = _required(values, "GOOGLE_FRONTEND_ORIGIN")
+            frontend_site = _origin(frontend_origin, "GOOGLE_FRONTEND_ORIGIN")
+            api_site = _origin(auth.api_origin, "AUTH_API_ORIGIN")
+            if frontend_origin not in auth.allowed_origins or frontend_site != api_site:
+                raise AuthSettingsError("GOOGLE_FRONTEND_ORIGIN: API와 같은 scheme·host의 허용된 Origin이 필요합니다.")
+        transaction_key = _key(values, "GOOGLE_TRANSACTION_KEY")
+        if len(transaction_key) != 32:
+            raise AuthSettingsError("GOOGLE_TRANSACTION_KEY: 정확히 32바이트의 키가 필요합니다.")
+        if transaction_key in (auth.access_key, auth.refresh_key, auth.refresh_digest_key, auth.csrf_key):
+            raise AuthSettingsError("GOOGLE_TRANSACTION_KEY: 기존 인증 키와 다른 키가 필요합니다.")
+        return cls(
+            client_id=client_id,
+            client_secret=client_secret,
+            redirect_uri=redirect_uri,
+            transaction_key=transaction_key,
+            frontend_origin=frontend_origin,
+        )
+
+
+def get_google_settings() -> GoogleSettings:
+    """Google 인증이 필요할 때 설정을 읽는다. 모듈을 불러올 때는 외부 입출력을 수행하지 않는다."""
+    return GoogleSettings.from_env()
