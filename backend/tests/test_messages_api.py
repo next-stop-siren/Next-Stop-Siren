@@ -95,8 +95,19 @@ class FakeChatStore:
     def find_question(self, _session, _conversation_id, request_key):
         return next((row for row in self.rows if row.request_key == request_key), None)
 
+    def find_question_by_id(self, _session, _conversation_id, question_id):
+        return next((row for row in self.rows if row.id == question_id and row.role == "user"), None)
+
+    def find_retry(self, _session, question_id, retry_key):
+        attempts = (row for row in self.rows if row.reply_to_message_id == question_id)
+        return next((row for row in attempts if row.retry_key == retry_key), None)
+
+    def has_later_question(self, _session, _conversation_id, question_id):
+        return any(row.role == "user" and row.id > question_id for row in self.rows)
+
     def latest_answer(self, _session, question_id):
-        return next(row for row in self.rows if row.reply_to_message_id == question_id)
+        attempts = [row for row in self.rows if row.reply_to_message_id == question_id]
+        return max(attempts, key=lambda row: row.attempt_no)
 
     def list_context_messages(self, _session, _user_id, _conversation_id):
         answers = [row for row in self.rows if row.role == "assistant" and row.status == "completed"]
@@ -112,6 +123,11 @@ class FakeChatStore:
             message(number + 1, "assistant", "pending", created, reply_to_message_id=number, attempt_no=1),
         ]
         return self.rows[-2], self.rows[-1]
+
+    def add_retry(self, _session, _conversation_id, question_id, attempt_no, retry_key, created=NOW):
+        fields = {"reply_to_message_id": question_id, "attempt_no": attempt_no, "retry_key": retry_key}
+        self.rows.append(message(9001 + len(self.rows), "assistant", "pending", created, **fields))
+        return self.rows[-1]
 
     def finish_answer(self, _session, _conversation_id, answer_id, *, status, content, error_code):
         answer = next(row for row in self.rows if row.id == answer_id)
@@ -141,9 +157,13 @@ REPOSITORY_FUNCTIONS = (
     "close_stale_pending",
     "has_pending_answer",
     "find_question",
+    "find_question_by_id",
+    "find_retry",
+    "has_later_question",
     "latest_answer",
     "list_context_messages",
     "add_question",
+    "add_retry",
     "finish_answer",
 )
 
@@ -499,3 +519,239 @@ def test_openapi_describes_the_send_responses():
     limits = app.openapi()["components"]["schemas"]["QuestionIn"]["properties"]
     assert limits["content"]["maxLength"] == MAX_QUESTION_LENGTH
     assert (limits["request_key"]["minLength"], limits["request_key"]["maxLength"]) == (1, MAX_REQUEST_KEY_LENGTH)
+
+
+# Manual retry (S13). D4: a failed or interrupted answer of the latest question may be retried.
+RETRY_PATH = f"{PATH}/9001/retry"
+RETRIED = {**ANSWER, "id": "9003", "content": "다시 만든 답변", "attempt_no": 2}
+
+
+def retry(retry_key="r-demo-1", path=RETRY_PATH):
+    return call("POST", path, json={"retry_key": retry_key})
+
+
+def attempts(store):
+    return [(row.attempt_no, row.retry_key, row.status) for row in store.rows if row.role == "assistant"]
+
+
+@pytest.fixture
+def failed_first(store, provider):
+    """A first answer that failed, with the provider then set to answer the retry."""
+    provider.outcome = failing(ProviderFailed())
+    assert send().status_code == 502
+    provider.outcome = lambda: "다시 만든 답변"
+    return store
+
+
+@pytest.mark.parametrize(
+    ("error", "first"),
+    [(ProviderFailed(), FAILED), (ProviderTimeout(), INTERRUPTED)],
+    ids=["failed", "interrupted"],
+)
+def test_a_failed_or_interrupted_answer_is_retried_as_a_new_attempt(store, provider, error, first):
+    provider.outcome = failing(error)
+    send()
+    provider.outcome = lambda: "다시 만든 답변"
+    response = retry()
+    assert response.status_code == 201
+    assert response.json() == {"question": QUESTION, "answer": RETRIED}
+    # The earlier attempt stays as it was, and the failed one does not enter the context.
+    assert attempts(store) == [(1, None, first["status"]), (2, "r-demo-1", "completed")]
+    assert provider.calls[-1].context == [("user", "안녕?")]
+    assert provider.calls[-1].observed == store.commits - 1
+    # A plain resend of the question now shows the latest attempt.
+    assert send().json()["answer"] == RETRIED
+
+
+def test_the_retried_question_gets_the_completed_context_before_it(store, provider):
+    send(content="하나", request_key="q-1")
+    provider.outcome = failing(ProviderFailed())
+    send(content="둘", request_key="q-2")
+    provider.outcome = lambda: "다시 만든 답변"
+    assert retry(path=f"{PATH}/9003/retry").status_code == 201
+    assert provider.calls[-1].context == [("user", "하나"), ("assistant", "안녕하세요."), ("user", "둘")]
+
+
+def test_resending_the_same_retry_key_returns_its_attempt_without_another_call(failed_first, provider):
+    first = retry()
+    again = retry()
+    assert (first.status_code, again.status_code) == (201, 200)
+    assert again.json() == first.json()
+    assert len(provider.calls) == 2 and len(attempts(failed_first)) == 2
+
+
+def test_a_quick_resend_while_the_retry_is_pending_is_202_and_another_key_is_busy(failed_first, provider):
+    failed_first.add_retry(None, 501, 9001, 2, "r-demo-1")
+    resend = retry()
+    assert resend.status_code == 202
+    assert resend.json()["answer"]["status"] == "pending"
+    other = retry(retry_key="r-demo-2")
+    assert other.status_code == 409 and error_of(other)["code"] == "conversation_busy"
+    assert len(provider.calls) == 1 and len(attempts(failed_first)) == 2
+
+
+def test_a_retry_that_fails_again_is_shown_by_its_key_and_can_be_retried_with_a_new_one(failed_first, provider):
+    provider.outcome = failing(ProviderTimeout())
+    assert retry().status_code == 504
+    again = retry()
+    assert again.status_code == 200
+    assert (again.json()["answer"]["status"], again.json()["answer"]["attempt_no"]) == ("interrupted", 2)
+    assert len(provider.calls) == 2
+    provider.outcome = lambda: "세 번째 시도"
+    third = retry(retry_key="r-demo-2")
+    assert third.status_code == 201 and third.json()["answer"]["attempt_no"] == 3
+    assert attempts(failed_first) == [
+        (1, None, "failed"),
+        (2, "r-demo-1", "interrupted"),
+        (3, "r-demo-2", "completed"),
+    ]
+
+
+def test_a_completed_answer_is_not_retried(store, provider):
+    send()
+    response = retry()
+    assert response.status_code == 409
+    assert error_of(response) == {
+        "code": "retry_not_allowed",
+        "message": "이 답변은 다시 시도할 수 없습니다. 대화 기록을 확인해 주세요.",
+        "fields": {},
+    }
+    assert len(provider.calls) == 1 and attempts(store) == [(1, None, "completed")]
+
+
+def test_after_a_retry_completes_a_new_key_is_refused(failed_first, provider):
+    assert retry().status_code == 201
+    response = retry(retry_key="r-demo-2")
+    assert response.status_code == 409 and error_of(response)["code"] == "retry_not_allowed"
+    assert len(provider.calls) == 2
+
+
+def test_a_pending_answer_is_busy_until_recovery_then_retried(store, provider):
+    store.add_question(None, 501, "안녕?", "q-demo-1")
+    busy = retry()
+    assert busy.status_code == 409 and error_of(busy)["code"] == "conversation_busy"
+    assert provider.calls == []
+    store.rows[1].created_at = STALE
+    provider.outcome = lambda: "다시 만든 답변"
+    assert retry().status_code == 201
+    assert attempts(store) == [(1, None, "interrupted"), (2, "r-demo-1", "completed")]
+
+
+def test_only_the_latest_question_is_retried(failed_first, provider):
+    send(content="하나 더", request_key="q-demo-2")
+    response = retry()
+    assert response.status_code == 409
+    assert error_of(response) == {
+        "code": "retry_not_latest",
+        "message": "가장 최근 질문만 다시 시도할 수 있습니다. 새 질문으로 보내 주세요.",
+        "fields": {},
+    }
+    assert [row.attempt_no for row in failed_first.rows if row.reply_to_message_id == 9001] == [1]
+
+
+def test_a_retry_key_used_before_a_later_question_still_returns_its_attempt(failed_first, provider):
+    first = retry()
+    send(content="하나 더", request_key="q-demo-2")
+    again = retry()
+    assert again.status_code == 200 and again.json() == first.json()
+    assert len(provider.calls) == 3
+
+
+def test_a_late_result_of_an_earlier_attempt_does_not_overwrite_the_retry(store, provider):
+    """The first call outlives the recovery limit; a retry closes it and completes before the late result arrives."""
+
+    def retried_meanwhile():
+        store.rows[1].created_at = STALE
+        provider.outcome = lambda: "다시 만든 답변"
+        assert retry().status_code == 201
+        return "늦은 답변"
+
+    provider.outcome = retried_meanwhile
+    response = send()
+    assert response.status_code == 504 and error_of(response)["code"] == "provider_timeout"
+    assert stored(store) == [
+        ("user", "completed", "안녕?", None),
+        ("assistant", "interrupted", None, "outcome_unknown"),
+        ("assistant", "completed", "다시 만든 답변", None),
+    ]
+    assert send().json()["answer"] == RETRIED
+
+
+def test_a_late_result_of_the_retry_does_not_overwrite_its_recovery(failed_first, provider):
+    def recovered_meanwhile():
+        failed_first.rows[2].created_at = STALE
+        failed_first.close_stale_pending(None, 501, STALE_PENDING_SECONDS)
+        return "늦은 답변"
+
+    provider.outcome = recovered_meanwhile
+    response = retry()
+    assert response.status_code == 504
+    assert attempts(failed_first) == [(1, None, "failed"), (2, "r-demo-1", "interrupted")]
+    assert failed_first.rows[2].content is None
+
+
+def test_another_users_conversation_and_a_message_that_is_not_a_question_are_404(failed_first, provider, auth_user_b):
+    answer = retry(path=f"{PATH}/9002/retry")
+    missing = retry(path=f"{PATH}/9999/retry")
+    sign_in(auth_user_b["principal"]["user_id"])
+    others = retry()
+    for response in (answer, missing, others):
+        assert response.status_code == 404
+        assert error_of(response) == {"code": "not_found", "message": "찾을 수 없습니다.", "fields": {}}
+    assert len(provider.calls) == 1 and len(attempts(failed_first)) == 1
+
+
+@pytest.mark.parametrize(
+    ("path", "body", "field"),
+    [
+        (RETRY_PATH, {"retry_key": ""}, "retry_key"),
+        (RETRY_PATH, {"retry_key": "k" * (MAX_REQUEST_KEY_LENGTH + 1)}, "retry_key"),
+        (RETRY_PATH, {"retry_key": "a\x00b"}, "retry_key"),
+        (RETRY_PATH, {}, "retry_key"),
+        (RETRY_PATH, {"retry_key": "r", "content": "다른 질문"}, "body"),
+        (f"{PATH}/abc/retry", {"retry_key": "r"}, "message_id"),
+    ],
+    ids=["empty key", "key too long", "NUL in key", "no key", "unknown field", "bad message ID"],
+)
+def test_invalid_retry_is_422_and_stores_nothing(store, provider, path, body, field):
+    response = call("POST", path, json=body)
+    assert response.status_code == 422
+    assert set(error_of(response)["fields"]) == {field}
+    assert (store.calls, store.commits, provider.calls) == (0, 0, [])
+
+
+def test_retry_log_carries_the_trace_id_and_no_private_text(failed_first, provider, caplog):
+    with caplog.at_level(logging.INFO, logger="app"):
+        response = retry(retry_key=PRIVATE_KEY)
+    assert response.status_code == 201
+    messages = [record.getMessage() for record in caplog.records]
+    assert [message.split(",")[0] for message in messages] == [
+        "Retry received",
+        "Retry saved",
+        "Provider call ended",
+        "Answer saved",
+    ]
+    assert PRIVATE_KEY not in caplog.text and "다시 만든 답변" not in caplog.text
+
+
+def test_the_retry_service_raises_business_errors(failed_first, provider):
+    def retry_directly(conversation_id=501, question_id=9001, retry_key="r-demo-1"):
+        return chat.retry_answer(
+            failed_first, provider, failed_first.owner, conversation_id, question_id, retry_key, trace_id="t"
+        )
+
+    with pytest.raises(chat.ConversationNotFound):
+        retry_directly(conversation_id=999)
+    with pytest.raises(chat.QuestionNotFound):
+        retry_directly(question_id=9002)
+    retry_directly()
+    with pytest.raises(chat.RetryNotAllowed):
+        retry_directly(retry_key="r-demo-2")
+    assert chat.RETRYABLE_STATUSES == {"failed", "interrupted"}
+
+
+def test_openapi_describes_the_retry_responses():
+    operation = app.openapi()["paths"]["/api/conversations/{conversation_id}/messages/{message_id}/retry"]["post"]
+    assert set(operation["responses"]) == {"200", "201", "202", "401", "404", "409", "422", "502", "503", "504"}
+    limits = app.openapi()["components"]["schemas"]["RetryIn"]["properties"]["retry_key"]
+    assert (limits["minLength"], limits["maxLength"]) == (1, MAX_REQUEST_KEY_LENGTH)

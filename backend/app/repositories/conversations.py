@@ -133,6 +133,29 @@ def find_question(session: Session, conversation_id: int, request_key: str) -> M
     return session.scalars(statement).one_or_none()
 
 
+def find_question_by_id(session: Session, conversation_id: int, question_id: int) -> Message | None:
+    """None when the ID is not a question of this conversation, such as an answer or another conversation's row."""
+    statement = select(Message).where(
+        Message.id == question_id, Message.conversation_id == conversation_id, Message.role == "user"
+    )
+    return session.scalars(statement).one_or_none()
+
+
+def find_retry(session: Session, question_id: int, retry_key: str) -> Message | None:
+    """The answer attempt that this retry key already made for the question."""
+    statement = select(Message).where(
+        Message.reply_to_message_id == question_id, Message.role == "assistant", Message.retry_key == retry_key
+    )
+    return session.scalars(statement).one_or_none()
+
+
+def has_later_question(session: Session, conversation_id: int, question_id: int) -> bool:
+    statement = select(Message.id).where(
+        Message.conversation_id == conversation_id, Message.role == "user", Message.id > question_id
+    )
+    return session.scalar(statement.limit(1)) is not None
+
+
 def latest_answer(session: Session, question_id: int) -> Message:
     """The newest answer attempt; every question is stored together with its first one."""
     statement = (
@@ -183,6 +206,27 @@ def add_question(session: Session, conversation_id: int, content: str, request_k
     session.refresh(question)
     session.refresh(answer)
     return question, answer
+
+
+def add_retry(session: Session, conversation_id: int, question_id: int, attempt_no: int, retry_key: str) -> Message:
+    """Add a pending answer attempt after the question's latest one.
+
+    The caller commits and has already checked the owner, the retry key, that no
+    answer is pending and that the latest attempt may be retried.
+    """
+    answer = Message(
+        conversation_id=conversation_id,
+        role="assistant",
+        status="pending",
+        reply_to_message_id=question_id,
+        attempt_no=attempt_no,
+        retry_key=retry_key,
+    )
+    session.add(answer)
+    session.flush()
+    _touch_conversation(session, conversation_id)
+    session.refresh(answer)
+    return answer
 
 
 def finish_answer(

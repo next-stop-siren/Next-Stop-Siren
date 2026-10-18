@@ -269,3 +269,87 @@ def test_another_users_conversation_is_404_and_stores_nothing(session, seeded, p
     assert others.status_code == missing.status_code == 404
     assert error_of(others) == error_of(missing) == {"code": "not_found", "message": "찾을 수 없습니다.", "fields": {}}
     assert session.scalar(select(func.count()).select_from(Message)) == 0 and provider.calls == []
+
+
+def retry(conversation_id, question_id, retry_key="r-demo-1"):
+    return call(
+        "POST", f"/api/conversations/{conversation_id}/messages/{question_id}/retry", json={"retry_key": retry_key}
+    )
+
+
+def stored_question_id(session, conversation_id):
+    """The conversation's latest question."""
+    statement = select(Message.id).where(Message.conversation_id == conversation_id, Message.role == "user")
+    return session.scalars(statement.order_by(Message.id.desc()).limit(1)).one()
+
+
+def attempts(session, question_id):
+    statement = (
+        select(Message.attempt_no, Message.retry_key, Message.status, Message.content)
+        .where(Message.reply_to_message_id == question_id)
+        .order_by(Message.attempt_no)
+    )
+    return [tuple(row) for row in session.execute(statement)]
+
+
+@pytest.mark.parametrize(
+    ("outcome", "first"),
+    [(failing(ProviderFailed()), "failed"), (failing(ProviderTimeout()), "interrupted")],
+    ids=["failed", "interrupted"],
+)
+def test_retry_stores_a_new_attempt_once_per_key(session, seeded, provider, outcome, first):
+    provider.outcome = outcome
+    send(seeded.mine)
+    question_id = stored_question_id(session, seeded.mine)
+    provider.outcome = lambda: "다시 만든 답변"
+    response = retry(seeded.mine, question_id)
+    assert response.status_code == 201
+    answer = response.json()["answer"]
+    assert (answer["attempt_no"], answer["status"], answer["content"]) == (2, "completed", "다시 만든 답변")
+    # Called with no transaction open, and with the question only: the failed attempt is not context.
+    assert provider.calls[-1].observed is False and provider.calls[-1].context == [("user", "안녕?")]
+    again = retry(seeded.mine, question_id)
+    assert again.status_code == 200 and again.json() == response.json()
+    assert attempts(session, question_id) == [(1, None, first, None), (2, "r-demo-1", "completed", "다시 만든 답변")]
+    assert len(provider.calls) == 2
+    history = call("GET", f"/api/conversations/{seeded.mine}/messages").json()["items"]
+    assert [item["attempt_no"] for item in history] == [None, 1, 2]
+    # The answer is completed now, so another key is refused.
+    refused = retry(seeded.mine, question_id, retry_key="r-demo-2")
+    assert refused.status_code == 409 and error_of(refused)["code"] == "retry_not_allowed"
+
+
+def test_retry_refuses_completed_older_and_foreign_questions(session, seeded, provider):
+    assert send(seeded.mine).status_code == 201
+    completed_id = stored_question_id(session, seeded.mine)
+    refused = retry(seeded.mine, completed_id)
+    assert refused.status_code == 409 and error_of(refused)["code"] == "retry_not_allowed"
+
+    provider.outcome = failing(ProviderFailed())
+    send(seeded.mine, content="하나 더", request_key="q-demo-2")
+    failed_id = stored_question_id(session, seeded.mine)
+    provider.outcome = lambda: "세 번째 답변"
+    send(seeded.mine, content="셋째", request_key="q-demo-3")
+    older = retry(seeded.mine, failed_id)
+    assert older.status_code == 409 and error_of(older)["code"] == "retry_not_latest"
+
+    sign_in(seeded.user_b)
+    assert retry(seeded.mine, failed_id).status_code == 404
+    assert attempts(session, failed_id) == [(1, None, "failed", None)]
+
+
+def test_a_late_result_of_the_first_attempt_does_not_overwrite_the_retry(session, seeded, provider):
+    def retried_meanwhile():
+        make_pending_old(session, seeded.mine)
+        provider.outcome = lambda: "다시 만든 답변"
+        assert retry(seeded.mine, stored_question_id(session, seeded.mine)).status_code == 201
+        return "늦은 답변"
+
+    provider.outcome = retried_meanwhile
+    response = send(seeded.mine)
+    assert response.status_code == 504
+    question_id = stored_question_id(session, seeded.mine)
+    assert attempts(session, question_id) == [
+        (1, None, "interrupted", None),
+        (2, "r-demo-1", "completed", "다시 만든 답변"),
+    ]
