@@ -318,7 +318,7 @@ export TEST_DATABASE_URL="$(backend/.venv/bin/python -c 'import sys; from pathli
 ./local.sh build
 ```
 
-첫 실패에서는 다음 명령으로 넘어가지 않는다. 현재 백엔드에는 실제 HTTP 가입·로그인 access로 모의 답변 저장·새 클라이언트 재조회·2인 격리를 잇는 `test_auth_chat_db.py`와 인증·세션·대화·메시지·GPT 대체 서버 검사가 있고, 프런트엔드에는 비회원·모달 단위 검사와 브라우저 키보드 검사가 있다. Chromium readiness 검사는 페이지 안에서 `/api/ready`를 fetch하고 503을 모의하며 실제 로그인→채팅 E2E를 대신하지 않는다. 각 도구가 보고한 실제 실행·skip·실패 수를 기록한다. 전체 테스트 묶음은 `./local.sh test`로도 실행할 수 있다.
+첫 실패에서는 다음 명령으로 넘어가지 않는다. 현재 백엔드에는 실제 HTTP 가입·로그인 access로 모의 답변 저장·새 클라이언트 재조회·2인 격리를 잇는 `test_auth_chat_db.py`와 인증·세션·대화·메시지·GPT 대체 서버 검사가 있고, 프런트엔드에는 비회원·모달 단위 검사와 브라우저 키보드 검사가 있다. Chromium readiness 검사는 Vite가 제공하는 실제 `checkApi`를 불러 API·전용 DB 연결 성공과 모의 503 오류 거부를 확인한다. 사용자 오류 화면이나 실제 로그인→채팅 E2E를 대신하지 않는다. 각 도구가 보고한 실제 실행·skip·실패 수를 기록한다. 전체 테스트 묶음은 `./local.sh test`로도 실행할 수 있다.
 
 ### 5. 정리와 중지
 
