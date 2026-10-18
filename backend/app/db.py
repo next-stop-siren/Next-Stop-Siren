@@ -47,12 +47,21 @@ def make_session_factory(url: str) -> sessionmaker[Session]:
 _session_factory: sessionmaker[Session] | None = None
 
 
-def get_session() -> Generator[Session, None, None]:
-    """Yield a session; callers explicitly commit or roll back their work."""
+def get_session_factory() -> sessionmaker[Session]:
+    """The factory of request sessions, for work that outlives the request's own session.
+
+    A streamed response body is produced after `get_session` has closed its session,
+    so it opens one here and closes it itself.
+    """
     global _session_factory
     if _session_factory is None:
         _session_factory = make_session_factory(database_url())
-    with _session_factory() as session:
+    return _session_factory
+
+
+def get_session() -> Generator[Session, None, None]:
+    """Yield a session; callers explicitly commit or roll back their work."""
+    with get_session_factory()() as session:
         try:
             yield session
         finally:
