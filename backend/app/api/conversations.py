@@ -1,21 +1,30 @@
 """Create, list and read the signed-in user's own conversations, and send questions to them."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
+from contextlib import AbstractContextManager
 from typing import Annotated, Protocol
 
+import anyio
 from fastapi import APIRouter, Depends, Path, Query, Request, Response
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.auth import current_user_id
 from app.api.errors import (
+    DATABASE_UNAVAILABLE,
     ApiError,
+    api_error_body,
     conversation_busy,
+    database_unavailable_body,
     not_found,
     provider_failed,
     provider_timeout,
     request_key_conflict,
 )
 from app.api.schemas import (
+    AnswerDelta,
     ConversationCreated,
     ConversationOut,
     ConversationPage,
@@ -27,7 +36,7 @@ from app.api.schemas import (
     QuestionAnswer,
     QuestionIn,
 )
-from app.db import get_session
+from app.db import get_session, get_session_factory
 from app.integrations.provider import AnswerProvider, get_provider
 from app.observability import request_trace_id
 from app.repositories import conversations as repository
@@ -41,6 +50,8 @@ router = APIRouter(
 # The user ID comes first so that an unauthenticated request never opens a session.
 UserId = Annotated[int, Depends(current_user_id)]
 DbSession = Annotated[Session, Depends(get_session)]
+# Opens the session of a streamed answer's last transaction, after the request's own has closed.
+SessionFactory = Annotated[Callable[[], AbstractContextManager[Session]], Depends(get_session_factory)]
 Provider = Annotated[AnswerProvider, Depends(get_provider)]
 
 # The HTTP answer to each refusal of the chat service.
@@ -135,4 +146,109 @@ def send_question(
         raise provider_timeout()
     return QuestionAnswer(
         question=MessageOut.model_validate(exchange.question), answer=MessageOut.model_validate(exchange.answer)
+    )
+
+
+def sse(event: str, data: BaseModel) -> str:
+    """One server-sent event; the JSON is a single line because JSON escapes line breaks."""
+    return f"event: {event}\ndata: {data.model_dump_json()}\n\n"
+
+
+def abandon(events: chat.AnswerStream, trace_id: str) -> None:
+    """End a stream nobody reads any more; the service stores an unfinished answer as interrupted.
+
+    If that cannot be stored, the answer stays pending and the next send recovers it.
+    """
+    try:
+        events.close()
+    except DATABASE_UNAVAILABLE as error:
+        database_unavailable_body(error, trace_id)
+
+
+async def answer_events(
+    opening: str, events: chat.AnswerStream, question: MessageOut, trace_id: str
+) -> AsyncIterator[str]:
+    """The response body: `start`, a `delta` per piece, then `done` or `error`.
+
+    `done` carries the answer as stored, so it is sent only after the commit. The status
+    code has been sent by then, so an ending that the JSON route answers with 502, 504
+    or 503 is an `error` event with the same body. A reader that leaves at any point,
+    `start` included, reaches the `finally`, which closes the stream.
+    """
+    try:
+        yield opening
+        while True:
+            try:
+                # A reader that leaves stops this wait at once instead of after the next item; the
+                # `finally` then closes the stream, which wakes the `next` and keeps it from completing.
+                item = await anyio.to_thread.run_sync(next, events, None, abandon_on_cancel=True)
+            except DATABASE_UNAVAILABLE as error:
+                yield sse("error", database_unavailable_body(error, trace_id))
+                return
+            if item is None:
+                return
+            if isinstance(item, str):
+                yield sse("delta", AnswerDelta(text=item))
+            elif item.status == "completed":
+                yield sse("done", QuestionAnswer(question=question, answer=MessageOut.model_validate(item)))
+            else:
+                ended = provider_failed() if item.status == "failed" else provider_timeout()
+                yield sse("error", api_error_body(ended, trace_id))
+    finally:
+        # A reader that leaves cancels this task; the shield lets the unfinished answer be closed anyway.
+        with anyio.CancelScope(shield=True):
+            await run_in_threadpool(abandon, events, trace_id)
+
+
+@router.post(
+    "/{conversation_id}/messages/stream",
+    response_model=None,
+    responses={
+        200: {
+            "model": QuestionAnswer,
+            "description": "A new question: `start`, `delta` and `done` or `error` events. "
+            "A request key already stored whose answer has ended: the stored pair as JSON.",
+            "content": {"text/event-stream": {}},
+        },
+        202: {"model": QuestionAnswer, "description": "The request key was already stored and its answer is pending."},
+        404: {"model": ErrorBody},
+        409: {"model": ErrorBody},
+    },
+)
+def stream_question(
+    conversation_id: Annotated[DecimalId, Path()],
+    body: QuestionIn,
+    user_id: UserId,
+    session: DbSession,
+    open_session: SessionFactory,
+    provider: Provider,
+    request: Request,
+) -> Response:
+    """Send a question as `send_question` does, with the answer streamed while it is made.
+
+    Everything refused or already stored is answered as JSON before a stream starts, so
+    a screen that lost its stream sends the same key and body again to read what was stored.
+    """
+    trace_id = request_trace_id(request)
+    try:
+        begun = chat.begin_question(
+            session, user_id, conversation_id, body.content, body.request_key, trace_id=trace_id
+        )
+    except chat.ChatError as error:
+        raise CHAT_ERRORS[type(error)]() from None
+    question = MessageOut.model_validate(begun.question)
+    pair = QuestionAnswer(question=question, answer=MessageOut.model_validate(begun.answer))
+    if isinstance(begun, chat.Exchange):
+        status_code = 202 if begun.answer.status == "pending" else 200
+        return JSONResponse(status_code=status_code, content=pair.model_dump(mode="json"))
+    # Reading the committed rows for `start` may have begun a transaction, as a session
+    # that expires rows on commit reloads them. The request session is not used again,
+    # so close it now: no transaction may stay open while the provider is called.
+    session.close()
+    events = chat.AnswerStream(open_session, provider, begun, trace_id=trace_id)
+    return StreamingResponse(
+        answer_events(sse("start", pair), events, question, trace_id),
+        media_type="text/event-stream",
+        # A proxy must pass each event on as it is written.
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
