@@ -168,6 +168,7 @@ class GoogleSettings:
     client_secret: str = field(repr=False)
     redirect_uri: str
     transaction_key: bytes = field(repr=False)
+    frontend_origin: str | None = None
 
     callback_path: ClassVar[str] = "/api/auth/google/callback"
     discovery_url: ClassVar[str] = "https://accounts.google.com/.well-known/openid-configuration"
@@ -193,6 +194,13 @@ class GoogleSettings:
         # 정확히 일치해야 하므로 사용자 정보, 쿼리, 프래그먼트나 다른 호스트가 포함된 주소도 거부한다.
         if redirect_uri != auth.api_origin + cls.callback_path:
             raise AuthSettingsError("GOOGLE_REDIRECT_URI: API Origin과 Google callback 경로가 일치해야 합니다.")
+        frontend_origin = None
+        if "GOOGLE_FRONTEND_ORIGIN" in values:
+            frontend_origin = _required(values, "GOOGLE_FRONTEND_ORIGIN")
+            frontend_site = _origin(frontend_origin, "GOOGLE_FRONTEND_ORIGIN")
+            api_site = _origin(auth.api_origin, "AUTH_API_ORIGIN")
+            if frontend_origin not in auth.allowed_origins or frontend_site != api_site:
+                raise AuthSettingsError("GOOGLE_FRONTEND_ORIGIN: API와 같은 scheme·host의 허용된 Origin이 필요합니다.")
         transaction_key = _key(values, "GOOGLE_TRANSACTION_KEY")
         if len(transaction_key) != 32:
             raise AuthSettingsError("GOOGLE_TRANSACTION_KEY: 정확히 32바이트의 키가 필요합니다.")
@@ -203,6 +211,7 @@ class GoogleSettings:
             client_secret=client_secret,
             redirect_uri=redirect_uri,
             transaction_key=transaction_key,
+            frontend_origin=frontend_origin,
         )
 
 

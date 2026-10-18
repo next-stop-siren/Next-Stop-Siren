@@ -4,12 +4,14 @@
 
 이 저장소의 구현 기준은 React·TypeScript·Vite 화면, FastAPI 서버, PostgreSQL이다. 선택한 ORM·인증 라이브러리와 현재 의존성의 차이는 [기술 구성](stack.md)에 정리했다. 공통 설정은 PM이 검토한다. 팀원은 같은 저장소와 잠금 파일을 사용하며 개인별로 프로젝트를 다시 초기화하지 않는다.
 
-초기 앱과 macOS·Windows 수동 실행 명령은 루트 [README](../../README.md)에 있다. macOS Colima의 DB 런타임은 검증했으며 Windows 실행은 아직 검증하지 않았다.
+설치·API 확인 순서는 [온보딩](onboarding.md)에 있다. 과거 macOS Colima의 DB 런타임 검증 기록과 이번 소스·문서 대조를 구분한다. Windows 실행은 아직 **NOT RUN**이다.
 
 ### Node.js·npm
 
 - **채택 기준:** Node.js 24.21.0 LTS와 함께 제공되는 npm 11.19.0
 - **현재 잠금 파일:** `frontend/package-lock.json`
+
+프런트엔드만 작업할 때는 `frontend-setup`/`frontend-dev`와 `frontend-check`/`frontend-test`/`frontend-build`를 사용한다. 이 경로는 Node.js/npm만 준비하며 아래 Python·uv·PostgreSQL·Docker, `.env`와 인증 키는 요구하지 않는다. Playwright 브라우저도 설치하지 않는다. 전체 API 연결은 별도 `setup`/`dev`가 필요하다. 명령 예시는 [온보딩](onboarding.md#프런트엔드만-준비하고-실행하기)에 있다.
 
 ### Python·uv
 
@@ -21,7 +23,7 @@
 - **채택 기준:** 지원 중인 17.11 안정판
 - **현재 구성:** `compose.yaml`의 개발·테스트 DB 서비스
 
-macOS 터미널과 Windows PowerShell에서 Node.js, npm, Python, uv, Docker/Compose, PostgreSQL 서버의 실제 버전을 출력해 기록한다. 설치된 버전이 저장소의 고정 버전과 다르면 설치를 멈추고 안내에 맞춘다.
+전체 환경에서는 macOS 터미널과 Windows PowerShell에서 Node.js, npm, Python, uv, Docker/Compose, PostgreSQL 서버의 실제 버전을 출력해 기록한다. 설치된 버전이 저장소의 고정 버전과 다르면 설치를 멈추고 안내에 맞춘다.
 
 npm은 잠금 파일을 따르는 깨끗한 설치, uv는 잠금 파일의 변경을 막는 동기화를 기본으로 한다.
 
@@ -36,14 +38,14 @@ macOS에는 Git과 실행 중인 Docker 엔진·Compose(Colima 또는 Docker Des
 실제 명령과 기대 결과는 [실행 체크리스트](onboarding.md)에 있다. macOS 프로젝트 전용 언어 도구와 잠금 설치는 기존 Git·Docker가 있는 환경에서 확인했다. 새 OS 전체 설치 검증은 아니다. Windows 실제 실행은 **NOT RUN**이다.
 
 1. **호스트 준비 후 프로젝트 설치:** 팀원이 Git과 실행 중인 Docker를 준비한다. `setup`이 프로젝트 전용 언어 도구와 버전·daemon을 확인하고 잠금 파일로 화면·서버 의존성을 설치한다. `.env`가 없을 때만 예시 설정을 복사하며 기존 `.env`는 덮어쓰지 않는다.
-2. **시작:** Compose로 개발용 PostgreSQL을 시작하고, 화면과 API는 로컬 프로세스로 각각 실행한다. 초기 통합에서는 기본 화면, API 상태 확인, DB 연결, 화면→API 연결을 확인한다.
-3. **상태 확인:** DB 준비 상태, API 상태 응답, 브라우저의 화면 및 API 요청 성공을 확인한다. 실패하면 해당 단계의 로그와 버전을 기록한다.
+2. **인증·스키마 준비와 시작:** 기존 `.env`에 독립 인증 키 4개와 정확한 Origin을 설정·검증한 뒤 `db-init`으로 누락 테이블을 만들고 `dev`를 실행한다. 일반 모의 채팅에는 Google·AI 키가 필요 없다. 화면은 비회원·모달 상태이며 실제 API 연결은 후속 작업이다.
+3. **기능 확인:** `health`·`ready`는 프로세스·DB 연결만 확인하므로 [Swagger 절차](onboarding.md#3-1-swagger로-가입로그인과-모의-대화-확인)에서 가입·로그인·본인 모의 대화 저장·재조회도 확인한다. 인증 설정·스키마 준비 상태를 health/ready 성공으로 대신 판단하지 않는다.
 4. **검사·빌드:** 화면의 형식·린트·타입 검사, 서버 검사와 해당 테스트를 실행한 뒤 화면 빌드와 로컬 빌드 확인을 수행한다. 성공은 각 명령의 정상 종료와 실제 화면·API 연결 확인이다.
 5. **중지·복구:** 로컬 화면·API 프로세스와 Compose 서비스를 중지한다. 재설치가 필요하면 의존성·생성 빌드 캐시만 정리하고 잠금 파일 기준으로 설치한다. `.env`, 개발·테스트 DB 볼륨과 데이터를 캐시 정리 대상으로 취급하지 않는다.
 
 개발 DB는 Compose의 별도 서비스·볼륨으로 유지한다. 테스트는 개발 DB와 다른 이름·접속 정보·볼륨의 전용 PostgreSQL을 쓴다. 테스트 시작 전 대상 DB가 테스트 전용인지 확인하고, 개발 DB를 가리키면 즉시 실패시킨다.
 
-[공통 ORM 초기 준비](stack.md#개발과-초기-db)는 현재 `main`에 구현되어 있다. `setup`은 테이블을 생성하지 않는다. `db-init`·`db-init-test`는 등록된 앱 모델의 누락 테이블만 생성하며 현재 등록 모델이 없어 정상적으로 0개를 보고한다. `test-db`는 별도 테스트 전용 모델을 검사한다. #3·#9는 공통 준비와 각 이슈의 직접 선행 조건을 확인한 뒤 시작한다.
+[ORM 초기 준비](stack.md#개발과-초기-db)와 인증·대화 제품 모델 5개가 구현되어 있다. `setup`은 제품 테이블을 만들지 않는다. `db-init`은 개발 DB, `db-init-test`는 별도 보호된 테스트 DB의 누락 테이블만 생성하고 등록 모델 수 5개를 보고한다. 기존 컬럼·제약을 변경하거나 데이터를 삭제하지 않는다. 이미 있는 스키마의 호환성·마이그레이션은 별도 검토가 필요하다. `test-db`에는 제품 모델·인증·대화·메시지 통합 검사도 있다.
 
 운영 대상은 [단일 AWS EC2의 Compose 구성](stack.md#선택한-배포-구성)이다. 운영 컨테이너 구성과 배포 검증은 아직 구현되지 않았다.
 
@@ -51,7 +53,7 @@ macOS에는 Git과 실행 중인 Docker 엔진·Compose(Colima 또는 Docker Des
 
 ## S11 개인 AI 설정
 
-[S11 GPT 기준](../04-reference/ai.md)의 개인별 서버 키·주간 할당·고정 모델 기준을 따른다. 키는 각자의 백엔드/서버 `.env`에만 보관하고 프런트엔드에 전달하지 않는다. AI 설정 변수와 읽기 코드는 S11 구현 시 정하며 현재 지원하는 설정이라는 뜻이 아니다.
+[S11 GPT 기준](../04-reference/ai.md)의 개인별 서버 키·주간 할당·고정 모델 기준을 따른다. 키는 각자의 백엔드/서버 `.env`에만 보관하고 프런트엔드에 전달하지 않는다. `CODYSSEY_API_KEY`, `CODYSSEY_BASE_URL`, `CODYSSEY_MODEL` 파서와 어댑터는 격리 스모크 전용이다. 일반 앱의 `get_provider()`는 모의를 유지한다. 실제 키 없이도 모의 대화 저장·조회가 가능하다.
 
 ## PM 배포 준비 체크리스트
 

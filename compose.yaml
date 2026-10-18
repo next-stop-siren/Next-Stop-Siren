@@ -1,3 +1,5 @@
+name: b7-1
+
 services:
   db-dev:
     image: postgres:17.11

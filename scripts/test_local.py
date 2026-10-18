@@ -15,6 +15,29 @@ import local
 
 
 class LocalAutomationTest(unittest.TestCase):
+    def test_every_compose_operation_has_exact_identity(self):
+        for command in ("config", "ps", "up", "stop", "exec"):
+            with self.subTest(command=command), patch.object(local, "run", return_value="") as run:
+                local.compose(command)
+                argv = run.call_args.args[0]
+                self.assertEqual(argv[:10], [local.TOOLS["docker"], "compose",
+                    "--project-directory", str(local.ROOT), "--env-file", str(local.ENV),
+                    "-f", str(local.ROOT / "compose.yaml"), "-p", "b7-1"])
+                self.assertEqual(argv[10], command)
+
+    def test_other_checkout_container_blocks_up_and_stop(self):
+        labels = {"com.docker.compose.project": "b7-1",
+                  "com.docker.compose.service": "db-dev",
+                  "com.docker.compose.project.working_dir": "/other/checkout",
+                  "com.docker.compose.project.config_files": str(local.ROOT / "compose.yaml")}
+        for command in ("up", "stop"):
+            with self.subTest(command=command), patch.object(local, "run",
+                    side_effect=["owned-id", json.dumps([{"Config": {"Labels": labels}}])]) as run:
+                with self.assertRaisesRegex(local.Failure, "owned by another checkout"):
+                    local.compose(command)
+                self.assertEqual(run.call_count, 2)
+                self.assertNotIn(command, run.call_args_list[0].args[0])
+
     def test_windows_tool_resolves_command_wrapper(self):
         with patch.object(local.os, "name", "nt"), \
              patch.object(local.shutil, "which", return_value=r"C:\Tools\npm.cmd"):
