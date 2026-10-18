@@ -24,6 +24,7 @@ from app.services import chat
 from test_conversations_api import call, sign_in
 from test_messages_api_db import DONE, INTERRUPTED, OLD, WAITING, save, stored
 from test_messages_stream_api import (
+    LEAVING,
     SHORT_LIMIT,
     STALL,
     StreamProvider,
@@ -89,10 +90,9 @@ def test_done_follows_the_commit_and_matches_the_reloaded_history(session, seede
     assert made.observed is False and made.context == [("user", "안녕?")]
 
 
-@pytest.mark.parametrize("event", ["start", "delta"], ids=["before the first piece", "between two pieces"])
-def test_a_reader_that_leaves_leaves_an_interrupted_answer_that_is_read_back(session, seeded, provider, event):
-    provider.pieces = ["안녕", "하세요", "."]
-    names = written_events(leave_after(provider, event, path=seeded.path))
+@pytest.mark.parametrize("leaving", list(LEAVING))
+def test_a_reader_that_leaves_leaves_an_interrupted_answer_that_is_read_back(session, seeded, provider, leaving):
+    names = written_events(leave_after(provider, leaving, path=seeded.path))
     assert names[0] == "start" and "done" not in names
     assert stored(session, seeded.mine) == INTERRUPTED
     # The same key reads the stored state as JSON, without another provider call.
@@ -103,7 +103,7 @@ def test_a_reader_that_leaves_leaves_an_interrupted_answer_that_is_read_back(ses
     assert (answer["status"], answer["content"], answer["error_code"]) == ("interrupted", None, "outcome_unknown")
     assert len(provider.calls) == calls
     # A new question is answered, and the interrupted pair is not in its context.
-    provider.before_piece = lambda index: None
+    provider.before_piece = provider.ending = lambda *_args: None
     assert events_of(send(seeded, content="하나 더", request_key="q-demo-2"))[-1][0] == "done"
     assert provider.calls[-1].context == [("user", "하나 더")]
 

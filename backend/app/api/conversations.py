@@ -179,7 +179,9 @@ async def answer_events(
         yield opening
         while True:
             try:
-                item = await run_in_threadpool(next, events, None)
+                # A reader that leaves stops this wait at once instead of after the next item; the
+                # `finally` then closes the stream, which wakes the `next` and keeps it from completing.
+                item = await anyio.to_thread.run_sync(next, events, None, abandon_on_cancel=True)
             except DATABASE_UNAVAILABLE as error:
                 yield sse("error", database_unavailable_body(error, trace_id))
                 return

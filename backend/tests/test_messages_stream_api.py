@@ -269,17 +269,30 @@ def test_an_answer_that_ends_after_recovery_closed_it_is_not_stored(store, provi
     assert stored(store)[1] == ("assistant", "interrupted", None, "outcome_unknown")
 
 
-def leave_after(provider, event: str, path: str = PATH) -> list[dict]:
-    """Send the question as an ASGI client that disconnects once `event` (`start` or `delta`) is written.
+# Where the client leaves, and what the provider holds until it has: the next piece, or its end.
+LEAVING = {
+    "before the first piece": ("start", 0),
+    "between two pieces": ("delta", 1),
+    "after the last piece": ("delta", None),
+}
 
-    The provider holds the piece after that event until the client has left, so the
-    stream is always abandoned before the provider ends: before its first piece after
-    `start`, between two pieces after the first `delta`. Returns the messages the
-    application sent.
+
+def leave_after(provider, leaving: str, path: str = PATH) -> list[dict]:
+    """Send the question as an ASGI client that disconnects at the `LEAVING` point named.
+
+    The provider holds what follows until the client has left, so the stream is always
+    abandoned before the provider ends. After the last piece the provider then ends
+    normally, a moment later: the case where it ends while the server still waits for it.
+    Returns the messages the application sent.
     """
+    event, held = LEAVING[leaving]
     left = threading.Event()
-    held = {"start": 0, "delta": 1}[event]
-    provider.before_piece = lambda index: index == held and left.wait(5)
+    if held is None:
+        provider.pieces = ["안녕하세요."]
+        provider.ending = lambda: left.wait(5) and time.sleep(0.3)
+    else:
+        provider.pieces = ["안녕", "하세요", "."]
+        provider.before_piece = lambda index: index == held and left.wait(5)
     marker = f"event: {event}".encode()
     body = json.dumps({"content": "안녕?", "request_key": "q-demo-1"}).encode()
     scope = {
@@ -306,6 +319,9 @@ def leave_after(provider, event: str, path: str = PATH) -> list[dict]:
             for request in requests:
                 return request
             await written.wait()
+            if held is None:
+                # Let the server reach its wait for the provider's end before the client leaves.
+                await asyncio.sleep(0.1)
             left.set()
             return {"type": "http.disconnect"}
 
@@ -325,11 +341,10 @@ def written_events(sent: list[dict]) -> list[str]:
     return [name for name, _data in parse_events(b"".join(message.get("body", b"") for message in sent[1:]).decode())]
 
 
-@pytest.mark.parametrize("event", ["start", "delta"], ids=["before the first piece", "between two pieces"])
-def test_a_reader_that_leaves_gets_no_done_and_the_answer_is_stored_as_interrupted(store, provider, caplog, event):
-    provider.pieces = ["안녕", "하세요", "."]
+@pytest.mark.parametrize("leaving", list(LEAVING))
+def test_a_reader_that_leaves_gets_no_done_and_the_answer_is_stored_as_interrupted(store, provider, caplog, leaving):
     with caplog.at_level(logging.WARNING, logger="app"):
-        names = written_events(leave_after(provider, event))
+        names = written_events(leave_after(provider, leaving))
     assert "Stream abandoned" in caplog.text
     assert names[0] == "start" and "done" not in names
     # No piece is stored, although some were sent.
@@ -342,7 +357,7 @@ def test_a_reader_that_leaves_gets_no_done_and_the_answer_is_stored_as_interrupt
     assert again.json() == {"question": QUESTION, "answer": INTERRUPTED}
     assert len(provider.calls) == calls <= 1
     # The conversation is not blocked, and the abandoned pieces are not in the next context.
-    provider.before_piece = lambda index: None
+    provider.before_piece = provider.ending = lambda *_args: None
     assert events_of(send(content="하나 더", request_key="q-demo-2"))[-1][0] == "done"
     assert provider.calls[-1].context == [("user", "하나 더")]
 
@@ -368,6 +383,30 @@ def test_closing_the_service_stream_interrupts_an_unfinished_answer_at_any_point
     finished.close()
     assert pieces == ["안녕", "하세요."] and answer is store.rows[5]
     assert stored(store)[5] == ("assistant", "completed", "안녕하세요.", None)
+
+
+def test_closing_while_next_waits_for_the_end_never_stores_completed(store, provider):
+    """`close` from another thread wakes a `next` that waits for the provider's end, even if it ends later."""
+    released = threading.Event()
+    provider.pieces = ["안녕하세요."]
+    provider.ending = lambda: released.wait(5)
+    started = chat.begin_question(store, store.owner, 501, "안녕?", "q-demo-1", trace_id="t")
+    stream = chat.AnswerStream(lambda: nullcontext(store), provider, started, trace_id="t")
+    assert next(stream) == "안녕하세요."
+    waited: list = []
+    reader = threading.Thread(target=lambda: waited.append(next(stream)))
+    reader.start()
+    time.sleep(0.1)
+    assert reader.is_alive()
+    stream.close()
+    reader.join(1)
+    assert not reader.is_alive()
+    # The provider ends only now, after the reader left: the stored answer is still interrupted.
+    released.set()
+    time.sleep(0.1)
+    (answer,) = waited
+    assert answer.status == "interrupted"
+    assert stored(store)[1] == ("assistant", "interrupted", None, "outcome_unknown")
 
 
 # Short enough to wait out in a test; the stalls below are longer.

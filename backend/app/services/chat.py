@@ -175,8 +175,12 @@ class _Ended:
     """Put on the queue after the provider's last piece."""
 
 
-# What the worker thread puts on the queue, with the `time.monotonic()` reading it arrived at.
-Arrival = tuple[str | _Ended | Exception, float]
+class _Left:
+    """Put on the queue by `close`, to wake a reader that is waiting for the provider."""
+
+
+# What goes on the queue, with the `time.monotonic()` reading it arrived at.
+Arrival = tuple[str | _Ended | _Left | Exception, float]
 
 
 class AnswerStream:
@@ -191,9 +195,12 @@ class AnswerStream:
     provider is read on a worker thread, so a provider that stops sending cannot hold
     the stream past it; an arrival after it counts as a timeout.
 
-    `close` ends the stream at any point: before the first piece, between two pieces or
-    after the end. An answer whose outcome has not been stored yet is then stored as
-    interrupted. `open_session` gives the session of that one short transaction.
+    `close` ends the stream at any point: before the first piece, between two pieces,
+    while the reader waits for the provider's end, or after the end. It may be called
+    from another thread while a `next` is waiting. An answer whose outcome has not been
+    stored yet is then stored as interrupted, never as completed: the reader checks for
+    `close` right before it stores. `open_session` gives the session of that one short
+    transaction.
     """
 
     def __init__(
@@ -209,7 +216,11 @@ class AnswerStream:
         self._started = started
         self._trace_id = trace_id
         self._called_at = time.monotonic()
+        self._arrivals: queue.Queue[Arrival] = queue.Queue()
+        # Set by `close`; the worker stops asking the provider and the reader stores no completion.
         self._stop = threading.Event()
+        # Held while `next` runs, so `close` waits for a running `next` instead of overlapping it.
+        self._reading = threading.Lock()
         # Set once the outcome is handed to storage, which then is not tried again.
         self._storing = False
         self._items = self._read()
@@ -218,24 +229,30 @@ class AnswerStream:
         return self
 
     def __next__(self) -> str | Message:
-        return next(self._items)
+        with self._reading:
+            return next(self._items)
 
     def close(self) -> None:
         """Stop reading; an answer whose outcome is not stored yet is stored as interrupted.
 
         If storing fails, the answer stays pending and the next send recovers it.
         """
-        self._items.close()
         self._stop.set()
+        self._arrivals.put((_Left(), time.monotonic()))
+        with self._reading:
+            self._items.close()
         if not self._storing:
-            logger.warning("Stream abandoned, trace_id=%s, answer_id=%s", self._trace_id, self._started.answer_id)
+            self._abandoned()
             self._store("interrupted", None, "outcome_unknown")
+
+    def _abandoned(self) -> None:
+        logger.warning("Stream abandoned, trace_id=%s, answer_id=%s", self._trace_id, self._started.answer_id)
 
     def _read(self) -> Generator[str | Message]:
         limit = ANSWER_TIME_LIMIT_SECONDS
         self._called_at = time.monotonic()
         deadline = self._called_at + limit
-        arrivals: queue.Queue[Arrival] = queue.Queue()
+        arrivals = self._arrivals
         threading.Thread(target=self._receive, args=(arrivals, limit), daemon=True).start()
         pieces: list[str] = []
         text: str | None = None
@@ -247,7 +264,7 @@ class AnswerStream:
                 item, arrived_at = arrivals.get(timeout=max(0.0, deadline - time.monotonic()))
             except queue.Empty:
                 break
-            if arrived_at > deadline:
+            if arrived_at > deadline or isinstance(item, _Left):
                 break
             if isinstance(item, str):
                 pieces.append(item)
@@ -265,6 +282,10 @@ class AnswerStream:
                 break
             else:
                 raise item
+        if self._stop.is_set():
+            # The reader left while this one waited: whatever the provider sent, nothing is complete.
+            self._abandoned()
+            text, status, error_code = None, "interrupted", "outcome_unknown"
         self._stop.set()
         yield self._store(status, text, error_code)
 
