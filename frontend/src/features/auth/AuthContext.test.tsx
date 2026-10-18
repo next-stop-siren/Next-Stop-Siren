@@ -59,11 +59,19 @@ function successBody(email: string, expires_in = 900) {
 
 // 초기 부트스트랩(csrf→refresh)은 항상 401로 실패시켜 guest로 빠르게 정착시킨다.
 function mockGuestBootstrap(extra: (url: string, init?: RequestInit) => Response | null) {
+  let csrfCallCount = 0
+
   return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const url = typeof input === 'string' ? input : input.toString()
-    if (url === '/api/auth/csrf' && !init) {
-      return jsonResponse(401, errorBody('unauthenticated'))
+
+    if (url === '/api/auth/csrf') {
+      csrfCallCount += 1
+      if (csrfCallCount === 1) {
+        // 부트스트랩의 첫 호출만 무조건 401로 처리해 guest로 빠르게 정착시킨다.
+        return jsonResponse(401, errorBody('unauthenticated'))
+      }
     }
+
     const result = extra(url, init as RequestInit | undefined)
     if (result) return result
     throw new Error(`테스트에서 예상하지 못한 fetch 호출: ${url} ${JSON.stringify(init)}`)
@@ -176,6 +184,9 @@ test('csrf_failed(403)를 받으면 1초 뒤 csrf→refresh를 한 번만 재시
         expires_in: 900,
         csrf_token: 'csrf-3',
       })
+    }
+    if (url === '/api/me') {
+      return jsonResponse(200, { user: { id: 'u1', email: 'a@test.com', created_at: '2026-01-01T00:00:00Z' } })
     }
     throw new Error(`예상하지 못한 호출: ${url} ${JSON.stringify(init)}`)
   })
@@ -313,4 +324,90 @@ test('logout API가 실패해도 화면은 guest로 차단된다', async () => {
   await user.click(screen.getByText('logout'))
 
   await waitFor(() => expect(screen.getByTestId('status').textContent).toBe('guest'))
+})
+
+test('bootstrap은 GET과 credentials include로 /api/auth/csrf를 호출한다', async () => {
+  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const url = typeof input === 'string' ? input : input.toString()
+    if (url === '/api/auth/csrf') {
+      return jsonResponse(401, errorBody('unauthenticated'))
+    }
+    throw new Error(`예상하지 못한 호출: ${url}`)
+  })
+
+  render(
+    <AuthProvider>
+      <Probe />
+    </AuthProvider>,
+  )
+
+  await waitFor(() => expect(screen.getByTestId('status').textContent).toBe('guest'))
+
+  expect(fetchSpy).toHaveBeenCalledWith(
+    '/api/auth/csrf',
+    expect.objectContaining({ method: 'GET', credentials: 'include' }),
+  )
+
+  fetchSpy.mockRestore()
+})
+
+test('재시도까지 실패하면 POST는 총 2회만 보내고 guest로 끝난다', async () => {
+  vi.useFakeTimers()
+
+  let refreshPostCalls = 0
+  let csrfCalls = 0
+
+  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const url = typeof input === 'string' ? input : input.toString()
+
+    if (url === '/api/auth/csrf') {
+      csrfCalls += 1
+      // 첫 호출(부트스트랩)은 401로 빠르게 guest로 보낸다.
+      if (csrfCalls === 1) return jsonResponse(401, errorBody('unauthenticated'))
+      return jsonResponse(200, { csrf_token: `csrf-${csrfCalls}` })
+    }
+    if (url === '/api/auth/login') {
+      return jsonResponse(200, {
+        user: { id: 'u1', email: 'a@test.com', created_at: '2026-01-01T00:00:00Z' },
+        access_token: 'a1',
+        token_type: 'Bearer',
+        expires_in: 31,
+        csrf_token: 'csrf-login',
+      })
+    }
+    if (url === '/api/auth/refresh') {
+      refreshPostCalls += 1
+      // 원 요청과 재시도 둘 다 403 → 더 이상 재시도하지 않고 실패해야 한다.
+      return jsonResponse(403, errorBody('csrf_failed'))
+    }
+    throw new Error(`예상하지 못한 호출: ${url} ${JSON.stringify(init)}`)
+  })
+
+  type ProbeActions = ReturnType<typeof useAuth>
+  const actionsRef: { current: ProbeActions | null } = { current: null }
+
+  render(
+    <AuthProvider>
+      <Probe actionsRef={actionsRef} />
+    </AuthProvider>,
+  )
+
+  await act(async () => {
+    await vi.runOnlyPendingTimersAsync()
+  })
+
+  await act(async () => {
+    await actionsRef.current?.login('a@test.com', 'password123!')
+  })
+  expect(screen.getByTestId('status').textContent).toBe('authenticated')
+
+  // 1초 뒤 첫 refresh 시도(403) → 1초 대기 후 재시도(403) → 포기하고 guest로.
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(2200)
+  })
+
+  expect(refreshPostCalls).toBe(2) // 원 요청 포함 최대 2번, 더 늘지 않는다
+  expect(screen.getByTestId('status').textContent).toBe('guest')
+
+  fetchSpy.mockRestore()
 })

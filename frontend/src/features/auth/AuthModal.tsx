@@ -7,6 +7,27 @@ type AuthModalProps = {
   onClose: () => void
 }
 
+function validateEmail(rawEmail: string): string | null {
+  const email = rawEmail.trim()
+  if (email.length === 0) return '이메일을 입력해 주세요.'
+  if ([...email].length > 320) return '이메일이 너무 깁니다.'
+  // 서버와 같은 수준의 느슨한 형식 검사 — 로컬 파트의 비ASCII 문자를 막지 않는다.
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return '올바른 이메일 형식이 아닙니다.'
+  return null
+}
+
+function validatePassword(password: string): string | null {
+  const codePointLength = [...password].length
+  if (codePointLength < 12 || codePointLength > 128) {
+    return '비밀번호는 12자 이상 128자 이하여야 합니다.'
+  }
+  const byteLength = new TextEncoder().encode(password).length
+  if (byteLength > 1024) {
+    return '비밀번호가 너무 깁니다.'
+  }
+  return null
+}
+
 type FormStatus = 'idle' | 'submitting' | 'error'
 
 const FOCUSABLE_SELECTOR =
@@ -91,23 +112,30 @@ function AuthModal({ onClose }: AuthModalProps) {
     event.preventDefault()
 
     const formData = new FormData(event.currentTarget)
+    // trim 등으로 값 자체를 바꾸지 않는다 — 비교·전송 모두 원문을 그대로 쓴다.
     const email = String(formData.get('email') ?? '')
     const password = String(formData.get('password') ?? '')
+
+    const emailError = validateEmail(email)
+    const passwordError = validatePassword(password)
+    const clientError = emailError ?? passwordError
+    if (clientError) {
+      setFormStatus('error')
+      setErrorMessage(clientError)
+      return
+    }
 
     setFormStatus('submitting')
     setErrorMessage(null)
 
     try {
       if (isLogin) {
-        await login(email, password)
+        await login(email.trim(), password)
       } else {
-        await register(email, password)
+        await register(email.trim(), password)
       }
-      // 성공하면 모달을 닫는다. 입력값은 폼과 함께 사라져도 된다.
       onClose()
     } catch (error) {
-      // 실패해도 입력은 그대로 남아 있다(uncontrolled input이라 상태를 따로
-      // 지우지 않는 한 유지됨) — 다시 시도할 때 처음부터 입력할 필요가 없다.
       setFormStatus('error')
       setErrorMessage(error instanceof AuthApiError ? error.message : '요청을 처리하지 못했습니다. 다시 시도해 주세요.')
     }
@@ -172,7 +200,14 @@ function AuthModal({ onClose }: AuthModalProps) {
 
           <label>
             이메일
-            <input type="email" name="email" placeholder="name@example.com" autoComplete="email" required />
+            <input
+              type="text"
+              inputMode="email"
+              name="email"
+              placeholder="name@example.com"
+              autoComplete="email"
+              required
+            />
           </label>
 
           <label>
@@ -182,8 +217,6 @@ function AuthModal({ onClose }: AuthModalProps) {
               name="password"
               placeholder="비밀번호를 입력하세요"
               autoComplete={isLogin ? 'current-password' : 'new-password'}
-              minLength={12}
-              maxLength={128}
               required
             />
           </label>

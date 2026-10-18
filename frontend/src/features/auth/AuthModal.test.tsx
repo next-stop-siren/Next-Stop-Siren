@@ -131,3 +131,40 @@ test('Google 로그인 버튼은 올바른 시작 URL로 전체 페이지 이동
   const googleLink = screen.getByRole('link', { name: 'Google로 계속하기' })
   expect(googleLink.getAttribute('href')).toBe(googleLoginStartUrl)
 })
+
+test('이모지가 포함된 유효한 비밀번호를 자르지 않고 그대로 제출한다', async () => {
+  const user = userEvent.setup()
+  let capturedPassword: string | null = null
+
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const url = typeof input === 'string' ? input : input.toString()
+    if (url === '/api/auth/csrf') return jsonResponse(401, errorBody('unauthenticated', '인증 필요'))
+    if (url === '/api/auth/login') {
+      const body = JSON.parse((init?.body as string) ?? '{}')
+      capturedPassword = body.password
+      return jsonResponse(200, {
+        user: { id: 'u1', email: 'a@test.com', created_at: '2026-01-01T00:00:00Z' },
+        access_token: 'a',
+        token_type: 'Bearer',
+        expires_in: 900,
+        csrf_token: 'c',
+      })
+    }
+    throw new Error(`예상하지 못한 호출: ${url}`)
+  })
+
+  render(
+    <AuthProvider>
+      <AuthModal onClose={() => {}} />
+    </AuthProvider>,
+  )
+
+  // 코드포인트 기준 12자, UTF-16 기준으로는 더 길어지는 이모지 포함 비밀번호
+  const password = '😀'.repeat(12)
+  await user.type(screen.getByLabelText('이메일'), 'a@test.com')
+  await user.type(screen.getByLabelText('비밀번호'), password)
+  const submitButton = document.querySelector('button[type="submit"]') as HTMLButtonElement
+  await user.click(submitButton)
+
+  await waitFor(() => expect(capturedPassword).toBe(password))
+})
