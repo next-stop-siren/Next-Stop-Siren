@@ -1,2 +1,10 @@
 * text=auto eol=lf
-*.{png,jpg,jpeg,gif,ico,woff,woff2,ttf} binary
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
