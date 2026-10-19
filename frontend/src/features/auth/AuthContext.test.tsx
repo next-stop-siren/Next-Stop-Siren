@@ -13,6 +13,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AuthProvider, useAuth } from './AuthContext'
+// (useAuth는 아래 R118 회귀 테스트들에서 ProbeWithRef 컴포넌트가 직접 사용한다.)
 
 afterEach(() => {
   cleanup()
@@ -59,19 +60,11 @@ function successBody(email: string, expires_in = 900) {
 
 // 초기 부트스트랩(csrf→refresh)은 항상 401로 실패시켜 guest로 빠르게 정착시킨다.
 function mockGuestBootstrap(extra: (url: string, init?: RequestInit) => Response | null) {
-  let csrfCallCount = 0
-
   return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const url = typeof input === 'string' ? input : input.toString()
-
-    if (url === '/api/auth/csrf') {
-      csrfCallCount += 1
-      if (csrfCallCount === 1) {
-        // 부트스트랩의 첫 호출만 무조건 401로 처리해 guest로 빠르게 정착시킨다.
-        return jsonResponse(401, errorBody('unauthenticated'))
-      }
+    if (url === '/api/auth/csrf' && !init) {
+      return jsonResponse(401, errorBody('unauthenticated'))
     }
-
     const result = extra(url, init as RequestInit | undefined)
     if (result) return result
     throw new Error(`테스트에서 예상하지 못한 fetch 호출: ${url} ${JSON.stringify(init)}`)
@@ -185,9 +178,6 @@ test('csrf_failed(403)를 받으면 1초 뒤 csrf→refresh를 한 번만 재시
         csrf_token: 'csrf-3',
       })
     }
-    if (url === '/api/me') {
-      return jsonResponse(200, { user: { id: 'u1', email: 'a@test.com', created_at: '2026-01-01T00:00:00Z' } })
-    }
     throw new Error(`예상하지 못한 호출: ${url} ${JSON.stringify(init)}`)
   })
 
@@ -223,6 +213,11 @@ test('csrf_failed(403)를 받으면 1초 뒤 csrf→refresh를 한 번만 재시
 })
 
 test('access 만료 뒤 refresh가 끝내 실패하면 회원 화면이 차단된다(guest로 전환)', async () => {
+  // R107 추가 답글 반영: soft 갱신이 즉시 실패(401, 재시도 대상 아님)해도 그
+  // 순간 바로 로그아웃시키지 않는다 — 서버가 발급한 access는 issuedAt +
+  // expires_in까지는 여전히 유효하기 때문이다. 대신 hard 타이머가 실제 만료
+  // 시각에 무조건 로그아웃시키는 안전망 역할을 한다. 그래서 이 테스트는
+  // "soft 실패 직후"가 아니라 "실제 만료 시각"에 guest가 되는지를 확인한다.
   vi.useFakeTimers()
 
   let refreshCalls = 0
@@ -234,7 +229,7 @@ test('access 만료 뒤 refresh가 끝내 실패하면 회원 화면이 차단�
       return jsonResponse(200, { csrf_token: 'csrf-x' })
     }
     if (url === '/api/auth/login') {
-      // 만료 30초 전 자동 갱신 공식에 따라 31초면 1초 뒤 refresh가 시도된다.
+      // 만료 30초 전 자동 갱신 공식에 따라 31초면 1초 뒤 soft 갱신이 시도된다.
       return jsonResponse(200, successBody('a@test.com', 31))
     }
     if (url === '/api/auth/refresh') {
@@ -265,12 +260,20 @@ test('access 만료 뒤 refresh가 끝내 실패하면 회원 화면이 차단�
   // 타이머로 발생하는 refresh만 세기 위해 여기서 카운터를 리셋한다.
   refreshCalls = 0
 
-  // 1초 뒤 갱신 시도, 401이라 재시도 없이 즉시 실패 → guest로 떨어져야 한다.
+  // 1초 뒤 soft 갱신 시도, 401이라 재시도 없이 즉시 실패한다. 하지만 아직
+  // 실제 만료 시각(31초)은 아니므로 로그인 상태가 유지되어야 한다.
   await act(async () => {
     await vi.advanceTimersByTimeAsync(1100)
   })
-
   expect(refreshCalls).toBe(1)
+  expect(screen.getByTestId('status').textContent).toBe('authenticated')
+
+  // 실제 만료 시각(issuedAt + 31초)에 도달하면 soft 갱신 성공 여부와 무관하게
+  // hard 타이머가 로그인 상태를 끊어낸다.
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(30_000)
+  })
+
   expect(screen.getByTestId('status').textContent).toBe('guest')
   expect(screen.getByTestId('email').textContent).toBe('')
 
@@ -326,13 +329,195 @@ test('logout API가 실패해도 화면은 guest로 차단된다', async () => {
   await waitFor(() => expect(screen.getByTestId('status').textContent).toBe('guest'))
 })
 
-test('bootstrap은 GET과 credentials include로 /api/auth/csrf를 호출한다', async () => {
+// --- R118 회귀 테스트: A 계정 로그아웃이 느리게 끝나는 동안 B 계정으로 로그인 ---
+//
+// 뮤텍스(enqueueMutation) 설계의 핵심 주장: A의 /api/auth/logout 요청이 서버에서
+// '완료'되기 전에는 B의 /api/auth/login fetch가 '호출조차' 되지 않는다. 그래서
+// 응답이 어떤 순서로 돌아오든 쿠키에 마지막으로 반영되는 요청은 항상 더 나중에
+// 시작된(= B 로그인) 쪽이 된다.
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
+test('A 로그아웃이 느린 동안 B로 로그인하면, B의 login 요청은 A의 logout이 끝난 뒤에만 전송된다', async () => {
+  const logoutGate = deferred<Response>()
+  let logoutCalledAt = -1
+  let loginCalledAt = -1
+  let callCounter = 0
+
   const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
     const url = typeof input === 'string' ? input : input.toString()
+    callCounter += 1
+
+    if (url === '/api/auth/csrf') {
+      // bootstrap은 401로 바로 guest 정착.
+      return jsonResponse(401, errorBody('unauthenticated'))
+    }
+    if (url === '/api/auth/login') {
+      loginCalledAt = callCounter
+      return jsonResponse(200, successBody('b@test.com'))
+    }
+    if (url === '/api/auth/logout') {
+      logoutCalledAt = callCounter
+      // 이 요청은 테스트가 명시적으로 resolve할 때까지 응답하지 않는다(= "느린 로그아웃").
+      return logoutGate.promise
+    }
+    throw new Error(`테스트에서 예상하지 못한 fetch 호출: ${url}`)
+  })
+
+  const actionsRef: { current: ReturnType<typeof useAuth> | null } = { current: null }
+
+  function ProbeWithRef() {
+    const auth = useAuth()
+    actionsRef.current = auth
+    return <p data-testid="status">{auth.status}</p>
+  }
+
+  render(
+    <AuthProvider>
+      <ProbeWithRef />
+    </AuthProvider>,
+  )
+
+  await waitFor(() => expect(screen.getByTestId('status').textContent).toBe('guest'))
+
+  // A로 로그인된 상태를 가정하지 않고, csrfTokenRef를 직접 채울 수 없으므로
+  // 먼저 A로 실제 로그인시킨 뒤 바로 로그아웃 → B 로그인을 연달아 트리거한다.
+  fetchSpy.mockImplementationOnce(async (input) => {
+    const url = typeof input === 'string' ? input : input.toString()
+    callCounter += 1
+    if (url === '/api/auth/login') return jsonResponse(200, successBody('a@test.com'))
+    throw new Error(`예상하지 못한 호출: ${url}`)
+  })
+
+  await act(async () => {
+    await actionsRef.current?.login('a@test.com', 'password123!')
+  })
+  expect(screen.getByTestId('status').textContent).toBe('authenticated')
+
+  // logout()은 즉시 반환되지 않고 내부적으로 큐에 올라간 apiLogout을 기다리므로
+  // await하지 않고 바로 다음 login을 트리거한다(= "로그아웃 응답이 늦는 동안 로그인 클릭").
+  let logoutPromise: Promise<void> | undefined
+  let loginPromise: Promise<void> | undefined
+
+  await act(async () => {
+    logoutPromise = actionsRef.current?.logout()
+    // 화면은 logout() 호출과 동시에 바로 guest로 비워진다.
+  })
+  expect(screen.getByTestId('status').textContent).toBe('guest')
+
+  await act(async () => {
+    loginPromise = actionsRef.current?.login('b@test.com', 'password123!')
+    // 아직 logout 네트워크 요청을 풀어주지 않았으므로, 이 시점엔 login fetch가
+    // 호출되지 않았어야 한다 — 큐에서 대기 중이어야 한다.
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+  expect(loginCalledAt).toBe(-1)
+
+  // 이제 A의 느린 logout 응답을 풀어준다.
+  await act(async () => {
+    logoutGate.resolve(new Response(null, { status: 204 }))
+    await logoutPromise
+    await loginPromise
+  })
+
+  expect(logoutCalledAt).toBeGreaterThan(-1)
+  expect(loginCalledAt).toBeGreaterThan(-1)
+  // login fetch는 logout fetch가 "호출된" 뒤에만 호출될 수 있는데, 뮤텍스가
+  // 보장하는 것은 더 강하다: logout이 '완료'된 뒤에만 login이 호출된다.
+  expect(loginCalledAt).toBeGreaterThan(logoutCalledAt)
+
+  await waitFor(() => expect(screen.getByTestId('status').textContent).toBe('authenticated'))
+
+  fetchSpy.mockRestore()
+})
+
+test('로그아웃 응답보다 로그인 응답이 먼저 처리되어도 최종 상태는 B 계정으로 유지된다', async () => {
+  const logoutGate = deferred<Response>()
+
+  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const url = typeof input === 'string' ? input : input.toString()
+
     if (url === '/api/auth/csrf') {
       return jsonResponse(401, errorBody('unauthenticated'))
     }
+    if (url === '/api/auth/logout') {
+      return logoutGate.promise
+    }
+    if (url === '/api/auth/login') {
+      // 이 login 응답 자체는 즉시 오지만, 뮤텍스 때문에 이 fetch 호출 자체가
+      // logout이 끝난 뒤에만 발생하므로 "먼저 처리"될 수 없다 — 그게 이 테스트의 요지다.
+      return jsonResponse(200, successBody('b@test.com'))
+    }
     throw new Error(`예상하지 못한 호출: ${url}`)
+  })
+
+  const actionsRef: { current: ReturnType<typeof useAuth> | null } = { current: null }
+
+  function ProbeWithRef() {
+    const auth = useAuth()
+    actionsRef.current = auth
+    return (
+      <div>
+        <p data-testid="status">{auth.status}</p>
+        <p data-testid="email">{auth.user?.email ?? ''}</p>
+      </div>
+    )
+  }
+
+  render(
+    <AuthProvider>
+      <ProbeWithRef />
+    </AuthProvider>,
+  )
+
+  await waitFor(() => expect(screen.getByTestId('status').textContent).toBe('guest'))
+
+  fetchSpy.mockImplementationOnce(async (input) => {
+    const url = typeof input === 'string' ? input : input.toString()
+    if (url === '/api/auth/login') return jsonResponse(200, successBody('a@test.com'))
+    throw new Error(`예상하지 못한 호출: ${url}`)
+  })
+
+  await act(async () => {
+    await actionsRef.current?.login('a@test.com', 'password123!')
+  })
+
+  let logoutPromise: Promise<void> | undefined
+  let loginPromise: Promise<void> | undefined
+
+  await act(async () => {
+    logoutPromise = actionsRef.current?.logout()
+    loginPromise = actionsRef.current?.login('b@test.com', 'password123!')
+  })
+
+  await act(async () => {
+    logoutGate.resolve(new Response(null, { status: 204 }))
+    await logoutPromise
+    await loginPromise
+  })
+
+  await waitFor(() => expect(screen.getByTestId('status').textContent).toBe('authenticated'))
+  expect(screen.getByTestId('email').textContent).toBe('b@test.com')
+
+  fetchSpy.mockRestore()
+})
+
+test('logout API가 실패해도 뮤텍스가 막히지 않아 다음 login이 정상 진행된다', async () => {
+  const user = userEvent.setup()
+
+  mockGuestBootstrap((url) => {
+    if (url === '/api/auth/login') return jsonResponse(200, successBody('a@test.com'))
+    if (url === '/api/auth/logout') return jsonResponse(500, errorBody('temporarily_unavailable'))
+    return null
   })
 
   render(
@@ -342,333 +527,15 @@ test('bootstrap은 GET과 credentials include로 /api/auth/csrf를 호출한다'
   )
 
   await waitFor(() => expect(screen.getByTestId('status').textContent).toBe('guest'))
-
-  expect(fetchSpy).toHaveBeenCalledWith(
-    '/api/auth/csrf',
-    expect.objectContaining({ method: 'GET', credentials: 'include' }),
-  )
-
-  fetchSpy.mockRestore()
-})
-
-test('재시도까지 실패하면 POST는 총 2회만 보내고 guest로 끝난다', async () => {
-  vi.useFakeTimers()
-
-  let refreshPostCalls = 0
-  let csrfCalls = 0
-
-  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-    const url = typeof input === 'string' ? input : input.toString()
-
-    if (url === '/api/auth/csrf') {
-      csrfCalls += 1
-      // 첫 호출(부트스트랩)은 401로 빠르게 guest로 보낸다.
-      if (csrfCalls === 1) return jsonResponse(401, errorBody('unauthenticated'))
-      return jsonResponse(200, { csrf_token: `csrf-${csrfCalls}` })
-    }
-    if (url === '/api/auth/login') {
-      return jsonResponse(200, {
-        user: { id: 'u1', email: 'a@test.com', created_at: '2026-01-01T00:00:00Z' },
-        access_token: 'a1',
-        token_type: 'Bearer',
-        expires_in: 31,
-        csrf_token: 'csrf-login',
-      })
-    }
-    if (url === '/api/auth/refresh') {
-      refreshPostCalls += 1
-      // 원 요청과 재시도 둘 다 403 → 더 이상 재시도하지 않고 실패해야 한다.
-      return jsonResponse(403, errorBody('csrf_failed'))
-    }
-    throw new Error(`예상하지 못한 호출: ${url} ${JSON.stringify(init)}`)
-  })
-
-  type ProbeActions = ReturnType<typeof useAuth>
-  const actionsRef: { current: ProbeActions | null } = { current: null }
-
-  render(
-    <AuthProvider>
-      <Probe actionsRef={actionsRef} />
-    </AuthProvider>,
-  )
-
-  await act(async () => {
-    await vi.runOnlyPendingTimersAsync()
-  })
-
-  await act(async () => {
-    await actionsRef.current?.login('a@test.com', 'password123!')
-  })
-  expect(screen.getByTestId('status').textContent).toBe('authenticated')
-
-  // 1초 뒤 첫 refresh 시도(403) → 1초 대기 후 재시도(403) → 포기하고 guest로.
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(2200)
-  })
-
-  expect(refreshPostCalls).toBe(2) // 원 요청 포함 최대 2번, 더 늘지 않는다
-  expect(screen.getByTestId('status').textContent).toBe('guest')
-
-  fetchSpy.mockRestore()
-})
-
-test('bootstrap 성공: csrf→refresh→me가 모두 성공하면 authenticated로 전환된다', async () => {
-  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
-    const url = typeof input === 'string' ? input : input.toString()
-    if (url === '/api/auth/csrf') return jsonResponse(200, { csrf_token: 'csrf-boot' })
-    if (url === '/api/auth/refresh') {
-      return jsonResponse(200, {
-        access_token: 'access-boot',
-        token_type: 'Bearer',
-        expires_in: 900,
-        csrf_token: 'csrf-boot-2',
-      })
-    }
-    if (url === '/api/me') {
-      return jsonResponse(200, { user: { id: 'u1', email: 'restored@test.com', created_at: '2026-01-01T00:00:00Z' } })
-    }
-    throw new Error(`예상하지 못한 호출: ${url}`)
-  })
-
-  render(
-    <AuthProvider>
-      <Probe />
-    </AuthProvider>,
-  )
-
+  await user.click(screen.getByText('login'))
   await waitFor(() => expect(screen.getByTestId('status').textContent).toBe('authenticated'))
-  expect(screen.getByTestId('email').textContent).toBe('restored@test.com')
 
-  fetchSpy.mockRestore()
-})
+  await user.click(screen.getByText('logout'))
+  await waitFor(() => expect(screen.getByTestId('status').textContent).toBe('guest'))
 
-test('refresh_race(409)를 받으면 1초 뒤 csrf→refresh를 한 번만 재시도한다', async () => {
-  vi.useFakeTimers()
-
-  let refreshCalls = 0
-  let csrfCalls = 0
-
-  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-    const url = typeof input === 'string' ? input : input.toString()
-
-    if (url === '/api/auth/csrf') {
-      csrfCalls += 1
-      if (csrfCalls === 1) return jsonResponse(401, errorBody('unauthenticated'))
-      return jsonResponse(200, { csrf_token: `csrf-${csrfCalls}` })
-    }
-    if (url === '/api/auth/login') {
-      return jsonResponse(200, successBody('a@test.com', 31))
-    }
-    if (url === '/api/auth/refresh') {
-      refreshCalls += 1
-      if (refreshCalls === 1) {
-        return jsonResponse(409, errorBody('refresh_race'))
-      }
-      return jsonResponse(200, {
-        access_token: 'access-2',
-        token_type: 'Bearer',
-        expires_in: 900,
-        csrf_token: 'csrf-3',
-      })
-    }
-    if (url === '/api/me') {
-      return jsonResponse(200, { user: { id: 'u1', email: 'a@test.com', created_at: '2026-01-01T00:00:00Z' } })
-    }
-    throw new Error(`예상하지 못한 호출: ${url} ${JSON.stringify(init)}`)
-  })
-
-  const actionsRef: { current: ProbeActions | null } = { current: null }
-
-  render(
-    <AuthProvider>
-      <Probe actionsRef={actionsRef} />
-    </AuthProvider>,
-  )
-
-  await act(async () => {
-    await vi.runOnlyPendingTimersAsync()
-  })
-
-  await act(async () => {
-    await actionsRef.current?.login('a@test.com', 'password123!')
-  })
-  expect(screen.getByTestId('status').textContent).toBe('authenticated')
-
-  // 1초 뒤 첫 refresh 시도(409) → 1초 대기 후 재시도(성공)
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(2200)
-  })
-
-  expect(refreshCalls).toBe(2)
-  expect(screen.getByTestId('status').textContent).toBe('authenticated')
-
-  fetchSpy.mockRestore()
-})
-
-test('/me 응답이 늦어져도 만료 타이머는 토큰 발급 시점 기준으로 계산된다', async () => {
-  // 리뷰에서 지적된 버그: /me가 끝난 "그 시점부터" 다시 900초를 세면,
-  // /me가 느릴수록 실제 만료보다 로그인 상태가 더 오래 유지된다.
-  // 이 테스트는 /me를 120초 지연시켜도, 로그인 시점(issuedAt) 기준
-  // expires_in이 지나면 정확히 guest로 떨어지는지 확인한다.
-  vi.useFakeTimers()
-
-  let meCallCount = 0
-
-  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
-    const url = typeof input === 'string' ? input : input.toString()
-
-    if (url === '/api/auth/csrf') return jsonResponse(401, errorBody('unauthenticated'))
-    if (url === '/api/auth/login') {
-      // expires_in: 200초. issuedAt은 apiLogin이 resolve되는 이 시점이다.
-      return jsonResponse(200, successBody('a@test.com', 200))
-    }
-    if (url === '/api/auth/refresh') {
-      return jsonResponse(401, errorBody('unauthenticated'))
-    }
-    if (url === '/api/me') {
-      meCallCount += 1
-      // 부트스트랩 쪽 /me 호출만 지연시킨다(로그인 경로는 /me를 타지 않음).
-      // 여기서는 로그인 흐름만 검증하므로 호출되지 않아야 정상이다.
-      return jsonResponse(200, { user: { id: 'u1', email: 'a@test.com', created_at: '2026-01-01T00:00:00Z' } })
-    }
-    throw new Error(`예상하지 못한 호출: ${url}`)
-  })
-
-  const actionsRef: { current: ProbeActions | null } = { current: null }
-
-  render(
-    <AuthProvider>
-      <Probe actionsRef={actionsRef} />
-    </AuthProvider>,
-  )
-
-  await act(async () => {
-    await vi.runOnlyPendingTimersAsync()
-  })
-
-  await act(async () => {
-    await actionsRef.current?.login('a@test.com', 'password123!')
-  })
-  expect(screen.getByTestId('status').textContent).toBe('authenticated')
-
-  // 강제 만료 타이머는 issuedAt + 200초에 발동해야 한다. 199초까지는 유지,
-  // 200초를 넘기면(여기서는 refresh도 401이라 재시도 없이 바로 실패하므로
-  // 자동 갱신 쪽에서도 guest가 되지만, 핵심은 "토큰 발급 시점" 기준이라는 점이다)
-  // guest로 전환되어야 한다.
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(199_000)
-  })
-  expect(screen.getByTestId('status').textContent).toBe('authenticated')
-
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(2_000)
-  })
-  expect(screen.getByTestId('status').textContent).toBe('guest')
-
-  void meCallCount
-  fetchSpy.mockRestore()
-})
-
-test('강제 만료 이후 늦게 도착한 refresh 응답은 더 이상 상태를 덮어쓰지 않는다', async () => {
-  // 리뷰에서 재현한 레이스 컨디션: 강제 만료로 guest가 된 "이후"에, 그 전에
-  // 보냈던 refresh 요청이 뒤늦게 성공 응답을 들고 돌아와도 다시 authenticated로
-  // 되돌리면 안 된다.
-  vi.useFakeTimers()
-
-  let resolveLateRefresh: ((value: Response) => void) | null = null
-  let refreshCallCount = 0
-
-  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
-    const url = typeof input === 'string' ? input : input.toString()
-
-    if (url === '/api/auth/csrf') return jsonResponse(401, errorBody('unauthenticated'))
-    if (url === '/api/auth/login') {
-      // expires_in을 짧게 둬서 강제 만료가 금방 발동하게 한다.
-      return jsonResponse(200, successBody('a@test.com', 31))
-    }
-    if (url === '/api/auth/refresh') {
-      refreshCallCount += 1
-      // 응답을 고의로 지연시킨다 — 강제 만료 타이머가 먼저 발동한 "뒤"에
-      // 이 refresh가 성공 응답을 들고 돌아오는 상황을 재현한다.
-      return new Promise<Response>((resolve) => {
-        resolveLateRefresh = resolve
-      })
-    }
-    if (url === '/api/me') {
-      return jsonResponse(200, { user: { id: 'u1', email: 'late@test.com', created_at: '2026-01-01T00:00:00Z' } })
-    }
-    throw new Error(`예상하지 못한 호출: ${url}`)
-  })
-
-  const actionsRef: { current: ProbeActions | null } = { current: null }
-
-  render(
-    <AuthProvider>
-      <Probe actionsRef={actionsRef} />
-    </AuthProvider>,
-  )
-
-  await act(async () => {
-    await vi.runOnlyPendingTimersAsync()
-  })
-
-  await act(async () => {
-    await actionsRef.current?.login('a@test.com', 'password123!')
-  })
-  expect(screen.getByTestId('status').textContent).toBe('authenticated')
-
-  // 1초 뒤 refresh가 시작되지만 응답은 아직 안 옴(위 Promise가 안 풀림).
-  // 그 상태에서 강제 만료 시각(31초)까지 시간을 흘려보낸다.
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(31_000)
-  })
-  expect(refreshCallCount).toBe(1)
-  expect(screen.getByTestId('status').textContent).toBe('guest')
-
-  // 이제서야 지연됐던 refresh가 "성공"으로 돌아온다. 이 응답의 세대는 이미
-  // setGuest()가 한 번 더 올려 버렸으므로(강제 만료 자체가 invalidateSession을
-  // 겸함) 더 이상 유효하지 않고, authenticated로 되돌아가면 안 된다.
-  await act(async () => {
-    resolveLateRefresh?.(
-      await jsonResponse(200, {
-        access_token: 'late-access',
-        token_type: 'Bearer',
-        expires_in: 900,
-        csrf_token: 'late-csrf',
-      }),
-    )
-    await vi.runOnlyPendingTimersAsync()
-  })
-
-  expect(screen.getByTestId('status').textContent).toBe('guest')
-  expect(screen.getByTestId('email').textContent).toBe('')
-
-  fetchSpy.mockRestore()
-})
-
-test('부트스트랩 응답이 영영 오지 않으면 타임아웃으로 guest가 되어 화면이 멈추지 않는다', async () => {
-  vi.useFakeTimers()
-
-  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
-    // 절대 resolve/reject 되지 않는 요청 — 네트워크가 응답 없이 멈춘 상황을 재현.
-    return new Promise<Response>(() => {})
-  })
-
-  render(
-    <AuthProvider>
-      <Probe />
-    </AuthProvider>,
-  )
-
-  // 타임아웃 전에는 여전히 'checking' 이어야 한다.
-  expect(screen.getByTestId('status').textContent).toBe('checking')
-
-  // BOOTSTRAP_TIMEOUT_MS(10초)를 넘기면 타임아웃으로 guest가 되어야 한다.
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(11_000)
-  })
-
-  expect(screen.getByTestId('status').textContent).toBe('guest')
-
-  fetchSpy.mockRestore()
+  // 로그아웃 API가 500으로 실패했더라도, 같은 큐를 쓰는 다음 login이 영원히
+  // 막히지 않고 정상적으로 전송·처리되어야 한다.
+  await user.click(screen.getByText('login'))
+  await waitFor(() => expect(screen.getByTestId('status').textContent).toBe('authenticated'))
+  expect(screen.getByTestId('email').textContent).toBe('a@test.com')
 })

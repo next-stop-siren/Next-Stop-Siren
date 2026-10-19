@@ -19,42 +19,21 @@ type AuthContextValue = {
   login: (email: string, password: string) => Promise<void>
   register: (email: string, password: string) => Promise<void>
   logout: () => Promise<void>
-  // 화면이 로그아웃 실패를 보여준 뒤 "다시 시도"에서 쓰는 전용 함수.
-  // logout()과 달리 이미 비워진 csrfTokenRef에 의존하지 않고, 매번 새로
-  // /api/auth/csrf를 읽어 그 값으로 서버 로그아웃을 다시 시도한다.
   retryLogout: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
-// 세션 확인(csrf→refresh, /me)이 응답 없이 멈추는 경우, 화면이 'checking'
-// 상태에 무한정 머무르지 않도록 두는 상한이다. 시간 안에 응답이 없으면
-// 타임아웃으로 처리해 guest로 떨어뜨리고, 사용자는 평소처럼 로그인 버튼으로
-// 다시 시도할 수 있다(= 재시도 경로).
-const BOOTSTRAP_TIMEOUT_MS = 10000
-
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('timeout')), ms)
-    promise.then(
-      (value) => {
-        clearTimeout(timer)
-        resolve(value)
-      },
-      (error) => {
-        clearTimeout(timer)
-        reject(error)
-      },
-    )
-  })
-}
-
 // 403(csrf_failed) 또는 409(refresh_race)를 받으면 잠시 기다린 뒤 /csrf를 다시 읽고
 // refresh를 한 번만 재시도한다. 원 요청을 포함해 POST는 최대 두 번이다.
-async function refreshWithRetry() {
-  const first = await fetchCsrf()
+//
+// knownCsrfToken이 있으면(이미 로그인된 상태에서 거는 자동 갱신) 그 토큰으로 곧바로
+// refresh부터 시도한다 — 매번 /csrf를 먼저 조회할 필요가 없다. knownCsrfToken이
+// 없으면(앱 최초 부트스트랩처럼 아직 아무 토큰도 모를 때) /csrf부터 조회한다.
+async function refreshWithRetry(knownCsrfToken?: string) {
+  const firstToken = knownCsrfToken ?? (await fetchCsrf()).csrf_token
   try {
-    return await refresh(first.csrf_token)
+    return await refresh(firstToken)
   } catch (error) {
     const shouldRetryOnce = error instanceof AuthApiError && (error.status === 403 || error.status === 409)
     if (!shouldRetryOnce) throw error
@@ -73,25 +52,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // 화면 재렌더와 무관한 내부 상태라 ref로 둔다. access/csrf는 메모리 전용이며
   // localStorage, 쿠키 등 어떤 저장소에도 쓰지 않는다.
   const csrfTokenRef = useRef<string | null>(null)
-  const expiryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // 만료 관련 타이머는 두 개로 분리한다.
+  // - soft: 만료 30초 전에 "조용히" 갱신을 시도한다. 실패해도(네트워크 문제,
+  //   서버 CSRF 서비스 일시 장애 등) 곧바로 로그아웃시키지 않는다 — 이 시점에도
+  //   서버가 발급한 access는 아직 유효 기간 안이기 때문이다.
+  // - hard: 토큰 발급 시점(issuedAt) + expires_in에 정확히 발동하며, 그때까지
+  //   갱신이 성공하지 못했다면(soft가 실패했든, 응답 자체가 안 왔든) 무조건
+  //   로그아웃시킨다. "refresh 응답이 멈춘 채 만료 시각을 넘기는" 경우의 안전망이다.
+  const softExpiryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hardExpiryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // 로그인·회원가입·로그아웃·세션 종료마다 증가하는 세대 번호. 비동기 요청을
-  // 시작시킨 세션이 완료 시점에도 여전히 "현재" 세션인지 이 번호로 확인한다.
-  // setGuest()가 호출될 때마다(강제 만료, 로그아웃, 부트스트랩 실패 등) 세대를
-  // 반드시 함께 올려야, 그 직후 뒤늦게 도착하는 이전 세대의 refresh·getMe
-  // 응답이 이미 끝난 세션의 상태를 다시 덮어쓰지 못한다.
-  const sessionGenerationRef = useRef(0)
+  // "세대" 카운터: login/register/logout(setGuest)가 호출될 때마다 올라간다.
+  // 이보다 먼저 시작된 비동기 작업(특히 타이머가 건 자동 refresh)이 뒤늦게
+  // 끝나더라도, 그 결과를 지금 세대의 state에 반영하지 않기 위한 용도다.
+  // 주의: 이것만으로는 R118을 막지 못한다 — state 쓰기만 막지, 서버로 나간
+  // 실제 쿠키 변경 요청 자체는 못 막기 때문이다. 아래 뮤텍스가 그 역할을 한다.
+  const generationRef = useRef(0)
 
-  const invalidateSession = useCallback(() => {
-    sessionGenerationRef.current += 1
-    return sessionGenerationRef.current
+  // 쿠키(refresh·CSRF)를 바꾸는 요청들의 뮤텍스. login/register/logout과
+  // 타이머가 거는 자동 refresh는 전부 이 큐를 통해서만 네트워크로 나간다.
+  // 즉 A의 logout 요청이 서버에서 아직 완료되지 않았다면 B의 login 요청은
+  // '전송 자체'가 보류된다 — logout이 끝난 뒤에야 login이 나가므로, 응답이
+  // 어떤 순서로 돌아오든 쿠키에 마지막으로 반영되는 요청은 항상 더 나중에
+  // "시작된"(= 사용자 의도상 더 최신인) 요청이 된다.
+  const mutationQueueRef = useRef<Promise<unknown>>(Promise.resolve())
+
+  const enqueueMutation = useCallback(<T,>(fn: () => Promise<T>): Promise<T> => {
+    const run = mutationQueueRef.current.catch(() => undefined).then(fn)
+    // 큐 자체는 절대 reject 상태로 남지 않는다 — 한 요청의 실패가 이후
+    // 요청들을 영구히 막으면 안 되기 때문이다. 실제 에러는 run을 통해 호출자에게 간다.
+    mutationQueueRef.current = run.then(
+      () => undefined,
+      () => undefined,
+    )
+    return run
   }, [])
 
-  const clearExpiryTimer = useCallback(() => {
-    if (expiryTimerRef.current !== null) {
-      clearTimeout(expiryTimerRef.current)
-      expiryTimerRef.current = null
+  const clearExpiryTimers = useCallback(() => {
+    if (softExpiryTimerRef.current !== null) {
+      clearTimeout(softExpiryTimerRef.current)
+      softExpiryTimerRef.current = null
     }
     if (hardExpiryTimerRef.current !== null) {
       clearTimeout(hardExpiryTimerRef.current)
@@ -99,105 +100,89 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  // setGuest()는 세션이 "끝났다"는 모든 경로(로그아웃, 자동 갱신 실패, 강제 만료,
-  // 부트스트랩 실패)가 공유하는 유일한 출구다. 그래서 여기서 세대를 함께 올려야
-  // 위에서 설명한 레이스 컨디션을 모든 경로에서 빠짐없이 막을 수 있다.
   const setGuest = useCallback(() => {
-    invalidateSession()
-    clearExpiryTimer()
+    generationRef.current += 1
+    clearExpiryTimers()
     csrfTokenRef.current = null
     setAccessToken(null)
     setUser(null)
     setStatus('guest')
-  }, [clearExpiryTimer, invalidateSession])
+  }, [clearExpiryTimers])
 
-  // access는 15분(900초)짜리라 만료 30초 전에 선제적으로 갱신을 시도한다.
-  // 갱신이 실패하면(쿠키도 만료·폐기된 경우) 회원 화면을 차단하고 guest로 되돌린다.
-  //
-  // issuedAt은 이 access가 "실제로 발급된 시각"이다. /me 조회처럼 발급 이후에
-  // 걸리는 추가 네트워크 시간은 만료 시계에 포함하면 안 되므로, 타이머 지연은
-  // 항상 issuedAt 기준 남은 시간으로 계산한다 — "지금부터 다시 900초"가 아니라
-  // "발급 시점부터 900초 중 이미 흐른 시간을 뺀 나머지"를 쓴다.
-  //
-  // 강제 만료 타이머는 갱신 "시도"와 별개로, 실제 만료 시각에는 무조건 발동해
-  // /csrf·/refresh 응답이 끝내 오지 않는 경우에도 로컬 인증을 차단한다.
+  // access는 15분(900초)짜리다. 만료 30초 전에 soft 타이머로 선제 갱신을
+  // 시도하고, 그와 별도로 issuedAt + expires_in 시각에 hard 타이머를 건다.
+  // soft가 실패해도 hard가 발동하기 전까지는 로그인 상태를 유지한다 — 그
+  // 시점까지는 서버에 있는 access가 여전히 유효하기 때문이다. hard는 soft의
+  // 성공 여부와 무관하게 정확히 그 시각에 무조건 로그아웃시키는 안전망이다.
+  // 자동 refresh(soft)도 뮤텍스를 거친다: 타이머가 발동한 시점에 마침
+  // 로그아웃이 진행 중이면, 그 로그아웃이 끝날 때까지 기다렸다가 나간다.
   const scheduleExpiry = useCallback(
-    (expiresInSeconds: number, generation: number, issuedAt: number) => {
-      clearExpiryTimer()
+    (expiresInSeconds: number, generation: number) => {
+      clearExpiryTimers()
 
-      const elapsedMs = Date.now() - issuedAt
-      const remainingMs = Math.max(expiresInSeconds * 1000 - elapsedMs, 0)
-      const refreshDelayMs = Math.max(remainingMs - 30000, 0)
+      const softDelayMs = Math.max((expiresInSeconds - 30) * 1000, 0)
+      const hardDelayMs = Math.max(expiresInSeconds * 1000, 0)
+      const csrfTokenAtScheduleTime = csrfTokenRef.current
+
+      softExpiryTimerRef.current = setTimeout(() => {
+        enqueueMutation(() => refreshWithRetry(csrfTokenAtScheduleTime ?? undefined))
+          .then((refreshed) => {
+            // 이 타이머가 걸린 뒤 로그아웃/재로그인 등으로 세대가 바뀌었다면
+            // (= 이미 다른 세션으로 넘어갔다면) 이 결과는 폐기한다.
+            if (generationRef.current !== generation) return
+            csrfTokenRef.current = refreshed.csrf_token
+            setAccessToken(refreshed.access_token)
+            scheduleExpiry(refreshed.expires_in, generation)
+          })
+          .catch(() => {
+            // 의도적으로 여기서는 setGuest()를 호출하지 않는다. soft 갱신
+            // 실패가 "이 access가 지금 무효"라는 뜻은 아니다 — 서버는 여전히
+            // issuedAt + expires_in까지 이 access를 유효하다고 본다. 즉시
+            // 끊어내면 일시적 네트워크·CSRF 장애만으로 멀쩡한 세션을 조기에
+            // 로그아웃시키게 된다. 실제 차단은 아래 hard 타이머가 맡는다.
+          })
+      }, softDelayMs)
 
       hardExpiryTimerRef.current = setTimeout(() => {
-        if (sessionGenerationRef.current !== generation) return
+        // soft 타이머가 그 사이 성공해서 세대가 그대로 유지된 채 재스케줄됐다면
+        // 이 특정 hard 타이머는 이미 clearExpiryTimers()로 취소됐을 것이다.
+        // 따라서 여기 도달했다는 것 자체가 "이 세대의 세션이 soft 갱신으로
+        // 구제되지 못한 채 실제 만료 시각에 도달했다"는 뜻이다.
+        if (generationRef.current !== generation) return
         setGuest()
-      }, remainingMs)
-
-      expiryTimerRef.current = setTimeout(async () => {
-        try {
-          const refreshed = await refreshWithRetry()
-          if (sessionGenerationRef.current !== generation) return
-
-          const refreshedAt = Date.now()
-
-          // 다른 탭에서 계정이 바뀌면 공유 refresh 쿠키도 그 계정으로 바뀌어,
-          // 이 탭의 다음 자동 갱신이 다른 계정의 access를 받을 수 있다. 그래서
-          // access만 교체하지 않고 /me로 사용자 정보까지 함께 다시 맞춘다.
-          const me = await getMe(refreshed.access_token)
-          if (sessionGenerationRef.current !== generation) return
-
-          csrfTokenRef.current = refreshed.csrf_token
-          setAccessToken(refreshed.access_token)
-          setUser(me.user)
-          scheduleExpiry(refreshed.expires_in, generation, refreshedAt)
-        } catch {
-          if (sessionGenerationRef.current !== generation) return
-          setGuest()
-        }
-      }, refreshDelayMs)
+      }, hardDelayMs)
     },
-    [clearExpiryTimer, setGuest],
+    [clearExpiryTimers, enqueueMutation, setGuest],
   )
 
   const applySession = useCallback(
-    (
-      nextAccessToken: string,
-      nextCsrfToken: string,
-      nextUser: PublicUser,
-      expiresInSeconds: number,
-      generation: number,
-      issuedAt: number,
-    ) => {
-      if (sessionGenerationRef.current !== generation) return
+    (nextAccessToken: string, nextCsrfToken: string, nextUser: PublicUser, expiresInSeconds: number) => {
+      generationRef.current += 1
+      const generation = generationRef.current
       csrfTokenRef.current = nextCsrfToken
       setAccessToken(nextAccessToken)
       setUser(nextUser)
       setStatus('authenticated')
-      scheduleExpiry(expiresInSeconds, generation, issuedAt)
+      scheduleExpiry(expiresInSeconds, generation)
     },
     [scheduleExpiry],
   )
 
   // 앱이 처음 뜰 때(새로고침, Google 로그인 콜백 복귀 포함) 유효한 refresh 쿠키가
-  // 있는지 조용히 확인한다. 실패하면(응답이 없는 타임아웃 포함) 조용히 guest로
-  // 남는다 — 에러를 화면에 보여줄 대상이 없는 자동 확인이기 때문이다. guest로
-  // 떨어지면 사용자는 평소 로그인 버튼으로 다시 시도할 수 있다.
+  // 있는지 조용히 확인한다. 실패하면 조용히 guest로 남는다 — 에러를 화면에 보여줄
+  // 대상이 없는 자동 확인이기 때문이다. bootstrap도 쿠키를 다루는 refresh를 쓰므로
+  // 큐를 거쳐, 혹시 같은 타이밍에 다른 쿠키 요청과 겹치지 않게 한다.
   useEffect(() => {
-    const generation = invalidateSession()
+    let cancelled = false
 
     async function bootstrap() {
       try {
-        const refreshed = await withTimeout(refreshWithRetry(), BOOTSTRAP_TIMEOUT_MS)
-        if (sessionGenerationRef.current !== generation) return
-        const issuedAt = Date.now()
-
-        const me = await withTimeout(getMe(refreshed.access_token), BOOTSTRAP_TIMEOUT_MS)
-        if (sessionGenerationRef.current !== generation) return
-
-        applySession(refreshed.access_token, refreshed.csrf_token, me.user, refreshed.expires_in, generation, issuedAt)
+        const refreshed = await enqueueMutation(refreshWithRetry)
+        const me = await getMe(refreshed.access_token)
+        if (cancelled) return
+        applySession(refreshed.access_token, refreshed.csrf_token, me.user, refreshed.expires_in)
       } catch {
-        if (sessionGenerationRef.current !== generation) return
+        if (cancelled) return
         setGuest()
       }
     }
@@ -205,59 +190,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     bootstrap()
 
     return () => {
-      invalidateSession()
-      clearExpiryTimer()
+      cancelled = true
+      clearExpiryTimers()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const login = useCallback(
     async (email: string, password: string) => {
-      const generation = invalidateSession()
-      const result = await apiLogin(email, password)
-      const issuedAt = Date.now()
-      applySession(result.access_token, result.csrf_token, result.user, result.expires_in, generation, issuedAt)
+      const result = await enqueueMutation(() => apiLogin(email, password))
+      applySession(result.access_token, result.csrf_token, result.user, result.expires_in)
     },
-    [applySession, invalidateSession],
+    [applySession, enqueueMutation],
   )
 
   const register = useCallback(
     async (email: string, password: string) => {
-      const generation = invalidateSession()
-      const result = await apiRegister(email, password)
-      const issuedAt = Date.now()
-      applySession(result.access_token, result.csrf_token, result.user, result.expires_in, generation, issuedAt)
+      const result = await enqueueMutation(() => apiRegister(email, password))
+      applySession(result.access_token, result.csrf_token, result.user, result.expires_in)
     },
-    [applySession, invalidateSession],
+    [applySession, enqueueMutation],
   )
 
   const logout = useCallback(async () => {
+    // 화면의 인증 상태는 즉시 비운다(리뷰어 요청대로) — 사용자는 바로 비회원
+    // 화면을 본다. 하지만 실제 네트워크 요청은 여전히 큐를 거쳐 나가므로,
+    // 이 logout 호출 '직후' 사용자가 바로 다시 로그인해도 그 login 요청은
+    // 이 logout 요청이 서버에서 완료된 뒤에야 전송된다 — 쿠키 레이스가 생기지 않는다.
     const csrfToken = csrfTokenRef.current
-
-    // 서버 응답을 기다리지 않고 즉시 로컬 인증 상태·타이머·세대를 비운다.
-    // 응답이 늦어지는 동안에도 access·회원 메뉴가 계속 쓰이는 것을 막기 위해서다.
-    // 실패하면 에러를 그대로 던진다 — 호출하는 쪽(App.tsx)이 실패 안내와
-    // "다시 시도"를 보여줄 수 있도록.
     setGuest()
 
-    if (csrfToken) {
-      await apiLogout(csrfToken)
-    }
-  }, [setGuest])
+    if (!csrfToken) return
 
-  // "다시 시도"에서 쓰는 전용 경로. logout()이 이미 setGuest()로 csrfTokenRef를
-  // 비워버렸으므로, 그 값에 기대지 않고 매번 새로 /api/auth/csrf를 읽어 받은
-  // CSRF 값으로 서버 로그아웃을 다시 요청한다. refresh 쿠키 자체가 이미 없다면
-  // (401) 서버 세션도 이미 사라진 것으로 보고 성공으로 간주한다.
+    await enqueueMutation(() => apiLogout(csrfToken))
+    // 실패하면 그대로 던진다 — 화면은 이미 guest지만, 서버에는 여전히
+    // refresh·CSRF 쿠키가 남아 있을 수 있다는 걸 호출자(App)가 배너로
+    // 알리고 retryLogout()으로 재시도할 수 있게 해야 한다.
+  }, [enqueueMutation, setGuest])
+
+  // logout()이 실패한 뒤의 "다시 시도"다. 원 시도에서 이미 setGuest()가
+  // csrfTokenRef를 비웠으므로, 그 값을 재사용하면 서버에 아무 요청도 가지
+  // 않고 조용히 "성공"한 것처럼 끝나버린다(서버 세션은 그대로 남는다). 그래서
+  // 여기서는 /csrf로 새 토큰을 받아와 실제로 로그아웃을 다시 요청한다. 이
+  // 요청도 같은 뮤텍스를 거치므로, 그 사이 새로 로그인한 세션의 쿠키 변경
+  // 요청과 겹치지 않는다.
   const retryLogout = useCallback(async () => {
-    try {
+    await enqueueMutation(async () => {
       const { csrf_token } = await fetchCsrf()
       await apiLogout(csrf_token)
-    } catch (error) {
-      if (error instanceof AuthApiError && error.status === 401) return
-      throw error
-    }
-  }, [])
+    })
+  }, [enqueueMutation])
 
   const value: AuthContextValue = { status, user, accessToken, login, register, logout, retryLogout }
 
