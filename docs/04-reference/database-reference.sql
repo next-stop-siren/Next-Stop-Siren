@@ -1,3 +1,5 @@
+-- 현재 5개 테이블의 참고 DDL이다. 승인된 미구현 대기열 목표는 chat-policy.md 참조.
+-- 영속 작업·예약·정산·복구 스키마와 적용/되돌림은 #52/#15의 개발자 설계 검토 대상이다.
 -- PostgreSQL 17 DB 설계 참고안. 실행/적용되지 않았음.
 -- 초기 빈 개발·테스트 DB 테이블은 SQLAlchemy ORM metadata.create_all()로 만든다.
 -- 이 SQL은 bigint·유일성·복합 FK·RESTRICT·CHECK 제약의 비교 자료이며 앱 초기화 명령은 아니다.

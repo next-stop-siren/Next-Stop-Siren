@@ -18,7 +18,7 @@ body:
     id: prerequisites
     attributes:
       label: 시작 조건
-      description: 직접 선행 이슈와 공통 준비 작업을 링크하고, 필요한 PM 결정을 구분해 주세요.
+      description: 직접 선행 이슈와 공통 준비 작업을 링크하고, mock 준비 가능 조건과 실제 연동 완료 조건 및 남은 PM 결정을 구분해 주세요.
       placeholder: "- 선행: #…\n- 공통 준비: …\n- PM 결정: 없음 또는 구체적인 값"
     validations:
       required: true
