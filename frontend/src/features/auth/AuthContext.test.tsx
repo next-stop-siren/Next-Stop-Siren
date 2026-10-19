@@ -830,3 +830,125 @@ test('다른 탭에서 계정이 바뀐 뒤 자동 갱신이 일어나면 user�
 
   fetchSpy.mockRestore()
 })
+
+test('부트스트랩 성공 시 csrf→refresh→me 순서로 세션을 복원한다', async () => {
+  const calls: string[] = []
+
+  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const url = typeof input === 'string' ? input : input.toString()
+    calls.push(url)
+
+    if (url === '/api/auth/csrf') {
+      return jsonResponse(200, { csrf_token: 'csrf-boot' })
+    }
+
+    if (url === '/api/auth/refresh') {
+      return jsonResponse(200, {
+        access_token: 'access-boot',
+        token_type: 'Bearer',
+        expires_in: 900,
+        csrf_token: 'csrf-boot-2',
+      })
+    }
+
+    if (url === '/api/me') {
+      return jsonResponse(200, {
+        user: {
+          id: 'u1',
+          email: 'restored@test.com',
+          created_at: '2026-01-01T00:00:00Z',
+        },
+      })
+    }
+
+    throw new Error(`예상하지 못한 fetch 호출: ${url}`)
+  })
+
+  render(
+    <AuthProvider>
+      <Probe />
+    </AuthProvider>,
+  )
+
+  await waitFor(() => {
+    expect(screen.getByTestId('status').textContent).toBe('authenticated')
+  })
+
+  expect(screen.getByTestId('email').textContent).toBe('restored@test.com')
+  expect(calls).toEqual(['/api/auth/csrf', '/api/auth/refresh', '/api/me'])
+  fetchSpy.mockRestore()
+})
+
+test('부트스트랩에서 409(refresh_race)를 받으면 csrf→refresh를 한 번 재시도한다', async () => {
+  vi.useFakeTimers()
+
+  const calls: string[] = []
+  let refreshCalls = 0
+  let csrfCalls = 0
+
+  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const url = typeof input === 'string' ? input : input.toString()
+    calls.push(url)
+
+    if (url === '/api/auth/csrf') {
+      csrfCalls += 1
+      return jsonResponse(200, {
+        csrf_token: `csrf-${csrfCalls}`,
+      })
+    }
+
+    if (url === '/api/auth/refresh') {
+      refreshCalls += 1
+
+      if (refreshCalls === 1) {
+        return jsonResponse(409, errorBody('refresh_race'))
+      }
+
+      return jsonResponse(200, {
+        access_token: 'access-retried',
+        token_type: 'Bearer',
+        expires_in: 900,
+        csrf_token: 'csrf-retried',
+      })
+    }
+
+    if (url === '/api/me') {
+      return jsonResponse(200, {
+        user: {
+          id: 'u1',
+          email: 'retry@test.com',
+          created_at: '2026-01-01T00:00:00Z',
+        },
+      })
+    }
+
+    throw new Error(`예상하지 못한 fetch 호출: ${url}`)
+  })
+
+  try {
+    render(
+      <AuthProvider>
+        <Probe />
+      </AuthProvider>,
+    )
+
+    // 최초 CSRF 조회와 refresh 요청이 처리되고 재시도 타이머가
+    // 등록될 수 있도록 비동기 작업을 진행한다.
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(1000)
+    })
+
+    expect(screen.getByTestId('status').textContent).toBe('authenticated')
+    expect(screen.getByTestId('email').textContent).toBe('retry@test.com')
+
+    expect(refreshCalls).toBe(2)
+    expect(csrfCalls).toBe(2)
+
+    expect(calls).toEqual(['/api/auth/csrf', '/api/auth/refresh', '/api/auth/csrf', '/api/auth/refresh', '/api/me'])
+  } finally {
+    fetchSpy.mockRestore()
+  }
+})
