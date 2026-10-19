@@ -775,3 +775,58 @@ test('자동 갱신 중 refresh 응답이 멈춰도 타임아웃 후 처리가 �
 
   fetchSpy.mockRestore()
 })
+
+test('다른 탭에서 계정이 바뀐 뒤 자동 갱신이 일어나면 user도 함께 최신화된다', async () => {
+  // 리뷰 지적 재현: refresh·CSRF 쿠키는 탭 사이에 공유된다. 다른 탭에서 B
+  // 계정으로 로그인하면 이 탭의 다음 자동 갱신도 B의 access를 받는다. access만
+  // 갱신하고 user를 그대로 두면 "A 사용자 정보 + B access" 조합이 생긴다.
+  vi.useFakeTimers()
+
+  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const url = typeof input === 'string' ? input : input.toString()
+    if (url === '/api/auth/csrf') return jsonResponse(401, errorBody('unauthenticated'))
+    if (url === '/api/auth/login') return jsonResponse(200, successBody('a@test.com', 31))
+    if (url === '/api/auth/refresh') {
+      // 다른 탭에서 B로 로그인해 공유 쿠키가 바뀐 상황 — 이 refresh는 B의
+      // access를 돌려준다.
+      return jsonResponse(200, {
+        access_token: 'access-b',
+        token_type: 'Bearer',
+        expires_in: 900,
+        csrf_token: 'csrf-b',
+      })
+    }
+    if (url === '/api/me') {
+      return jsonResponse(200, { user: { id: 'u-b', email: 'b@test.com', created_at: '2026-01-01T00:00:00Z' } })
+    }
+    throw new Error(`예상하지 못한 호출: ${url}`)
+  })
+
+  const actionsRef: { current: ProbeActions | null } = { current: null }
+
+  render(
+    <AuthProvider>
+      <Probe actionsRef={actionsRef} />
+    </AuthProvider>,
+  )
+
+  await act(async () => {
+    await vi.runOnlyPendingTimersAsync()
+  })
+
+  await act(async () => {
+    await actionsRef.current?.login('a@test.com', 'password123!')
+  })
+  expect(screen.getByTestId('email').textContent).toBe('a@test.com')
+
+  // 1초 뒤 soft 갱신이 발동 → 공유 쿠키가 이미 B로 바뀐 상태라 B의 access가
+  // 돌아온다. /me까지 다시 조회해 user를 B로 갱신해야 한다.
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1_100)
+  })
+
+  expect(screen.getByTestId('status').textContent).toBe('authenticated')
+  expect(screen.getByTestId('email').textContent).toBe('b@test.com')
+
+  fetchSpy.mockRestore()
+})

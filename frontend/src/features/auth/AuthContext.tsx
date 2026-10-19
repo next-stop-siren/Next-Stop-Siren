@@ -137,13 +137,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       softExpiryTimerRef.current = setTimeout(() => {
         enqueueMutation(() => refreshWithRetry(csrfTokenAtScheduleTime ?? undefined))
-          .then((refreshed) => {
+          .then(async (refreshed) => {
             // 이 타이머가 걸린 뒤 로그아웃/재로그인 등으로 세대가 바뀌었다면
             // (= 이미 다른 세션으로 넘어갔다면) 이 결과는 폐기한다. 타임아웃으로
             // 끝난 뒤 뒤늦게 들어오는 결과도 여기서 자연히 걸러진다.
             if (generationRef.current !== generation) return
+
+            // refresh/CSRF 쿠키는 탭 사이에 공유된다. 다른 탭에서 B 계정으로
+            // 로그인하면 이 탭의 다음 자동 갱신도 B의 access를 받게 되므로,
+            // access만 바꾸고 user를 그대로 두면 "이전 탭의 user + 새 access"
+            // 조합이 생긴다. 그래서 갱신된 access로 /me를 다시 조회해 user도
+            // 함께 최신화한다.
+            let refreshedUser: PublicUser | null = null
+            try {
+              const me = await getMe(refreshed.access_token)
+              refreshedUser = me.user
+            } catch {
+              // /me 조회 실패가 이 access 자체를 무효화하진 않는다. user 갱신만
+              // 이번엔 건너뛰고(기존 user 유지), access/csrf는 그대로 적용한다.
+            }
+            if (generationRef.current !== generation) return
+
             csrfTokenRef.current = refreshed.csrf_token
             setAccessToken(refreshed.access_token)
+            if (refreshedUser) {
+              setUser(refreshedUser)
+            }
             // refresh 응답을 실제로 "받은" 이 시각 기준으로 다음 만료를 다시
             // 계산한다 — 403/409 재시도로 1초를 더 썼더라도 그 시간이 다음
             // 만료 계산에 묻히지 않는다.
