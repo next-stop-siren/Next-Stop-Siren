@@ -3,7 +3,7 @@
 // AuthModal이 AuthContext와 올바르게 연결되어 성공/실패를 화면에 보여주는지 검증한다.
 
 import { afterEach, expect, test, vi } from 'vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import AuthModal from './AuthModal'
 import { AuthProvider } from './AuthContext'
@@ -167,4 +167,103 @@ test('이모지가 포함된 유효한 비밀번호를 자르지 않고 그대�
   await user.click(submitButton)
 
   await waitFor(() => expect(capturedPassword).toBe(password))
+})
+
+// 리뷰 코멘트(AuthModal.tsx L186): 예전 maxLength=128(UTF-16 단위) 속성이
+// 남아 있었다면 이모지 65개(코드포인트 65자, UTF-16 130유닛)가 뒷부분부터
+// 잘려 서버가 등록 시 받았던 비밀번호와 로그인 시 보내는 값이 달라졌을
+// 경계값이다. 지금은 입력에 maxLength 속성이 없고 JS 검증도 코드포인트
+// 기준이라, 이 길이에서도 잘리지 않고 그대로 전송되는지 확인한다.
+test('이모지 65개(코드포인트 기준 128자 경계를 넘는) 비밀번호를 자르지 않고 그대로 제출한다', async () => {
+  const user = userEvent.setup()
+  let capturedPassword: string | null = null
+
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const url = typeof input === 'string' ? input : input.toString()
+    if (url === '/api/auth/csrf') return jsonResponse(401, errorBody('unauthenticated', '인증 필요'))
+    if (url === '/api/auth/login') {
+      const body = JSON.parse((init?.body as string) ?? '{}')
+      capturedPassword = body.password
+      return jsonResponse(200, {
+        user: { id: 'u1', email: 'a@test.com', created_at: '2026-01-01T00:00:00Z' },
+        access_token: 'a',
+        token_type: 'Bearer',
+        expires_in: 900,
+        csrf_token: 'c',
+      })
+    }
+    throw new Error(`예상하지 못한 호출: ${url}`)
+  })
+
+  render(
+    <AuthProvider>
+      <AuthModal onClose={() => {}} />
+    </AuthProvider>,
+  )
+
+  const password = '😀'.repeat(65)
+  const passwordInput = screen.getByLabelText('비밀번호') as HTMLInputElement
+  // 이모지 65개(서로게이트 쌍 130개)를 user.type의 키 단위 입력으로 넣으면
+  // 느리고, IME 유사 처리로 인한 왜곡 가능성도 있다. 여기서는 "브라우저가
+  // 받은 값을 그대로 전송하는지"가 핵심이므로 fireEvent.change로 네이티브
+  // value를 직접 설정해 실제 입력 이벤트와 동일한 change 경로를 검증한다.
+  fireEvent.change(passwordInput, { target: { value: password } })
+  expect(passwordInput.value).toBe(password)
+  expect([...passwordInput.value].length).toBe(65)
+
+  await user.type(screen.getByLabelText('이메일'), 'a@test.com')
+  const submitButton = document.querySelector('button[type="submit"]') as HTMLButtonElement
+  await user.click(submitButton)
+
+  await waitFor(() => expect(capturedPassword).toBe(password))
+})
+
+// 리뷰 코멘트(AuthModal.tsx L186): 이메일 input이 기존 type="email"이면
+// 브라우저 자체 검증이 로컬파트의 비ASCII(한글 등)를 막아, 서버는 허용하는
+// 주소인데도 폼 제출이 막혔다. 지금은 type="text"+inputMode="email"로
+// 바뀌었으므로, 한글이 포함된 이메일 주소도 브라우저 네이티브 검증에
+// 막히지 않고 실제로 제출되는지 확인한다.
+test('로컬파트에 한글이 포함된 이메일 주소를 브라우저 검증에 막히지 않고 제출한다', async () => {
+  const user = userEvent.setup()
+  let capturedEmail: string | null = null
+
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const url = typeof input === 'string' ? input : input.toString()
+    if (url === '/api/auth/csrf') return jsonResponse(401, errorBody('unauthenticated', '인증 필요'))
+    if (url === '/api/auth/login') {
+      const body = JSON.parse((init?.body as string) ?? '{}')
+      capturedEmail = body.email
+      return jsonResponse(200, {
+        user: { id: 'u1', email: body.email, created_at: '2026-01-01T00:00:00Z' },
+        access_token: 'a',
+        token_type: 'Bearer',
+        expires_in: 900,
+        csrf_token: 'c',
+      })
+    }
+    throw new Error(`예상하지 못한 호출: ${url}`)
+  })
+
+  render(
+    <AuthProvider>
+      <AuthModal onClose={() => {}} />
+    </AuthProvider>,
+  )
+
+  const email = '사용자@example.com'
+  const emailInput = screen.getByLabelText('이메일') as HTMLInputElement
+  expect(emailInput.type).toBe('text')
+
+  await user.type(emailInput, email)
+  expect(emailInput.value).toBe(email)
+  // type="email"이었다면 이 시점에 네이티브 validity가 비한글 로컬파트를
+  // 기대해 invalid 상태가 됐을 입력이다. type="text"에서는 애초에 그런
+  // 제약이 적용되지 않는다.
+  expect(emailInput.validity.valid).toBe(true)
+
+  await user.type(screen.getByLabelText('비밀번호'), 'validpassword123')
+  const submitButton = document.querySelector('button[type="submit"]') as HTMLButtonElement
+  await user.click(submitButton)
+
+  await waitFor(() => expect(capturedEmail).toBe(email))
 })
