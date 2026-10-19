@@ -63,6 +63,18 @@ export class AuthApiError extends Error {
   }
 }
 
+// 타임아웃(또는 그 외 사유로 인한 abort)으로 요청이 끝난 경우 던진다. 호출 측
+// (AuthContext)은 이걸 "이 요청은 끝내 응답을 못 받았다"는 신호로 다루면 된다 —
+// AuthApiError(서버가 명시적으로 거절한 경우)와는 구분되는, 별도의 실패 유형이다.
+export class AuthTimeoutError extends Error {
+  constructor(url: string, timeoutMs: number) {
+    super(`${url} 요청이 ${timeoutMs}ms 안에 끝나지 않았습니다.`)
+    this.name = 'AuthTimeoutError'
+  }
+}
+
+const DEFAULT_TIMEOUT_MS = 10_000
+
 async function parseJsonOrThrow<T>(response: Response): Promise<T> {
   // logout은 204라 본문이 없다.
   const body: unknown = response.status === 204 ? null : await response.json()
@@ -83,62 +95,83 @@ function isApiErrorBody(body: unknown): body is ApiErrorBody {
   )
 }
 
+// fetch + 응답 파싱을 하나의 AbortController/타임아웃으로 묶는다. 헤더만 늦는
+// 경우뿐 아니라, 헤더는 왔지만 body 스트림이 끝나지 않는 경우(parseJsonOrThrow의
+// response.json() 단계)도 같은 signal로 커버된다 — abort되면 아직 읽고 있던
+// body 스트림도 함께 끊어지기 때문이다. 요청 옵션(credentials, headers 등)은
+// 그대로 전달하고, signal만 덧붙인다.
+async function requestJson<T>(url: string, init: RequestInit, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<T> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal })
+    return await parseJsonOrThrow<T>(response)
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new AuthTimeoutError(url, timeoutMs)
+    }
+    // fetch 자체가 지원하지 않는 환경이거나 polyfill이 AbortError를 DOMException이
+    // 아닌 평범한 Error(name: 'AbortError')로 던지는 경우도 있어 이름만으로도 한 번 더 본다.
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new AuthTimeoutError(url, timeoutMs)
+    }
+    throw error
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
 // 로컬 이메일·비밀번호 가입. 브라우저가 Origin 헤더를 자동으로 붙인다.
 export async function register(email: string, password: string): Promise<AuthSuccessBody> {
-  const response = await fetch('/api/auth/register', {
+  return requestJson<AuthSuccessBody>('/api/auth/register', {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
   })
-  return parseJsonOrThrow<AuthSuccessBody>(response)
 }
 
 // 로컬 이메일·비밀번호 로그인.
 export async function login(email: string, password: string): Promise<AuthSuccessBody> {
-  const response = await fetch('/api/auth/login', {
+  return requestJson<AuthSuccessBody>('/api/auth/login', {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
   })
-  return parseJsonOrThrow<AuthSuccessBody>(response)
 }
 
 // refresh 쿠키만으로는 access를 못 받는다. CSRF 값을 먼저 읽어야 한다.
 export async function fetchCsrf(): Promise<CsrfBody> {
-  const response = await fetch('/api/auth/csrf', {
+  return requestJson<CsrfBody>('/api/auth/csrf', {
     method: 'GET',
     credentials: 'include',
   })
-  return parseJsonOrThrow<CsrfBody>(response)
 }
 
 // 403/409의 1회 재시도는 이 함수를 호출하는 쪽(AuthContext)의 책임으로 둔다.
 // 여기서는 계약대로 "정확히 한 번의 POST"만 수행한다.
 export async function refresh(csrfToken: string): Promise<RefreshBody> {
-  const response = await fetch('/api/auth/refresh', {
+  return requestJson<RefreshBody>('/api/auth/refresh', {
     method: 'POST',
     credentials: 'include',
     headers: { 'X-CSRF-Token': csrfToken },
   })
-  return parseJsonOrThrow<RefreshBody>(response)
 }
 
 export async function logout(csrfToken: string): Promise<void> {
-  const response = await fetch('/api/auth/logout', {
+  await requestJson<null>('/api/auth/logout', {
     method: 'POST',
     credentials: 'include',
     headers: { 'X-CSRF-Token': csrfToken },
   })
-  await parseJsonOrThrow<null>(response)
 }
 
 export async function getMe(accessToken: string): Promise<{ user: PublicUser }> {
-  const response = await fetch('/api/me', {
+  return requestJson<{ user: PublicUser }>('/api/me', {
     headers: { Authorization: `Bearer ${accessToken}` },
   })
-  return parseJsonOrThrow<{ user: PublicUser }>(response)
 }
 
 // Google은 팝업이 아니라 전체 페이지 이동이다. fetch로 호출하지 않는다.

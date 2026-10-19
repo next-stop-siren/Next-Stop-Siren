@@ -110,36 +110,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [clearExpiryTimers])
 
   // access는 15분(900초)짜리다. 만료 30초 전에 soft 타이머로 선제 갱신을
-  // 시도하고, 그와 별도로 issuedAt + expires_in 시각에 hard 타이머를 건다.
-  // soft가 실패해도 hard가 발동하기 전까지는 로그인 상태를 유지한다 — 그
-  // 시점까지는 서버에 있는 access가 여전히 유효하기 때문이다. hard는 soft의
-  // 성공 여부와 무관하게 정확히 그 시각에 무조건 로그아웃시키는 안전망이다.
+  // 시도하고, 그와 별도로 "토큰을 실제로 받은 시각(issuedAtMs) + expires_in"
+  // 절대 시각에 hard 타이머를 건다. soft가 실패해도 hard가 발동하기 전까지는
+  // 로그인 상태를 유지한다 — 그 시점까지는 서버에 있는 access가 여전히
+  // 유효하기 때문이다. hard는 soft의 성공 여부와 무관하게 정확히 그 시각에
+  // 무조건 로그아웃시키는 안전망이다.
+  //
+  // expiresInSeconds가 아니라 expiresAtMs(절대 시각)를 기준으로 계산하는 이유:
+  // 이 함수를 호출하는 시점(예: /me 조회가 끝난 뒤)이 토큰을 실제로 발급받은
+  // 시점보다 늦을 수 있다. "지금부터 expiresInSeconds"로 타이머를 걸면, 그
+  // 사이에 흐른 시간만큼 실제 만료보다 로그인 상태가 더 오래 유지되어 버린다.
+  // 그래서 항상 "토큰을 받은 바로 그 순간"을 호출자가 넘겨주게 하고, 여기서는
+  // 그 시각 + expires_in을 고정된 목표 시각(expiresAtMs)으로만 다룬다.
+  //
   // 자동 refresh(soft)도 뮤텍스를 거친다: 타이머가 발동한 시점에 마침
   // 로그아웃이 진행 중이면, 그 로그아웃이 끝날 때까지 기다렸다가 나간다.
   const scheduleExpiry = useCallback(
-    (expiresInSeconds: number, generation: number) => {
+    (issuedAtMs: number, expiresInSeconds: number, generation: number) => {
       clearExpiryTimers()
 
-      const softDelayMs = Math.max((expiresInSeconds - 30) * 1000, 0)
-      const hardDelayMs = Math.max(expiresInSeconds * 1000, 0)
+      const expiresAtMs = issuedAtMs + expiresInSeconds * 1000
+      const softAtMs = expiresAtMs - 30_000
+      const softDelayMs = Math.max(softAtMs - Date.now(), 0)
+      const hardDelayMs = Math.max(expiresAtMs - Date.now(), 0)
       const csrfTokenAtScheduleTime = csrfTokenRef.current
 
       softExpiryTimerRef.current = setTimeout(() => {
         enqueueMutation(() => refreshWithRetry(csrfTokenAtScheduleTime ?? undefined))
           .then((refreshed) => {
             // 이 타이머가 걸린 뒤 로그아웃/재로그인 등으로 세대가 바뀌었다면
-            // (= 이미 다른 세션으로 넘어갔다면) 이 결과는 폐기한다.
+            // (= 이미 다른 세션으로 넘어갔다면) 이 결과는 폐기한다. 타임아웃으로
+            // 끝난 뒤 뒤늦게 들어오는 결과도 여기서 자연히 걸러진다.
             if (generationRef.current !== generation) return
             csrfTokenRef.current = refreshed.csrf_token
             setAccessToken(refreshed.access_token)
-            scheduleExpiry(refreshed.expires_in, generation)
+            // refresh 응답을 실제로 "받은" 이 시각 기준으로 다음 만료를 다시
+            // 계산한다 — 403/409 재시도로 1초를 더 썼더라도 그 시간이 다음
+            // 만료 계산에 묻히지 않는다.
+            scheduleExpiry(Date.now(), refreshed.expires_in, generation)
           })
           .catch(() => {
             // 의도적으로 여기서는 setGuest()를 호출하지 않는다. soft 갱신
             // 실패가 "이 access가 지금 무효"라는 뜻은 아니다 — 서버는 여전히
-            // issuedAt + expires_in까지 이 access를 유효하다고 본다. 즉시
-            // 끊어내면 일시적 네트워크·CSRF 장애만으로 멀쩡한 세션을 조기에
-            // 로그아웃시키게 된다. 실제 차단은 아래 hard 타이머가 맡는다.
+            // issuedAt + expires_in까지 이 access를 유효하다고 본다. 타임아웃
+            // (AuthTimeoutError)이든 명시적 거절(AuthApiError)이든 마찬가지로
+            // 즉시 끊어내면 멀쩡한 세션을 조기에 로그아웃시키게 된다. 실제
+            // 차단은 아래 hard 타이머가 맡는다.
           })
       }, softDelayMs)
 
@@ -156,14 +172,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   const applySession = useCallback(
-    (nextAccessToken: string, nextCsrfToken: string, nextUser: PublicUser, expiresInSeconds: number) => {
+    (
+      nextAccessToken: string,
+      nextCsrfToken: string,
+      nextUser: PublicUser,
+      expiresInSeconds: number,
+      issuedAtMs: number,
+    ) => {
       generationRef.current += 1
       const generation = generationRef.current
       csrfTokenRef.current = nextCsrfToken
       setAccessToken(nextAccessToken)
       setUser(nextUser)
       setStatus('authenticated')
-      scheduleExpiry(expiresInSeconds, generation)
+      scheduleExpiry(issuedAtMs, expiresInSeconds, generation)
     },
     [scheduleExpiry],
   )
@@ -175,14 +197,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false
 
+    // 이 부트스트랩이 시작될 때의 세대를 기록해둔다. getMe()가 느리게 끝나는
+    // 동안 사용자가 직접 로그인/회원가입을 해버리면(= generation이 바뀌면),
+    // 뒤늦게 끝난 이 부트스트랩의 결과가 그 새 세션을 덮어쓰면 안 된다.
+    const bootstrapGeneration = generationRef.current
+
     async function bootstrap() {
       try {
         const refreshed = await enqueueMutation(refreshWithRetry)
+        // 토큰을 "받은" 바로 이 시점을 issuedAt으로 고정한다. 아래 getMe()가
+        // 느리게 끝나더라도(리뷰에서 지적된, /me 120초 지연 시나리오) 만료
+        // 계산은 이 시각 기준으로 움직이지 않는다.
+        const issuedAtMs = Date.now()
         const me = await getMe(refreshed.access_token)
-        if (cancelled) return
-        applySession(refreshed.access_token, refreshed.csrf_token, me.user, refreshed.expires_in)
+        if (cancelled || generationRef.current !== bootstrapGeneration) return
+        applySession(refreshed.access_token, refreshed.csrf_token, me.user, refreshed.expires_in, issuedAtMs)
       } catch {
-        if (cancelled) return
+        if (cancelled || generationRef.current !== bootstrapGeneration) return
         setGuest()
       }
     }
@@ -199,7 +230,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(
     async (email: string, password: string) => {
       const result = await enqueueMutation(() => apiLogin(email, password))
-      applySession(result.access_token, result.csrf_token, result.user, result.expires_in)
+      applySession(result.access_token, result.csrf_token, result.user, result.expires_in, Date.now())
     },
     [applySession, enqueueMutation],
   )
@@ -207,7 +238,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const register = useCallback(
     async (email: string, password: string) => {
       const result = await enqueueMutation(() => apiRegister(email, password))
-      applySession(result.access_token, result.csrf_token, result.user, result.expires_in)
+      applySession(result.access_token, result.csrf_token, result.user, result.expires_in, Date.now())
     },
     [applySession, enqueueMutation],
   )
