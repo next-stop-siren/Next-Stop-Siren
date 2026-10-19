@@ -1,5 +1,7 @@
 # Next-Stop-Siren
 
+[회원 채팅 대기열·한도 정책](docs/04-reference/chat-policy.md)은 승인된 미래 구현 기준이다. 회원당 실행 1개, 새 질문 대기 3개, 별도 재시도 대기 1개와 일일 400회·6시간 100회 한도를 정했다. 예약·정산과 대기열은 아직 구현되지 않았다. 현재 스트리밍(PR #44)과 재시도(PR #51)는 병합됐다.
+
 Next-Stop-Siren은 교통법 질문을 위한 챗봇 프로젝트입니다. 백엔드는 이메일 가입·로그인, 쿠키 세션, Google OIDC, 본인 대화 생성·목록·메시지 저장·재조회를 구현했습니다. 일반 채팅 API는 무료 모의 답변을 반환합니다. 화면은 비회원 소개와 인증 모달까지이며 실제 인증·채팅 API 연결은 후속 작업입니다.
 
 제품 범위와 향후 계획은 [서비스 범위](docs/01-start/service-scope.md), [기술 구성](docs/01-start/stack.md), [API 기준](docs/04-reference/api.md), [DB 설계](docs/04-reference/database.md), [인증 기준](docs/04-reference/authentication.md), [S11 GPT 기준](docs/04-reference/ai.md)을 참고하세요. 팀 작업은 [처음 맡을 작업과 인계](docs/02-team/team-handoff.md), 실행 세부사항은 [온보딩](docs/01-start/onboarding.md)과 [품질·테스트 지침](docs/03-development/quality.md)에 있습니다.
