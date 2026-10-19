@@ -30,6 +30,8 @@ ApiErrorCode = Literal[
     "rate_limited",
     "request_key_conflict",
     "conversation_busy",
+    "retry_not_allowed",
+    "retry_not_latest",
     "provider_failed",
     "provider_timeout",
 ]
@@ -44,6 +46,8 @@ _API_ERRORS: dict[ApiErrorCode, tuple[int, str]] = {
     "rate_limited": (429, "로그인 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요."),
     "request_key_conflict": (409, "같은 요청 키로 다른 질문을 보낼 수 없습니다."),
     "conversation_busy": (409, "이전 질문의 답변을 기다리고 있습니다."),
+    "retry_not_allowed": (409, "이 답변은 다시 시도할 수 없습니다. 대화 기록을 확인해 주세요."),
+    "retry_not_latest": (409, "가장 최근 질문만 다시 시도할 수 있습니다. 새 질문으로 보내 주세요."),
     "provider_failed": (502, "답변을 만들지 못했습니다. 대화 기록을 확인해 주세요."),
     "provider_timeout": (504, "답변 시간이 초과되었습니다. 대화 기록을 확인해 주세요."),
 }
@@ -61,8 +65,10 @@ _PUBLIC_FIELDS = {
     "before_id",
     "after_id",
     "conversation_id",
+    "message_id",
     "content",
     "request_key",
+    "retry_key",
     "return_to",
 }
 
@@ -111,6 +117,14 @@ def request_key_conflict() -> ApiError:
 
 def conversation_busy() -> ApiError:
     return ApiError("conversation_busy")
+
+
+def retry_not_allowed() -> ApiError:
+    return ApiError("retry_not_allowed")
+
+
+def retry_not_latest() -> ApiError:
+    return ApiError("retry_not_latest")
 
 
 def provider_failed() -> ApiError:
