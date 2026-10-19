@@ -5,14 +5,8 @@ import Sidebar from './features/layout/Sidebar'
 import NonmemberIntro from './features/nonmember/NonmemberIntro'
 
 function AppShell() {
-  const { status, logout, retryLogout } = useAuth()
+  const { status, logout, retryLogout, logoutError } = useAuth()
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
-
-  // 로그아웃 요청이 서버에서 실패했을 때(네트워크 오류, 403, 503 등) 보여줄 상태다.
-  // AuthContext.logout()은 실패해도 로컬 상태를 즉시 guest로 비우므로(화면은 이미
-  // 비회원처럼 보임), 서버의 refresh·CSRF 쿠키는 여전히 남아 있을 수 있다는 걸
-  // 사용자에게 알리고 다시 시도할 수단을 준다.
-  const [logoutError, setLogoutError] = useState(false)
   const [isRetryingLogout, setIsRetryingLogout] = useState(false)
 
   // 모달을 닫으면 AuthModal이 이전 포커스 요소(질문 입력창)로 초점을 되돌린다.
@@ -37,24 +31,16 @@ function AppShell() {
   }
 
   const handleLogout = () => {
-    setLogoutError(false)
-    logout().catch(() => {
-      setLogoutError(true)
-    })
+    // 실패 배너는 Provider가 해당 세대에만 연결한다.
+    logout().catch(() => {})
   }
 
-  // "다시 시도"는 logout()을 다시 부르지 않는다 — 첫 시도에서 이미 로컬
-  // csrfTokenRef가 비워졌기 때문에 그걸 재사용하면 서버에 아무 요청도 가지
-  // 않고 조용히 "성공" 처리되어 버린다(서버 세션은 그대로 남음). 대신
-  // retryLogout()으로 CSRF를 새로 받아와 실제로 서버 로그아웃을 다시 요청하고,
-  // 그 응답을 기다린 뒤에만 배너를 치운다.
   const handleRetryLogout = async () => {
     setIsRetryingLogout(true)
     try {
       await retryLogout()
-      setLogoutError(false)
     } catch {
-      setLogoutError(true)
+      // Provider가 현재 세대의 실패만 표시한다.
     } finally {
       setIsRetryingLogout(false)
     }
