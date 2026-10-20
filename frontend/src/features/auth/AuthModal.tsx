@@ -1,16 +1,27 @@
 import { useEffect, useRef, useState } from 'react'
 import styles from './AuthModal.module.css'
+import { AuthApiError, googleLoginStartUrl } from './authApi'
+import { useAuth } from './AuthContext'
+import { validateEmail, validatePassword } from './authValidation'
 
 type AuthModalProps = {
   onClose: () => void
 }
 
+type FormStatus = 'idle' | 'submitting' | 'error'
+
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 function AuthModal({ onClose }: AuthModalProps) {
+  const { login, register } = useAuth()
   const [mode, setMode] = useState<'login' | 'signup'>('login')
+  const [formStatus, setFormStatus] = useState<FormStatus>('idle')
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [showGoogleFailurePreview, setShowGoogleFailurePreview] = useState(false)
+
   const isLogin = mode === 'login'
+  const isSubmitting = formStatus === 'submitting'
 
   const modalRef = useRef<HTMLElement>(null)
   const previouslyFocusedRef = useRef<HTMLElement | null>(null)
@@ -20,8 +31,11 @@ function AuthModal({ onClose }: AuthModalProps) {
     onCloseRef.current = onClose
   }, [onClose])
 
-  // 모달 열림: 이전 포커스 저장, 모달 안으로 초점 이동, 포커스 트랩·Escape 등록
-  // 모달 닫힘(언마운트): 이전에 초점이 있던 요소로 복원
+  useEffect(() => {
+    setFormStatus('idle')
+    setErrorMessage(null)
+  }, [])
+
   useEffect(() => {
     previouslyFocusedRef.current = document.activeElement as HTMLElement | null
 
@@ -67,81 +81,186 @@ function AuthModal({ onClose }: AuthModalProps) {
     }
   }, [])
 
+  const switchMode = (nextMode: 'login' | 'signup') => {
+    setMode(nextMode)
+    setFormStatus('idle')
+    setErrorMessage(null)
+  }
+
+  const closeGoogleFailurePreview = () => {
+    setShowGoogleFailurePreview(false)
+  }
+
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+
+    const formData = new FormData(event.currentTarget)
+    const email = String(formData.get('email') ?? '')
+    const password = String(formData.get('password') ?? '')
+
+    const emailError = validateEmail(email)
+    const passwordError = validatePassword(password)
+    const clientError = emailError ?? passwordError
+
+    if (clientError) {
+      setFormStatus('error')
+      setErrorMessage(clientError)
+      return
+    }
+
+    setFormStatus('submitting')
+    setErrorMessage(null)
+
+    try {
+      if (isLogin) {
+        await login(email.trim(), password)
+      } else {
+        await register(email.trim(), password)
+      }
+      onClose()
+    } catch (error) {
+      setFormStatus('error')
+      setErrorMessage(error instanceof AuthApiError ? error.message : '요청을 처리하지 못했습니다. 다시 시도해 주세요.')
+    }
+  }
+
   return (
     <div className={styles.modalBackdrop}>
       <button type="button" className={styles.modalBackdropDismiss} onClick={onClose} aria-label="모달 닫기" />
+
       <section
         ref={modalRef}
         className={styles.authModal}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="auth-title"
+        aria-labelledby={showGoogleFailurePreview ? 'google-failure-title' : 'auth-title'}
         tabIndex={-1}
-        onMouseDown={(event) => event.stopPropagation()} // Prevent closing modal when clicking inside
+        onMouseDown={(event) => event.stopPropagation()}
       >
         <button type="button" className={styles.modalClose} onClick={onClose} aria-label="모달 닫기">
           ×
         </button>
 
-        <p className="eyebrow">NEXT-STOP-SIREN</p>
-        <h2 id="auth-title">{isLogin ? '다시 만나서 반가워요' : '회원가입'}</h2>
-        <p className={styles.authDescription}>
-          {isLogin ? '로그인하고 교통법 질문을 시작해 보세요.' : '계정을 만들고 교통법 정보를 확인해 보세요.'}
-        </p>
+        {showGoogleFailurePreview ? (
+          <>
+            <p className="eyebrow">NEXT-STOP-SIREN</p>
 
-        <div className={styles.authTabs}>
-          <button
-            type="button"
-            className={isLogin ? styles.active : ''}
-            onClick={() => setMode('login')}
-            aria-pressed={isLogin}
-          >
-            로그인
-          </button>
-          <button
-            type="button"
-            className={!isLogin ? styles.active : ''}
-            onClick={() => setMode('signup')}
-            aria-pressed={!isLogin}
-          >
-            회원가입
-          </button>
-        </div>
+            <div className={styles.googleFailureIcon} aria-hidden="true">
+              !
+            </div>
 
-        <form
-          onSubmit={(event) => {
-            event.preventDefault()
-          }}
-        >
-          {!isLogin && (
-            <label>
-              이름
-              <input type="text" name="name" placeholder="이름을 입력하세요" autoComplete="name" required />
-            </label>
-          )}
+            <h2 id="google-failure-title">Google 로그인에 실패했어요</h2>
 
-          <label>
-            이메일
-            <input type="email" name="email" placeholder="name@example.com" autoComplete="email" required />
-          </label>
+            <p className={styles.authDescription}>
+              로그인을 완료하지 못했어요. 다시 시도하거나 이메일로 로그인해 주세요.
+            </p>
 
-          <label>
-            비밀번호
-            <input
-              type="password"
-              name="password"
-              placeholder="비밀번호를 입력하세요"
-              autoComplete={isLogin ? 'current-password' : 'new-password'}
-              required
-            />
-          </label>
+            <div className={styles.googleFailureActions}>
+              <button type="button" className={styles.authSubmit} onClick={closeGoogleFailurePreview}>
+                다시 시도하기
+              </button>
 
-          <button type="submit" className={styles.authSubmit}>
-            {isLogin ? '로그인' : '회원가입'}
-          </button>
-        </form>
+              <button
+                type="button"
+                className={styles.googleFailureSecondary}
+                onClick={() => {
+                  closeGoogleFailurePreview()
+                  switchMode('login')
+                }}
+              >
+                이메일로 로그인
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="eyebrow">NEXT-STOP-SIREN</p>
 
-        <p className={styles.authNotice}>현재는 화면 시안이며 실제 인증 기능은 연결되지 않았습니다.</p>
+            <h2 id="auth-title">{isLogin ? '다시 만나서 반가워요' : '회원가입'}</h2>
+
+            <p className={styles.authDescription}>
+              {isLogin ? '로그인하고 교통법 질문을 시작해 보세요.' : '계정을 만들고 교통법 정보를 확인해 보세요.'}
+            </p>
+
+            <a href={googleLoginStartUrl} className={styles.googleButton}>
+              Google로 계속하기
+            </a>
+
+            <button
+              type="button"
+              className={styles.googleFailurePreviewButton}
+              onClick={() => setShowGoogleFailurePreview(true)}
+            >
+              [개발용] Google 로그인 실패 화면 보기
+            </button>
+
+            <div className={styles.divider}>
+              <span>또는</span>
+            </div>
+
+            <div className={styles.authTabs}>
+              <button
+                type="button"
+                className={isLogin ? styles.active : ''}
+                onClick={() => switchMode('login')}
+                aria-pressed={isLogin}
+              >
+                로그인
+              </button>
+
+              <button
+                type="button"
+                className={!isLogin ? styles.active : ''}
+                onClick={() => switchMode('signup')}
+                aria-pressed={!isLogin}
+              >
+                회원가입
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit}>
+              {!isLogin && (
+                <label>
+                  이름
+                  <input type="text" name="name" placeholder="이름을 입력하세요" autoComplete="name" required />
+                </label>
+              )}
+
+              <label>
+                이메일
+                <input
+                  type="text"
+                  inputMode="email"
+                  name="email"
+                  placeholder="name@example.com"
+                  autoComplete="email"
+                  required
+                />
+              </label>
+
+              <label>
+                비밀번호
+                <input
+                  type="password"
+                  name="password"
+                  placeholder="비밀번호를 입력하세요"
+                  autoComplete={isLogin ? 'current-password' : 'new-password'}
+                  required
+                />
+              </label>
+
+              {errorMessage && (
+                <p className={styles.formError} role="alert">
+                  {errorMessage}
+                </p>
+              )}
+
+              <button type="submit" className={styles.authSubmit} disabled={isSubmitting}>
+                {isSubmitting ? '처리 중...' : isLogin ? '로그인' : '회원가입'}
+              </button>
+            </form>
+          </>
+        )}
       </section>
     </div>
   )
