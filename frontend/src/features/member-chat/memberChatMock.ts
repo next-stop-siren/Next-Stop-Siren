@@ -1,4 +1,13 @@
-export type ChatTaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'canceled' | 'quota-exceeded'
+export type ChatTaskStatus =
+  | 'pending'
+  | 'running'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+  | 'interrupted'
+  | 'canceled'
+  | 'expired'
+  | 'quota-exceeded'
 
 export interface MemberChatMessage {
   id: string
@@ -6,6 +15,8 @@ export interface MemberChatMessage {
   answer?: string
   status: ChatTaskStatus
   createdAt: string
+  acceptedAt?: string
+  expiresAt?: string
 }
 
 export interface MemberChatConversation {

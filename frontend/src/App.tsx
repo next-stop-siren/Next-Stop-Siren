@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './features/auth/AuthContext'
 import Sidebar from './features/layout/Sidebar'
 import NonmemberIntro from './features/nonmember/NonmemberIntro'
 import MemberChat from './features/member-chat/MemberChat'
+import MemberChatMockPreview from './features/member-chat/MemberChatMockPreview'
 
 function AppShell() {
   const { status, logout, retryLogout, logoutError } = useAuth()
@@ -91,6 +92,13 @@ function AppShell() {
 }
 
 function App() {
+  // 개발 모드에서만 켤 수 있는 독립 목업 화면입니다. 기본 앱/인증 흐름은 그대로 둡니다.
+  const isMockPreview = import.meta.env.DEV && new URLSearchParams(window.location.search).get('chatMock') === '1'
+
+  if (isMockPreview) {
+    return <MemberChatMockPreview />
+  }
+
   return (
     <AuthProvider>
       <AppShell />
