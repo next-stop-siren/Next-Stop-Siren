@@ -194,13 +194,14 @@ def run_together(count: int, work):
         return [future.result(timeout=30) for future in [workers.submit(call, index) for index in range(count)]]
 
 
-def test_concurrent_admissions_never_reserve_beyond_the_last_place(committed_quota_sessions):
+def test_concurrent_admissions_never_reserve_beyond_the_last_place(committed_quota_sessions, monkeypatch):
+    # The interval is checked first and would refuse every admission after the first
+    # at the same moment, so turn it off to show that the limit itself is counted atomically.
+    monkeypatch.setattr(quota, "MIN_INTERVAL_SECONDS", 0)
     sessions = committed_quota_sessions
     with sessions() as setup:
         user_id = add_user(setup)
         fill(setup, user_id, SIX_HOUR_LIMIT - 1, kst(10))
-        # The last reservation was long enough ago, so only the limit can refuse.
-        setup.get(ChatQuota, user_id).last_reserved_at = kst(9)
         setup.commit()
 
     def admit(_index: int):
