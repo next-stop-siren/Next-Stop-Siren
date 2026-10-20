@@ -68,7 +68,6 @@ input:focus-visible {
 .app-layout {
   display: flex;
   width: 100%;
-  height: 100vh;
   min-height: 0;
   overflow: hidden;
 }
@@ -85,10 +84,58 @@ input:focus-visible {
   justify-content: center;
 }
 
+/* App 레이아웃 전체를 감싸는 바깥 wrapper: 로그아웃 실패 배너(세로 방향)가
+   사이드바+본문 레이아웃(가로 방향) 위에 올라가는 구조를 만든다. */
+.app-root {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-layout {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.logout-error-banner {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-soft);
+  color: var(--color-primary);
+  font-size: 0.9rem;
+}
+
+.logout-error-banner button {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  border: 1px solid var(--color-primary);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.logout-error-banner button:hover {
+  background: var(--color-primary);
+  color: #ffffff;
+}
+
+.logout-error-banner button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 @media (max-width: 760px) {
   .app-layout {
     flex-direction: column;
-    height: 100vh;
   }
 
   .main-content {
