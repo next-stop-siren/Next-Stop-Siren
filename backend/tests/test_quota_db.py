@@ -68,6 +68,8 @@ def fill(session, user_id: int, count: int, moment: datetime, *, state: str = "s
         {"state": "settled"},
         {"state": "refunded", "refund_reason": "failed"},
         {"state": "refunded", "refund_reason": "other", "resolved_at": kst(1)},
+        # The job state is spelled `canceled`.
+        {"state": "refunded", "refund_reason": "cancelled", "resolved_at": kst(1)},
         {"state": "settled", "refund_reason": "failed", "resolved_at": kst(1)},
     ],
 )
@@ -97,8 +99,9 @@ def test_a_reservation_is_settled_or_refunded_exactly_once(orm_test_session):
     orm_test_session.expire_all()
     stored = {row.id: (row.state, row.refund_reason) for row in orm_test_session.scalars(select(QuotaReservation))}
     assert stored == {first.id: ("settled", None), second.id: ("refunded", "interrupted")}
-    current = quota.status(orm_test_session, user_id, now=kst(9, 1))
-    assert (current.daily_remaining, current.six_hour_remaining) == (DAILY_LIMIT - 1, SIX_HOUR_LIMIT - 1)
+    current = quota.limits(orm_test_session, user_id, now=kst(9, 1))
+    assert (current.daily.used, current.daily.reserved, current.daily.remaining) == (1, 0, DAILY_LIMIT - 1)
+    assert (current.six_hour.used, current.six_hour.reserved, current.six_hour.remaining) == (1, 0, SIX_HOUR_LIMIT - 1)
 
 
 def test_reserved_and_settled_count_against_the_limit_and_a_refund_frees_it(orm_test_session):
@@ -109,7 +112,9 @@ def test_reserved_and_settled_count_against_the_limit_and_a_refund_frees_it(orm_
 
     with pytest.raises(QuotaRejected) as rejected:
         quota.reserve(orm_test_session, user_id, now=kst(13, 0, 20))
-    assert (rejected.value.reason, rejected.value.retry_after) == ("six_hour_limit", 5 * 3600 - 20)
+    assert (rejected.value.reason, rejected.value.retry_after) == ("quota_exceeded", 5 * 3600 - 20)
+    current = quota.limits(orm_test_session, user_id, now=kst(13, 0, 20))
+    assert (current.six_hour.used, current.six_hour.reserved, current.six_hour.remaining) == (98, 2, 0)
 
     # An unknown outcome keeps its reservation until it is resolved.
     assert quota.refund(orm_test_session, held.id, "failed")
@@ -122,7 +127,7 @@ def test_the_daily_limit_spans_the_six_hour_periods(orm_test_session):
         fill(orm_test_session, user_id, SIX_HOUR_LIMIT, kst(hour))
     with pytest.raises(QuotaRejected) as rejected:
         quota.reserve(orm_test_session, user_id, now=kst(23, 30))
-    assert (rejected.value.reason, rejected.value.retry_after) == ("daily_limit", 1800)
+    assert (rejected.value.reason, rejected.value.retry_after) == ("quota_exceeded", 1800)
     # No carry-over: the next KST day starts again from the full limit.
     reserved = quota.reserve(orm_test_session, user_id, now=kst(0, 0, 0, day=21))
     assert reserved.day_start == kst(0, day=21)
@@ -136,10 +141,10 @@ def test_a_refund_after_a_reset_does_not_raise_the_new_period(orm_test_session):
     assert quota.refund(orm_test_session, old.id, "expired")
     with pytest.raises(QuotaRejected) as rejected:
         quota.reserve(orm_test_session, user_id, now=kst(18, 5))
-    assert rejected.value.reason == "six_hour_limit"
-    current = quota.status(orm_test_session, user_id, now=kst(18, 5))
-    assert current.six_hour_remaining == 0
-    assert current.daily_remaining == DAILY_LIMIT - SIX_HOUR_LIMIT
+    assert rejected.value.reason == "quota_exceeded"
+    current = quota.limits(orm_test_session, user_id, now=kst(18, 5))
+    assert current.six_hour.remaining == 0
+    assert current.daily.remaining == DAILY_LIMIT - SIX_HOUR_LIMIT
 
 
 def test_members_have_separate_quotas(orm_test_session):
@@ -209,7 +214,7 @@ def test_concurrent_admissions_never_reserve_beyond_the_last_place(committed_quo
     admitted = [result for result in results if isinstance(result, int)]
     refused = [result for result in results if isinstance(result, QuotaRejected)]
     assert len(admitted) == 1 and len(refused) == WORKERS - 1
-    assert {error.reason for error in refused} == {"six_hour_limit"}
+    assert {error.reason for error in refused} == {"quota_exceeded"}
     with sessions() as reader:
         assert reader.scalar(select(func.count()).select_from(QuotaReservation)) == SIX_HOUR_LIMIT
 
@@ -229,7 +234,7 @@ def test_concurrent_admissions_from_many_tabs_start_one_generation_per_interval(
     results = run_together(WORKERS, admit)
 
     assert sum(isinstance(result, int) for result in results) == 1
-    assert {result.reason for result in results if isinstance(result, QuotaRejected)} == {"too_soon"}
+    assert {result.reason for result in results if isinstance(result, QuotaRejected)} == {"attempt_too_soon"}
 
 
 def test_concurrent_refunds_of_one_reservation_resolve_it_once(committed_quota_sessions):

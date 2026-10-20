@@ -3,11 +3,12 @@
 `user_id` is always the ID the server verified. Nothing here commits.
 """
 
+from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from app.models.quota import ChatQuota, QuotaReservation
 
@@ -33,24 +34,30 @@ def lock_quota(session: Session, user_id: int) -> ChatQuota:
     return session.scalars(statement).one()
 
 
-def count_day(session: Session, user_id: int, day_start: datetime) -> int:
-    """Reservations of the day that are reserved or settled; refunded ones no longer count."""
-    statement = select(func.count()).where(
-        QuotaReservation.user_id == user_id,
-        QuotaReservation.day_start == day_start,
-        QuotaReservation.state != "refunded",
-    )
-    return session.scalars(statement).one()
+@dataclass(frozen=True, slots=True)
+class Usage:
+    """Settled and still reserved generations of one period; refunded ones no longer count."""
+
+    used: int
+    reserved: int
 
 
-def count_six_hours(session: Session, user_id: int, six_hour_start: datetime) -> int:
-    """As `count_day` for one six-hour period."""
-    statement = select(func.count()).where(
-        QuotaReservation.user_id == user_id,
-        QuotaReservation.six_hour_start == six_hour_start,
-        QuotaReservation.state != "refunded",
+def _usage(session: Session, user_id: int, period_column: InstrumentedAttribute[datetime], start: datetime) -> Usage:
+    statement = (
+        select(QuotaReservation.state, func.count())
+        .where(QuotaReservation.user_id == user_id, period_column == start, QuotaReservation.state != "refunded")
+        .group_by(QuotaReservation.state)
     )
-    return session.scalars(statement).one()
+    counts: dict[str, int] = {state: count for state, count in session.execute(statement).tuples()}
+    return Usage(used=counts.get("settled", 0), reserved=counts.get("reserved", 0))
+
+
+def day_usage(session: Session, user_id: int, day_start: datetime) -> Usage:
+    return _usage(session, user_id, QuotaReservation.day_start, day_start)
+
+
+def six_hour_usage(session: Session, user_id: int, six_hour_start: datetime) -> Usage:
+    return _usage(session, user_id, QuotaReservation.six_hour_start, six_hour_start)
 
 
 def last_reserved_at(session: Session, user_id: int) -> datetime | None:

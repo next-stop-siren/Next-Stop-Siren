@@ -1,4 +1,4 @@
-"""Unit checks for member quota periods, admission order and provider charge reporting."""
+"""Unit checks for member quota periods, admission order, `limits` and provider charge reporting."""
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.models.quota import QuotaReservation
+from app.repositories.quotas import Usage
 from app.services import quota
 from app.services.quota import KST, QuotaRejected, periods_at, provider_may_have_charged
 
@@ -41,9 +42,9 @@ def test_the_kst_day_starts_at_15_00_utc_of_the_day_before():
 
 
 class FakeRepository:
-    """Stands in for the database: counts per period and the member's last reservation."""
+    """Stands in for the database: usage per period and the member's last reservation."""
 
-    def __init__(self, *, day=0, six_hours=0, last=None):
+    def __init__(self, *, day=Usage(0, 0), six_hours=Usage(0, 0), last=None):
         self.day, self.six_hours = day, six_hours
         self.quota = SimpleNamespace(user_id=7, last_reserved_at=last)
         self.added = []
@@ -52,10 +53,10 @@ class FakeRepository:
         assert user_id == 7
         return self.quota
 
-    def count_day(self, _session, _user_id, _day_start):
+    def day_usage(self, _session, _user_id, _day_start):
         return self.day
 
-    def count_six_hours(self, _session, _user_id, _six_hour_start):
+    def six_hour_usage(self, _session, _user_id, _six_hour_start):
         return self.six_hours
 
     def last_reserved_at(self, _session, _user_id):
@@ -69,9 +70,9 @@ class FakeRepository:
 
 @pytest.fixture
 def fake(monkeypatch):
-    def install(**counts):
-        repository = FakeRepository(**counts)
-        for name in ("lock_quota", "count_day", "count_six_hours", "last_reserved_at", "add_reservation"):
+    def install(**usage):
+        repository = FakeRepository(**usage)
+        for name in ("lock_quota", "day_usage", "six_hour_usage", "last_reserved_at", "add_reservation"):
             monkeypatch.setattr(quota.repository, name, getattr(repository, name))
         return repository
 
@@ -79,51 +80,71 @@ def fake(monkeypatch):
 
 
 def test_reserve_records_the_periods_it_was_taken_in(fake):
-    repository = fake(day=399, six_hours=99)
+    repository = fake(day=Usage(398, 1), six_hours=Usage(98, 1))
     now = kst(13, 5)
     reserved = quota.reserve(None, 7, now=now)
     assert reserved == {"day_start": kst(0), "six_hour_start": kst(12), "created_at": now}
     assert repository.quota.last_reserved_at == now
 
 
-def test_the_daily_limit_waits_until_kst_midnight(fake):
-    fake(day=400, six_hours=0)
+def test_reserved_generations_count_against_the_limit_like_used_ones(fake):
+    fake(day=Usage(0, 0), six_hours=Usage(60, 40))
+    with pytest.raises(QuotaRejected) as rejected:
+        quota.reserve(None, 7, now=kst(13))
+    assert rejected.value.reason == "quota_exceeded"
+
+
+def test_an_empty_day_waits_until_kst_midnight(fake):
+    fake(day=Usage(400, 0))
     with pytest.raises(QuotaRejected) as rejected:
         quota.reserve(None, 7, now=kst(23, 0))
-    assert (rejected.value.reason, rejected.value.retry_after) == ("daily_limit", 3600)
+    assert (rejected.value.reason, rejected.value.retry_after) == ("quota_exceeded", 3600)
 
 
-def test_the_six_hour_limit_waits_until_the_period_resets(fake):
-    fake(day=100, six_hours=100)
+def test_an_empty_six_hour_period_waits_until_its_reset_as_in_the_draft_example(fake):
+    # 03:07:00Z with only the six-hour period empty: 21180 seconds until 09:00:00Z.
+    fake(day=Usage(100, 0), six_hours=Usage(100, 0))
     with pytest.raises(QuotaRejected) as rejected:
-        quota.reserve(None, 7, now=kst(17, 59, 30))
-    assert (rejected.value.reason, rejected.value.retry_after) == ("six_hour_limit", 30)
+        quota.reserve(None, 7, now=datetime(2026, 10, 20, 3, 7, tzinfo=UTC))
+    assert (rejected.value.reason, rejected.value.retry_after) == ("quota_exceeded", 21180)
+
+
+def test_when_both_periods_are_empty_the_later_reset_is_reported(fake):
+    fake(day=Usage(399, 1), six_hours=Usage(100, 0))
+    with pytest.raises(QuotaRejected) as rejected:
+        quota.reserve(None, 7, now=kst(13))
+    assert rejected.value.retry_after == 11 * 3600
 
 
 def test_new_attempts_are_at_least_ten_seconds_apart(fake):
     repository = fake(last=kst(9, 0, 0))
     with pytest.raises(QuotaRejected) as rejected:
         quota.reserve(None, 7, now=kst(9, 0, 3))
-    assert (rejected.value.reason, rejected.value.retry_after) == ("too_soon", 7)
+    assert (rejected.value.reason, rejected.value.retry_after) == ("attempt_too_soon", 7)
     assert repository.added == []
     quota.reserve(None, 7, now=kst(9, 0, 10))
     assert len(repository.added) == 1
 
 
-def test_a_limit_is_reported_before_the_interval(fake):
-    fake(day=0, six_hours=100, last=kst(9, 0, 0))
+def test_the_interval_is_checked_before_the_limits(fake):
+    fake(day=Usage(400, 0), six_hours=Usage(100, 0), last=kst(9, 0, 0))
     with pytest.raises(QuotaRejected) as rejected:
         quota.reserve(None, 7, now=kst(9, 0, 1))
-    assert rejected.value.reason == "six_hour_limit"
+    assert (rejected.value.reason, rejected.value.retry_after) == ("attempt_too_soon", 9)
 
 
-def test_status_reports_what_is_left_and_when_it_resets(fake):
-    fake(day=150, six_hours=100, last=kst(19, 0, 0))
-    current = quota.status(None, 7, now=kst(19, 0, 4))
-    assert (current.daily_remaining, current.six_hour_remaining) == (250, 0)
-    assert (current.daily_resets_at, current.six_hour_resets_at) == (kst(0, day=21), kst(0, day=21))
-    assert current.next_attempt_at == kst(19, 0, 10)
-    assert quota.status(None, 7, now=kst(19, 0, 10)).next_attempt_at is None
+def test_limits_report_used_reserved_and_remaining_per_period(fake):
+    fake(day=Usage(12, 2), six_hours=Usage(5, 2), last=kst(12, 0, 40))
+    current = quota.limits(None, 7, now=kst(12, 0, 45))
+    assert current.daily == quota.WindowLimit(400, 12, 2, 386, kst(0, day=21))
+    assert current.six_hour == quota.WindowLimit(100, 5, 2, 93, kst(18))
+    assert current.next_attempt_at == kst(12, 0, 50)
+    assert quota.limits(None, 7, now=kst(12, 0, 50)).next_attempt_at is None
+
+
+def test_remaining_never_goes_below_zero(fake):
+    fake(six_hours=Usage(100, 1))
+    assert quota.limits(None, 7, now=kst(7)).six_hour.remaining == 0
 
 
 @pytest.mark.parametrize(
@@ -133,7 +154,7 @@ def test_status_reports_what_is_left_and_when_it_resets(fake):
         ("reserved", None, True),
         ("refunded", "failed", True),
         ("refunded", "interrupted", True),
-        ("refunded", "cancelled", False),
+        ("refunded", "canceled", False),
         ("refunded", "expired", False),
     ],
 )

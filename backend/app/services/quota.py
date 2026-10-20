@@ -2,17 +2,21 @@
 
 A new question or manual retry reserves one generation in both the KST day and the
 KST six-hour period when it is admitted. A completed answer whose storage is
-confirmed settles the reservation; a failed, interrupted, cancelled or expired one
+confirmed settles the reservation; a failed, interrupted, canceled or expired one
 refunds it. While the outcome is unknown the reservation stays reserved.
 
 Settlement and refund belong to the periods the reservation was taken in, so a
 refund after a reset does not raise the new period's remaining count. Resending
 or reading the same request key must not call `reserve` again; the caller returns
-the stored job instead, even with nothing left.
+the stored job instead, even with nothing left or before the interval has passed.
 
 Nothing here commits: the caller admits the job and reserves in one transaction,
 so neither succeeds alone. The member quota is not the provider's token quota or
 cost, and a refund does not mean the provider did not charge.
+
+Rejection reasons are the proposed error codes of the queue API draft
+(`attempt_too_soon`, `quota_exceeded`); the queue checks such as `queue_full`
+come before them and belong to the queue (#52).
 """
 
 import math
@@ -24,15 +28,16 @@ from sqlalchemy.orm import Session
 
 from app.models.quota import QuotaReservation
 from app.repositories import quotas as repository
+from app.repositories.quotas import Usage
 
 KST = timezone(timedelta(hours=9), "KST")
 DAILY_LIMIT = 400
 SIX_HOUR_LIMIT = 100
 MIN_INTERVAL_SECONDS = 10
 
-RefundReason = Literal["failed", "interrupted", "cancelled", "expired"]
+RefundReason = Literal["failed", "interrupted", "canceled", "expired"]
 # Ended before the provider was called.
-_NOT_CALLED: frozenset[str] = frozenset({"cancelled", "expired"})
+_NOT_CALLED: frozenset[str] = frozenset({"canceled", "expired"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,25 +59,35 @@ def periods_at(moment: datetime) -> Periods:
 
 
 class QuotaRejected(Exception):
-    """Admission refused; `retry_after` is whole seconds until it can next be allowed.
+    """Admission refused; `retry_after` is the whole seconds for the `Retry-After` header.
 
-    For a limit this is the period's reset. An earlier refund can free a reservation
-    sooner, so it is the latest wait, not an exact one.
+    For `quota_exceeded` it is the reset of every period with nothing left, the later
+    one when both are empty. An earlier refund can free a reservation sooner, so it
+    is the latest wait, not an exact one.
     """
 
-    def __init__(self, reason: Literal["daily_limit", "six_hour_limit", "too_soon"], retry_after: int) -> None:
+    def __init__(self, reason: Literal["attempt_too_soon", "quota_exceeded"], retry_after: int) -> None:
         self.reason = reason
         self.retry_after = retry_after
         super().__init__(reason)
 
 
 @dataclass(frozen=True, slots=True)
-class QuotaStatus:
-    daily_remaining: int
-    six_hour_remaining: int
-    daily_resets_at: datetime
-    six_hour_resets_at: datetime
-    # None when a new generation may be reserved now as far as the interval goes.
+class WindowLimit:
+    """One period of the `limits` object: `remaining` = `limit` - `used` - `reserved`."""
+
+    limit: int
+    used: int
+    reserved: int
+    remaining: int
+    resets_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class QuotaLimits:
+    daily: WindowLimit
+    six_hour: WindowLimit
+    # Last admission + 10 seconds; None when a new generation may be admitted now.
     next_attempt_at: datetime | None
 
 
@@ -80,25 +95,42 @@ def _seconds_until(end: datetime, now: datetime) -> int:
     return max(1, math.ceil((end - now).total_seconds()))
 
 
+def _window(limit: int, usage: Usage, resets_at: datetime) -> WindowLimit:
+    remaining = max(0, limit - usage.used - usage.reserved)
+    return WindowLimit(limit, usage.used, usage.reserved, remaining, resets_at)
+
+
+def _limits(session: Session, user_id: int, now: datetime, last_reserved_at: datetime | None) -> QuotaLimits:
+    periods = periods_at(now)
+    allowed_at = None if last_reserved_at is None else last_reserved_at + timedelta(seconds=MIN_INTERVAL_SECONDS)
+    return QuotaLimits(
+        daily=_window(DAILY_LIMIT, repository.day_usage(session, user_id, periods.day_start), periods.day_end),
+        six_hour=_window(
+            SIX_HOUR_LIMIT,
+            repository.six_hour_usage(session, user_id, periods.six_hour_start),
+            periods.six_hour_end,
+        ),
+        next_attempt_at=allowed_at if allowed_at is not None and now < allowed_at else None,
+    )
+
+
 def reserve(session: Session, user_id: int, *, now: datetime | None = None) -> QuotaReservation:
     """Reserve one generation in both current periods, or raise `QuotaRejected`.
 
-    The member's quota row is locked first, so concurrent admissions from any tab,
-    device or conversation are counted one after another. `now` replaces the
-    database clock in tests.
+    The 10-second interval is checked before the limits. The member's quota row is
+    locked first, so concurrent admissions from any tab, device or conversation are
+    counted one after another. `now` replaces the database clock in tests.
     """
     quota = repository.lock_quota(session, user_id)
     if now is None:
         now = repository.database_time(session)
+    limits = _limits(session, user_id, now, quota.last_reserved_at)
+    if limits.next_attempt_at is not None:
+        raise QuotaRejected("attempt_too_soon", _seconds_until(limits.next_attempt_at, now))
+    empty = [window.resets_at for window in (limits.daily, limits.six_hour) if window.remaining == 0]
+    if empty:
+        raise QuotaRejected("quota_exceeded", _seconds_until(max(empty), now))
     periods = periods_at(now)
-    if repository.count_day(session, user_id, periods.day_start) >= DAILY_LIMIT:
-        raise QuotaRejected("daily_limit", _seconds_until(periods.day_end, now))
-    if repository.count_six_hours(session, user_id, periods.six_hour_start) >= SIX_HOUR_LIMIT:
-        raise QuotaRejected("six_hour_limit", _seconds_until(periods.six_hour_end, now))
-    if quota.last_reserved_at is not None:
-        allowed_at = quota.last_reserved_at + timedelta(seconds=MIN_INTERVAL_SECONDS)
-        if now < allowed_at:
-            raise QuotaRejected("too_soon", _seconds_until(allowed_at, now))
     return repository.add_reservation(
         session, quota, day_start=periods.day_start, six_hour_start=periods.six_hour_start, created_at=now
     )
@@ -114,29 +146,18 @@ def refund(session: Session, reservation_id: int, reason: RefundReason) -> bool:
     return repository.resolve_reservation(session, reservation_id, state="refunded", refund_reason=reason)
 
 
-def status(session: Session, user_id: int, *, now: datetime | None = None) -> QuotaStatus:
-    """What the member has left, read without locking; an admission may still be refused after it."""
+def limits(session: Session, user_id: int, *, now: datetime | None = None) -> QuotaLimits:
+    """The member's `limits` periods, read without locking; an admission may still be refused after it."""
     if now is None:
         now = repository.database_time(session)
-    periods = periods_at(now)
-    last = repository.last_reserved_at(session, user_id)
-    allowed_at = None if last is None else last + timedelta(seconds=MIN_INTERVAL_SECONDS)
-    return QuotaStatus(
-        daily_remaining=max(0, DAILY_LIMIT - repository.count_day(session, user_id, periods.day_start)),
-        six_hour_remaining=max(
-            0, SIX_HOUR_LIMIT - repository.count_six_hours(session, user_id, periods.six_hour_start)
-        ),
-        daily_resets_at=periods.day_end,
-        six_hour_resets_at=periods.six_hour_end,
-        next_attempt_at=allowed_at if allowed_at is not None and now < allowed_at else None,
-    )
+    return _limits(session, user_id, now, repository.last_reserved_at(session, user_id))
 
 
 def provider_may_have_charged(reservation: QuotaReservation) -> bool:
     """Whether the provider may have used tokens for this reservation, apart from what the member was charged.
 
     A settled one did. A failed, interrupted or still unresolved one may have,
-    although the member is refunded or not yet charged. Only a cancelled or expired
+    although the member is refunded or not yet charged. Only a canceled or expired
     one ended before any provider call.
     """
     return not (reservation.state == "refunded" and reservation.refund_reason in _NOT_CALLED)

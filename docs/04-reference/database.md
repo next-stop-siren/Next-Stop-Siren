@@ -140,12 +140,13 @@ ORDER BY m.id;
 | 테이블 | 역할 |
 | --- | --- |
 | `chat_quotas` | 회원당 한 행(`user_id` PK·`users` FK). 접수가 이 행을 `FOR UPDATE`로 잠가 같은 회원의 모든 탭·기기·대화의 예약을 하나씩 처리한다. `last_reserved_at`은 10초 간격 기준이다. |
-| `chat_quota_reservations` | 예약 원장. 접수 당시 KST 일 시작 `day_start`와 6시간 시작 `six_hour_start`, `state`(`reserved`·`settled`·`refunded`), 환불 사유 `refund_reason`(`failed`·`interrupted`·`cancelled`·`expired`), `created_at`, `resolved_at`. |
+| `chat_quota_reservations` | 예약 원장. 접수 당시 KST 일 시작 `day_start`와 6시간 시작 `six_hour_start`, `state`(`reserved`·`settled`·`refunded`), 환불 사유 `refund_reason`(`failed`·`interrupted`·`canceled`·`expired`, 작업 상태와 같은 철자), `created_at`, `resolved_at`. |
 
 - 기간 사용량은 그 기간의 `refunded`가 아닌 예약 수다. 별도 카운터가 없어 원장과 어긋나지 않는다. 기간별 부분 인덱스 `state <> 'refunded'`로 센다.
-- 예약은 일일 400, 6시간 100, 마지막 예약 후 10초를 이 순서로 검사한다. 거부는 사유와 다음 가능 시각까지 남은 초를 함께 알린다. 한도의 경우 이 값은 기간 초기화 시각이며 그 전에 환불로 자리가 생길 수 있다.
+- 예약은 대기열 API 초안(PR #56)의 판정 순서대로 마지막 예약 후 10초(`attempt_too_soon`), 그다음 일일 400·6시간 100(`quota_exceeded`)을 검사한다. 대기 자리(`queue_full`)는 그 앞에서 #52가 검사한다. 거부는 사유 코드와 `Retry-After`용 남은 초를 함께 알린다. `quota_exceeded`는 잔량이 0인 기간 중 더 늦은 초기화까지이며, 그 전에 환불로 자리가 생길 수 있다.
+- `limits(...)`는 초안 `limits`의 `daily`·`six_hour`(`limit`, `used`=정산, `reserved`=미종결, `remaining`=`limit`−`used`−`reserved`, `resets_at`)와 `next_attempt_at`을 계산한다. `queue`는 #52가 채운다.
 - 정산·환불은 `state = 'reserved'`인 행만 조건부로 바꾸므로 한 예약은 한 번만 종결된다. 행에 접수 기간이 저장되어 있어 초기화 뒤 옛 예약을 환불해도 새 기간의 잔량은 늘지 않는다.
-- 결과가 불명인 동안 예약은 `reserved`로 남는다. `cancelled`·`expired` 환불만 제공자 호출 전 종결이다. 성공·실패·중단·미종결은 회원 차감과 별개로 제공자 과금 가능성이 있다(`provider_may_have_charged`).
+- 결과가 불명인 동안 예약은 `reserved`로 남는다. `canceled`·`expired` 환불만 제공자 호출 전 종결이다. 성공·실패·중단·미종결은 회원 차감과 별개로 제공자 과금 가능성이 있다(`provider_may_have_charged`).
 - 같은 키의 재전송·재조회에는 예약을 다시 호출하지 않는다. 이는 호출하는 쪽이 지킨다.
 
 ## 소유자와 초기 적용
