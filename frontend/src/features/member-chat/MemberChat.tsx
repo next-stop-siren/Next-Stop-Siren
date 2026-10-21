@@ -1,8 +1,14 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from '../auth/AuthContext'
-import { createConversation, listConversations, listMessages, sendMessage } from './memberChatApi'
+import { createConversation, listAllConversations, listAllMessages, sendMessage } from './memberChatApi'
 import type { ApiConversation, ApiMessage } from './memberChatApiTypes'
 import styles from './MemberChat.module.css'
+
+type PendingRequest = {
+  conversationId: string
+  content: string
+  requestKey: string
+}
 
 function messageStatusLabel(message?: ApiMessage): string {
   if (!message) return '대기 중'
@@ -19,8 +25,14 @@ function messageStatusLabel(message?: ApiMessage): string {
   }
 }
 
+function errorText(err: unknown, fallback: string): string {
+  return err instanceof Error ? err.message : fallback
+}
+
 function MemberChat() {
-  const { accessToken } = useAuth()
+  const { accessToken, user } = useAuth()
+  const userId = user?.id ?? null
+
   const [conversations, setConversations] = useState<ApiConversation[]>([])
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ApiMessage[]>([])
@@ -29,139 +41,190 @@ function MemberChat() {
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
 
-  const [pendingRequest, setPendingRequest] = useState<{
-    conversationId: string
-    content: string
-    requestKey: string
-  } | null>(null)
-
-  const loadConversations = useCallback(async () => {
-    if (!accessToken) return
-
-    const result = await listConversations(accessToken)
-    setConversations(result.items)
-    return result.items
+  // access 토큰은 약 15분마다 새 값으로 바뀐다. 토큰이 바뀔 때마다 대화를 다시 불러오면
+  // 선택한 대화가 초기화되므로, 호출 시점의 최신 값을 ref로 읽고 효과는 사용자 기준으로만 건다.
+  const accessTokenRef = useRef(accessToken)
+  useEffect(() => {
+    accessTokenRef.current = accessToken
   }, [accessToken])
 
-  const loadMessages = useCallback(
-    async (id: string) => {
-      if (!accessToken) return
+  // 사용자가 바뀌거나 화면이 사라지면 올라가는 값이다. 늦게 도착한 이전 응답을 버리는 기준이다.
+  const epochRef = useRef(0)
+  // 화면에 보이는 대화의 최신 값이다. 대화를 빠르게 바꿀 때 이전 대화의 응답이 덮어쓰지 못하게 한다.
+  const conversationIdRef = useRef<string | null>(null)
+  // 전송 응답을 잃었을 때 같은 키로 다시 보내기 위해 보관한다. 화면에 그리지 않아 ref로 둔다.
+  // 새로고침 뒤에는 서버 이력(질문의 request_key 포함)에서 접수된 질문과 상태를 복구한다.
+  const pendingRequestRef = useRef<PendingRequest | null>(null)
 
-      const result = await listMessages(accessToken, id)
-      setMessages(result.items)
-    },
-    [accessToken],
-  )
+  const selectId = useCallback((id: string | null) => {
+    conversationIdRef.current = id
+    setConversationId(id)
+  }, [])
+
+  const refreshMessages = useCallback(async (id: string) => {
+    const token = accessTokenRef.current
+    if (!token) return
+
+    const epoch = epochRef.current
+    const items = await listAllMessages(token, id)
+
+    if (epochRef.current === epoch && conversationIdRef.current === id) {
+      setMessages(items)
+    }
+  }, [])
 
   useEffect(() => {
-    if (!accessToken) {
+    epochRef.current += 1
+    const epoch = epochRef.current
+    const isStale = () => epochRef.current !== epoch
+
+    // 사용자가 바뀌면 이전 사용자의 요청 키와 화면 상태를 버린다.
+    pendingRequestRef.current = null
+
+    const token = accessTokenRef.current
+
+    if (!userId || !token) {
       setConversations([])
-      setConversationId(null)
+      selectId(null)
       setMessages([])
       return
     }
 
-    let cancelled = false
-
-    async function load() {
+    async function load(accessToken: string) {
       setLoading(true)
       setError('')
 
       try {
-        const result = await listConversations(accessToken!)
-        if (cancelled) return
+        const items = await listAllConversations(accessToken)
+        if (isStale()) return
 
-        setConversations(result.items)
+        setConversations(items)
 
-        if (result.items.length > 0) {
-          const latest = result.items[0]
-          setConversationId(latest.id)
+        const latest = items[0]
 
-          const history = await listMessages(accessToken!, latest.id)
-          if (!cancelled) setMessages(history.items)
+        if (latest) {
+          selectId(latest.id)
+
+          const history = await listAllMessages(accessToken, latest.id)
+          if (!isStale() && conversationIdRef.current === latest.id) setMessages(history)
         } else {
-          setConversationId(null)
+          selectId(null)
           setMessages([])
         }
       } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : '대화 목록을 불러오지 못했습니다.')
-        }
+        if (!isStale()) setError(errorText(err, '대화 목록을 불러오지 못했습니다.'))
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!isStale()) setLoading(false)
       }
     }
 
-    void load()
+    void load(token)
 
     return () => {
-      cancelled = true
+      epochRef.current += 1
     }
-  }, [accessToken])
+  }, [userId, selectId])
 
   const selectConversation = async (id: string) => {
-    if (!accessToken) return
+    if (!accessTokenRef.current) return
 
-    setConversationId(id)
+    selectId(id)
     setMessages([])
     setError('')
     setLoading(true)
 
     try {
-      await loadMessages(id)
+      await refreshMessages(id)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '메시지를 불러오지 못했습니다.')
+      if (conversationIdRef.current === id) setError(errorText(err, '메시지를 불러오지 못했습니다.'))
     } finally {
-      setLoading(false)
+      // 그 사이 다른 대화로 바뀌었다면 로딩 표시는 새로 선택한 대화가 관리한다.
+      if (conversationIdRef.current === id) setLoading(false)
     }
+  }
+
+  const reloadCurrentConversation = async () => {
+    const id = conversationIdRef.current
+    if (!id) return
+
+    setError('')
+
+    try {
+      await refreshMessages(id)
+    } catch (err) {
+      if (conversationIdRef.current === id) setError(errorText(err, '답변 상태를 불러오지 못했습니다.'))
+    }
+  }
+
+  const startNewConversation = () => {
+    // 보관 중인 요청 키는 지우지 않는다. 키는 같은 대화·같은 질문일 때만 다시 쓰이므로
+    // 다른 대화로 잘못 전송되지 않고, 응답을 잃은 질문의 키도 잃지 않는다.
+    selectId(null)
+    setMessages([])
+    setError('')
   }
 
   const submitQuestion = async () => {
     const content = question.trim()
-    if (!content || !accessToken || sending) return
+    const token = accessTokenRef.current
+    if (!content || !token || sending) return
+
+    const epoch = epochRef.current
 
     setSending(true)
     setError('')
 
-    try {
-      // 같은 질문의 전송이 실패했다면 기존 요청을 재사용한다.
-      const existingRequest = pendingRequest?.content === content ? pendingRequest : null
+    let accepted: PendingRequest | null = null
 
-      let activeId = existingRequest?.conversationId ?? conversationId
+    try {
+      let activeId = conversationIdRef.current
 
       if (!activeId) {
-        const conversation = await createConversation(accessToken)
+        const conversation = await createConversation(token)
+        if (epochRef.current !== epoch) return
+
         activeId = conversation.id
-        setConversationId(activeId)
+        selectId(activeId)
         setConversations((previous) => [conversation, ...previous])
       }
 
-      const request = existingRequest ?? {
-        conversationId: activeId,
-        content,
-        requestKey: crypto.randomUUID(),
-      }
+      // 같은 대화에서 같은 질문을 다시 보낼 때만 이전 키를 재사용한다.
+      const pending = pendingRequestRef.current
+      const request: PendingRequest =
+        pending && pending.content === content && pending.conversationId === activeId
+          ? pending
+          : { conversationId: activeId, content, requestKey: crypto.randomUUID() }
 
       // 전송 전에 요청 키를 보관한다.
-      setPendingRequest(request)
+      pendingRequestRef.current = request
 
-      await sendMessage(accessToken, request.conversationId, {
+      await sendMessage(accessTokenRef.current ?? token, request.conversationId, {
         content: request.content,
         request_key: request.requestKey,
       })
 
-      // 서버가 요청을 접수했으므로 재전송용 키를 정리한다.
-      setPendingRequest(null)
-      setQuestion('')
+      if (epochRef.current !== epoch) return
 
-      // POST 응답 이후 저장된 메시지 이력을 다시 읽는다.
-      await loadMessages(request.conversationId)
-      await loadConversations()
+      // 서버가 요청을 접수했으므로 재전송용 키를 정리한다.
+      pendingRequestRef.current = null
+      accepted = request
+      setQuestion('')
     } catch (err) {
-      // 실패 시 pendingRequest를 유지해 다음 시도에서 재사용한다.
-      setError(err instanceof Error ? err.message : '질문 전송에 실패했습니다.')
+      // 실패 시 보관한 키를 유지해 다음 시도에서 재사용한다.
+      if (epochRef.current === epoch) setError(errorText(err, '질문 전송에 실패했습니다.'))
     } finally {
-      setSending(false)
+      if (epochRef.current === epoch) setSending(false)
+    }
+
+    if (!accepted) return
+
+    // POST 응답 이후 저장된 메시지 이력을 다시 읽는다. 대화 목록은 생성순이라 순서가 바뀌지 않는다.
+    try {
+      await refreshMessages(accepted.conversationId)
+    } catch {
+      if (epochRef.current === epoch) {
+        setError('질문은 접수됐지만 대화를 다시 불러오지 못했습니다. 답변 상태를 새로고침해 주세요.')
+      }
     }
   }
 
@@ -210,16 +273,7 @@ function MemberChat() {
             ))}
           </select>
 
-          <button
-            type="button"
-            disabled={!accessToken || loading || sending}
-            onClick={() => {
-              setConversationId(null)
-              setMessages([])
-              setError('')
-              setPendingRequest(null)
-            }}
-          >
+          <button type="button" disabled={!accessToken || loading || sending} onClick={startNewConversation}>
             새 대화
           </button>
         </div>
@@ -260,7 +314,14 @@ function MemberChat() {
                     <p>답변 생성이 중단되었습니다. 오류 코드: {answer.error_code}</p>
                   )}
 
-                  {(!answer || answer.status === 'pending') && <p>답변 상태를 다시 확인해 주세요.</p>}
+                  {(!answer || answer.status === 'pending') && (
+                    <>
+                      <p>답변 상태를 다시 확인해 주세요.</p>
+                      <button type="button" onClick={() => void reloadCurrentConversation()}>
+                        답변 상태 새로고침
+                      </button>
+                    </>
+                  )}
                 </article>
               </div>
             )

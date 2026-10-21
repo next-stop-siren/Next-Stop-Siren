@@ -78,6 +78,42 @@ export async function listMessages(
   )
 }
 
+// 메시지는 ID 오름차순이라 첫 페이지만 읽으면 긴 대화의 최신 답변을 놓친다.
+// 메시지 한 페이지는 최대 100개이고, next_cursor가 null이 될 때까지 이어서 읽는다.
+const MESSAGE_PAGE_SIZE = 100
+const MAX_PAGES = 50
+
+export async function listAllMessages(accessToken: string, conversationId: string): Promise<ApiMessage[]> {
+  const items: ApiMessage[] = []
+  let cursor: string | undefined
+
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const result = await listMessages(accessToken, conversationId, MESSAGE_PAGE_SIZE, cursor)
+    items.push(...result.items)
+
+    if (!result.next_cursor) break
+    cursor = result.next_cursor
+  }
+
+  return items
+}
+
+// 대화는 생성 ID 내림차순이고 다음 페이지는 before_id로 읽는다.
+export async function listAllConversations(accessToken: string): Promise<ApiConversation[]> {
+  const items: ApiConversation[] = []
+  let cursor: string | undefined
+
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const result = await listConversations(accessToken, 20, cursor)
+    items.push(...result.items)
+
+    if (!result.next_cursor) break
+    cursor = result.next_cursor
+  }
+
+  return items
+}
+
 export async function sendMessage(
   accessToken: string,
   conversationId: string,
