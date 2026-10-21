@@ -1,9 +1,20 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import {
-  initialMemberChatState,
-  transitionMockTask,
+  allowedTransitions,
+  checkEnqueue,
+  createInitialMemberChatState,
+  createQuestionMessage,
+  expireState,
+  hasBlockingFailure,
+  QUESTIONS_MAX,
+  RETRIES_MAX,
+  RUNNING_MAX,
+  summarizeLimits,
+  summarizeQueue,
+  transitionTask,
+  isWaitingStatus,
   type ChatTaskStatus,
-  type MemberChatMessage,
+  type EnqueueRejection,
   type MemberChatMockState,
 } from './memberChatMock'
 import styles from './MemberChatMockPreview.module.css'
@@ -11,145 +22,89 @@ import styles from './MemberChatMockPreview.module.css'
 const statusLabels: Record<ChatTaskStatus, string> = {
   pending: '대기 중',
   running: '실행 중',
-  paused: '일시 중지',
+  paused: '앞 질문 실패로 대기 중',
   completed: '완료',
   failed: '실패',
   interrupted: '중단됨',
-  canceled: '취소됨',
-  expired: '만료됨',
-  'quota-exceeded': '할당량 초과',
+  canceled: '취소한 질문',
+  expired: '대기 시간이 지나 취소됨',
 }
 
-function copyInitialState(): MemberChatMockState {
-  return {
-    ...initialMemberChatState,
-    conversations: initialMemberChatState.conversations.map((conversation) => ({
-      ...conversation,
-      messages: conversation.messages.map((message) => ({ ...message })),
-    })),
-  }
+const actionLabels: Partial<Record<ChatTaskStatus, string>> = {
+  pending: '대기로 (재개)',
+  running: '실행 시작',
+  completed: '완료로',
+  failed: '실패로',
+  interrupted: '중단으로',
+  canceled: '취소',
 }
+
+const rejectionMessages: Record<EnqueueRejection, string> = {
+  queue_full: `대기 중인 질문이 ${QUESTIONS_MAX}개입니다. 답변 뒤에 보내 주세요.`,
+  quota_exceeded: '질문 한도를 모두 썼습니다.',
+}
+
+const statusOrder: ChatTaskStatus[] = [
+  'pending',
+  'running',
+  'paused',
+  'completed',
+  'failed',
+  'interrupted',
+  'canceled',
+  'expired',
+]
 
 function createId(): string {
   return `mock-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+function formatRemaining(expiresAt: string, nowMs: number): string {
+  const seconds = Math.max(Math.ceil((new Date(expiresAt).getTime() - nowMs) / 1000), 0)
+  return `${Math.floor(seconds / 60)}분 ${String(seconds % 60).padStart(2, '0')}초`
+}
+
 export default function MemberChatMockPreview() {
-  const [state, setState] = useState<MemberChatMockState>(copyInitialState)
+  const [state, setState] = useState<MemberChatMockState>(() => createInitialMemberChatState())
   const [question, setQuestion] = useState('')
+  const [rejection, setRejection] = useState<EnqueueRejection | null>(null)
   const [activeConversationId, setActiveConversationId] = useState(state.activeConversationId)
+  const [nowMs, setNowMs] = useState(() => Date.now())
 
   const activeConversation =
     state.conversations.find((conversation) => conversation.id === activeConversationId) ?? state.conversations[0]
   const messages = activeConversation?.messages ?? []
 
   useEffect(() => {
-    const expirePendingMessages = () => {
+    const tick = () => {
       const now = Date.now()
-
-      setState((current) => {
-        let changed = false
-
-        const conversations = current.conversations.map((conversation) => {
-          const messages = conversation.messages.map((message) => {
-            if (message.status === 'pending' && message.expiresAt && new Date(message.expiresAt).getTime() <= now) {
-              changed = true
-              return { ...message, status: 'expired' as const }
-            }
-
-            return message
-          })
-
-          return messages.some((message, index) => message !== conversation.messages[index])
-            ? { ...conversation, messages }
-            : conversation
-        })
-
-        return changed ? { ...current, conversations } : current
-      })
+      setNowMs(now)
+      setState((current) => expireState(current, now))
     }
 
-    expirePendingMessages()
+    tick()
 
-    const timerId = window.setInterval(expirePendingMessages, 1000)
+    const timerId = window.setInterval(tick, 1000)
 
     return () => window.clearInterval(timerId)
   }, [])
 
-  // 목업 전체 대화의 작업 수를 집계합니다. 실제 서버 대기열이 아닙니다.
-  const allMessages = state.conversations.flatMap((conversation) => conversation.messages)
-
-  const queueCounts = useMemo(() => {
-    return allMessages.reduce(
-      (result, message) => {
-        if (message.status === 'running') result.running += 1
-        if (message.status === 'pending') result.waitingQuestions += 1
-        return result
-      },
-      { running: 0, waitingQuestions: 0, waitingRetries: 0 },
-    )
-  }, [allMessages])
+  // 목업 전체 대화의 작업 수와 한도를 집계합니다. 실제 서버 대기열이 아닙니다.
+  const queue = useMemo(() => summarizeQueue(state.conversations), [state.conversations])
+  const limits = useMemo(() => summarizeLimits(state.conversations), [state.conversations])
 
   const counts = useMemo(() => {
-    return messages.reduce<Record<ChatTaskStatus, number>>(
-      (result, message) => {
-        result[message.status] += 1
-        return result
-      },
-      {
-        pending: 0,
-        running: 0,
-        paused: 0,
-        completed: 0,
-        failed: 0,
-        interrupted: 0,
-        canceled: 0,
-        expired: 0,
-        'quota-exceeded': 0,
-      },
-    )
+    const result = Object.fromEntries(statusOrder.map((status) => [status, 0])) as Record<ChatTaskStatus, number>
+
+    for (const message of messages) {
+      result[message.status] += 1
+    }
+
+    return result
   }, [messages])
 
   const updateMessage = (messageId: string, nextStatus: ChatTaskStatus) => {
-    setState((current) => ({
-      ...current,
-      conversations: current.conversations.map((conversation) => {
-        if (conversation.id !== activeConversationId) return conversation
-
-        const targetIndex = conversation.messages.findIndex((message) => message.id === messageId)
-
-        if (targetIndex === -1) return conversation
-
-        const targetMessage = conversation.messages[targetIndex]
-        const withAnswer: MemberChatMessage =
-          nextStatus === 'completed' && !targetMessage.answer
-            ? {
-                ...targetMessage,
-                answer: '목업 화면에서 완료 상태를 확인하기 위한 예시 답변입니다. 실제 서버 응답이 아닙니다.',
-              }
-            : targetMessage
-
-        const updatedTarget = transitionMockTask(withAnswer, nextStatus)
-
-        // 최종 상태 때문에 변경이 거부되었다면 후속 질문도 그대로 둡니다.
-        if (updatedTarget === targetMessage) return conversation
-
-        const shouldPauseFollowing = updatedTarget.status === 'failed' || updatedTarget.status === 'interrupted'
-
-        const messages = conversation.messages.map((message, index) => {
-          if (index === targetIndex) return updatedTarget
-
-          // 실패·중단된 질문 뒤의 대기 질문만 일시 정지합니다.
-          if (shouldPauseFollowing && index > targetIndex && message.status === 'pending') {
-            return { ...message, status: 'paused' as const }
-          }
-
-          return message
-        })
-
-        return { ...conversation, messages }
-      }),
-    }))
+    setState((current) => transitionTask(current, activeConversationId, messageId, nextStatus))
   }
 
   const addQuestion = (event: FormEvent<HTMLFormElement>) => {
@@ -157,16 +112,15 @@ export default function MemberChatMockPreview() {
     const trimmed = question.trim()
     if (!trimmed || !activeConversation) return
 
-    const acceptedAt = new Date()
+    const rejected = checkEnqueue(state.conversations)
 
-    const newMessage: MemberChatMessage = {
-      id: createId(),
-      question: trimmed,
-      status: 'pending',
-      createdAt: acceptedAt.toISOString(),
-      acceptedAt: acceptedAt.toISOString(),
-      expiresAt: new Date(acceptedAt.getTime() + 5 * 60 * 1000).toISOString(),
+    if (rejected) {
+      setRejection(rejected)
+      return
     }
+
+    // 같은 대화에 실패·중단된 질문이 있으면 새 질문도 정지 상태로 접수됩니다.
+    const newMessage = createQuestionMessage(createId(), trimmed, hasBlockingFailure(activeConversation.messages))
 
     setState((current) => ({
       ...current,
@@ -176,14 +130,16 @@ export default function MemberChatMockPreview() {
           : conversation,
       ),
     }))
+    setRejection(null)
     setQuestion('')
   }
 
   const reset = () => {
-    const fresh = copyInitialState()
+    const fresh = createInitialMemberChatState()
     setState(fresh)
     setActiveConversationId(fresh.activeConversationId)
     setQuestion('')
+    setRejection(null)
   }
 
   return (
@@ -248,26 +204,36 @@ export default function MemberChatMockPreview() {
         <section className={styles.stats} aria-label="목업 전체 대기열">
           <div>
             <span>전체 실행 중</span>
-            <strong>{queueCounts.running}</strong>
+            <strong>
+              {queue.running} / {RUNNING_MAX}
+            </strong>
           </div>
           <div>
             <span>새 질문 대기</span>
-            <strong>{queueCounts.waitingQuestions}</strong>
+            <strong>
+              {queue.waitingQuestions} / {QUESTIONS_MAX}
+            </strong>
           </div>
           <div>
             <span>재시도 대기</span>
-            <strong>{queueCounts.waitingRetries}</strong>
+            <strong>
+              {queue.waitingRetries} / {RETRIES_MAX}
+            </strong>
           </div>
         </section>
 
         <section className={styles.stats} aria-label="목업 할당량">
           <div>
             <span>일일 잔여량</span>
-            <strong>{state.remainingQuota} / 400</strong>
+            <strong>
+              {limits.daily.remaining} / {limits.daily.limit}
+            </strong>
           </div>
           <div>
             <span>6시간 잔여량</span>
-            <strong>{Math.min(state.remainingQuota, 100)} / 100</strong>
+            <strong>
+              {limits.sixHour.remaining} / {limits.sixHour.limit}
+            </strong>
           </div>
         </section>
       </section>
@@ -277,70 +243,47 @@ export default function MemberChatMockPreview() {
         {messages.length === 0 ? (
           <div className={styles.empty}>아직 질문이 없습니다. 아래에서 목업 질문을 추가해 보세요.</div>
         ) : (
-          messages.map((message) => (
-            <article className={styles.messageCard} key={message.id}>
-              <div className={styles.questionLabel}>질문</div>
-              <p className={styles.question}>{message.question}</p>
-              <div className={styles.statusRow}>
-                <span className={`${styles.status} ${styles[`status_${message.status.replace('-', '_')}`]}`}>
-                  {statusLabels[message.status]}
-                </span>
-                <time dateTime={message.createdAt}>{new Date(message.createdAt).toLocaleString()}</time>
-                {message.acceptedAt && (
-                  <time dateTime={message.acceptedAt}>접수 {new Date(message.acceptedAt).toLocaleString()}</time>
-                )}
-                {message.expiresAt && (
-                  <time dateTime={message.expiresAt}>만료 {new Date(message.expiresAt).toLocaleString()}</time>
-                )}
-              </div>
-              {message.answer && (
-                <div className={styles.answer}>
-                  <strong>답변</strong>
-                  <p>{message.answer}</p>
-                </div>
-              )}
+          messages.map((message) => {
+            const transitions = allowedTransitions[message.status]
 
-              <section className={styles.actions} aria-label="목업 상태 전이">
-                <button
-                  type="button"
-                  onClick={() => updateMessage(message.id, 'pending')}
-                  disabled={['completed', 'canceled', 'expired', 'quota-exceeded'].includes(message.status)}
-                >
-                  대기로
-                </button>
-                <button
-                  type="button"
-                  onClick={() => updateMessage(message.id, 'running')}
-                  disabled={['completed', 'canceled', 'expired', 'quota-exceeded'].includes(message.status)}
-                >
-                  실행 중으로
-                </button>
-                <button
-                  type="button"
-                  onClick={() => updateMessage(message.id, 'completed')}
-                  disabled={['completed', 'canceled', 'expired', 'quota-exceeded'].includes(message.status)}
-                >
-                  완료로
-                </button>
-                <button
-                  type="button"
-                  onClick={() => updateMessage(message.id, 'failed')}
-                  disabled={['completed', 'canceled', 'expired', 'quota-exceeded'].includes(message.status)}
-                >
-                  실패로
-                </button>
-                {message.status !== 'running' && (
-                  <button
-                    type="button"
-                    onClick={() => updateMessage(message.id, 'canceled')}
-                    disabled={['completed', 'canceled', 'expired', 'quota-exceeded'].includes(message.status)}
-                  >
-                    취소
-                  </button>
+            return (
+              <article className={styles.messageCard} key={message.id}>
+                <div className={styles.questionLabel}>질문</div>
+                <p className={styles.question}>{message.question}</p>
+                <div className={styles.statusRow}>
+                  <span className={`${styles.status} ${styles[`status_${message.status}`]}`}>
+                    {statusLabels[message.status]}
+                  </span>
+                  <time dateTime={message.createdAt}>{new Date(message.createdAt).toLocaleString()}</time>
+                  {message.acceptedAt && (
+                    <time dateTime={message.acceptedAt}>접수 {new Date(message.acceptedAt).toLocaleString()}</time>
+                  )}
+                  {message.expiresAt && (
+                    <time dateTime={message.expiresAt}>만료 {new Date(message.expiresAt).toLocaleString()}</time>
+                  )}
+                  {message.expiresAt && isWaitingStatus(message.status) && (
+                    <span>만료까지 {formatRemaining(message.expiresAt, nowMs)}</span>
+                  )}
+                </div>
+                {message.answer && (
+                  <div className={styles.answer}>
+                    <strong>답변</strong>
+                    <p>{message.answer}</p>
+                  </div>
                 )}
-              </section>
-            </article>
-          ))
+
+                {transitions.length > 0 && (
+                  <section className={styles.actions} aria-label="목업 상태 전이">
+                    {transitions.map((nextStatus) => (
+                      <button type="button" key={nextStatus} onClick={() => updateMessage(message.id, nextStatus)}>
+                        {actionLabels[nextStatus]}
+                      </button>
+                    ))}
+                  </section>
+                )}
+              </article>
+            )
+          })
         )}
       </section>
 
@@ -353,8 +296,15 @@ export default function MemberChatMockPreview() {
           placeholder="예: 답변 완료 상태는 어떻게 보이나요?"
           rows={3}
         />
+        {rejection && (
+          <p className={styles.notice} role="alert">
+            {rejectionMessages[rejection]}
+          </p>
+        )}
         <div className={styles.composerFooter}>
-          <span>추가한 질문은 ‘대기 중’ 상태로 표시됩니다.</span>
+          <span>
+            추가한 질문은 ‘대기 중’ 상태로 표시됩니다. 같은 대화에 실패한 질문이 있으면 정지 상태로 들어갑니다.
+          </span>
           <button type="submit" disabled={!question.trim() || !activeConversation}>
             질문 추가
           </button>
