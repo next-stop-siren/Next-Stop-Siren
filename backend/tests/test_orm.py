@@ -44,6 +44,8 @@ def test_product_registry_is_repeatable_without_test_models():
         "chat_conversation_holds",
         "chat_jobs",
         "chat_queue_members",
+        "chat_quota_reservations",
+        "chat_quotas",
         "conversations",
         "messages",
         "refresh_sessions",

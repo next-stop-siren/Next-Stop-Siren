@@ -236,7 +236,7 @@ PowerShell 명령은 Windows에서 실제 실행하지 않았다.
 ./local.sh db-init
 ```
 
-Windows는 `.\local.ps1 db-init`이다. 현재 등록된 `users`, `auth_identities`, `refresh_sessions`, `conversations`, `messages` 5개 제품 테이블과 아직 API에 연결하지 않은 #52 대기열 3개 테이블(`chat_queue_members`, `chat_jobs`, `chat_conversation_holds`)을 확인하고 없는 테이블만 만든다. 출력의 개수는 이번에 새로 만든 수가 아니라 등록 모델 수다. `setup`은 이 작업을 대신하지 않는다.
+Windows는 `.\local.ps1 db-init`이다. 현재 등록된 `users`, `auth_identities`, `refresh_sessions`, `conversations`, `messages`, `chat_quotas`, `chat_quota_reservations` 7개 테이블과 아직 API에 연결하지 않은 #52 대기열 3개 테이블(`chat_queue_members`, `chat_jobs`, `chat_conversation_holds`), 모두 10개를 확인하고 없는 테이블만 만든다. 출력의 개수는 이번에 새로 만든 수가 아니라 등록 모델 수다. `setup`은 이 작업을 대신하지 않는다.
 
 `create_all()`은 기존 테이블의 컬럼·제약을 바꾸지 않으며 데이터도 삭제하지 않는다. 오래된 스키마가 있으면 `db-init` 성공만으로 호환성을 보장할 수 없다. 삭제·재생성으로 해결하지 말고 백업·적용·복구 계획을 먼저 검토한다. 마이그레이션과 운영 준비 상태 검사는 별도 후속 작업이다.
 
@@ -312,7 +312,7 @@ access는 15분 유효하고 보호 API는 쿠키만으로 인증되지 않는�
 export TEST_DATABASE_URL="$(backend/.venv/bin/python -c 'import sys; from pathlib import Path; from urllib.parse import quote; sys.path.insert(0, "backend/tests"); from db_guard import read_settings; s=read_settings(Path(".env")); print("postgresql://"+quote(s["TEST_DB_USER"],safe="")+":"+quote(s["TEST_DB_PASSWORD"],safe="")+"@127.0.0.1:55433/"+quote(s["TEST_DB_NAME"],safe=""))')"
 ./local.sh test-unit
 ./local.sh test-db
-./local.sh db-init-test  # 보호된 테스트 DB에 등록된 8개 테이블 확인·누락 생성
+./local.sh db-init-test  # 보호된 테스트 DB에 등록된 10개 테이블 확인·누락 생성
 ./local.sh test-e2e
 ./local.sh quality
 ./local.sh build
