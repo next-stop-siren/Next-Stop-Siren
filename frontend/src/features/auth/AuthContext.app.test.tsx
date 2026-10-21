@@ -32,7 +32,15 @@ test.each([false, true])(
         logoutCalls += 1
         return delayed ? gate.promise : jsonResponse(503, errorBody('temporarily_unavailable'))
       }
+      if (url === '/api/conversations?limit=20') {
+        return jsonResponse(200, {
+          items: [],
+          next_cursor: null,
+        })
+      }
+      return undefined
     })
+
     render(<App />)
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0)
@@ -79,6 +87,13 @@ test('regression: actual App keeps disabled retry banner until response; failed 
     if (url === '/api/auth/login') return jsonResponse(200, regressionSession('A'))
     if (url === '/api/auth/logout')
       return ++logoutCalls === 1 ? jsonResponse(503, errorBody('temporarily_unavailable')) : gate.promise
+    if (url === '/api/conversations?limit=20') {
+      return jsonResponse(200, {
+        items: [],
+        next_cursor: null,
+      })
+    }
+    return undefined
   })
   render(<App />)
   await act(async () => {

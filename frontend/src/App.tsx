@@ -3,6 +3,8 @@ import AuthModal from './features/auth/AuthModal'
 import { AuthProvider, useAuth } from './features/auth/AuthContext'
 import Sidebar from './features/layout/Sidebar'
 import NonmemberIntro from './features/nonmember/NonmemberIntro'
+import MemberChat from './features/member-chat/MemberChat'
+import MemberChatMockPreview from './features/member-chat/MemberChatMockPreview'
 
 function AppShell() {
   const { status, logout, retryLogout, logoutError } = useAuth()
@@ -78,9 +80,9 @@ function AppShell() {
         <main className="main-content">
           {status === 'guest' ? (
             <NonmemberIntro onAuthRequired={openAuthModal} />
-          ) : // 실제 회원(채팅) 화면은 이번 S16 범위 밖이다. S16은 인증 화면 상태
-          // 연결까지만 다루고, 회원 화면 자체는 후속 티켓에서 만든다.
-          null}
+          ) : status === 'authenticated' ? (
+            <MemberChat />
+          ) : null}
         </main>
 
         {isAuthModalOpen && <AuthModal onClose={closeAuthModal} />}
@@ -90,6 +92,13 @@ function AppShell() {
 }
 
 function App() {
+  // 개발 모드에서만 켤 수 있는 독립 목업 화면입니다. 기본 앱/인증 흐름은 그대로 둡니다.
+  const isMockPreview = import.meta.env.DEV && new URLSearchParams(window.location.search).get('chatMock') === '1'
+
+  if (isMockPreview) {
+    return <MemberChatMockPreview />
+  }
+
   return (
     <AuthProvider>
       <AppShell />
