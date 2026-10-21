@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import {
   initialMemberChatState,
   transitionMockTask,
@@ -42,6 +42,53 @@ export default function MemberChatMockPreview() {
   const activeConversation =
     state.conversations.find((conversation) => conversation.id === activeConversationId) ?? state.conversations[0]
   const messages = activeConversation?.messages ?? []
+
+  useEffect(() => {
+    const expirePendingMessages = () => {
+      const now = Date.now()
+
+      setState((current) => {
+        let changed = false
+
+        const conversations = current.conversations.map((conversation) => {
+          const messages = conversation.messages.map((message) => {
+            if (message.status === 'pending' && message.expiresAt && new Date(message.expiresAt).getTime() <= now) {
+              changed = true
+              return { ...message, status: 'expired' as const }
+            }
+
+            return message
+          })
+
+          return messages.some((message, index) => message !== conversation.messages[index])
+            ? { ...conversation, messages }
+            : conversation
+        })
+
+        return changed ? { ...current, conversations } : current
+      })
+    }
+
+    expirePendingMessages()
+
+    const timerId = window.setInterval(expirePendingMessages, 1000)
+
+    return () => window.clearInterval(timerId)
+  }, [])
+
+  // 목업 전체 대화의 작업 수를 집계합니다. 실제 서버 대기열이 아닙니다.
+  const allMessages = state.conversations.flatMap((conversation) => conversation.messages)
+
+  const queueCounts = useMemo(() => {
+    return allMessages.reduce(
+      (result, message) => {
+        if (message.status === 'running') result.running += 1
+        if (message.status === 'pending') result.waitingQuestions += 1
+        return result
+      },
+      { running: 0, waitingQuestions: 0, waitingRetries: 0 },
+    )
+  }, [allMessages])
 
   const counts = useMemo(() => {
     return messages.reduce<Record<ChatTaskStatus, number>>(
@@ -92,11 +139,15 @@ export default function MemberChatMockPreview() {
     const trimmed = question.trim()
     if (!trimmed || !activeConversation) return
 
+    const acceptedAt = new Date()
+
     const newMessage: MemberChatMessage = {
       id: createId(),
       question: trimmed,
       status: 'pending',
-      createdAt: new Date().toISOString(),
+      createdAt: acceptedAt.toISOString(),
+      acceptedAt: acceptedAt.toISOString(),
+      expiresAt: new Date(acceptedAt.getTime() + 5 * 60 * 1000).toISOString(),
     }
 
     setState((current) => ({
@@ -175,6 +226,32 @@ export default function MemberChatMockPreview() {
             <strong>{counts.failed}</strong>
           </div>
         </section>
+
+        <section className={styles.stats} aria-label="목업 전체 대기열">
+          <div>
+            <span>전체 실행 중</span>
+            <strong>{queueCounts.running}</strong>
+          </div>
+          <div>
+            <span>새 질문 대기</span>
+            <strong>{queueCounts.waitingQuestions}</strong>
+          </div>
+          <div>
+            <span>재시도 대기</span>
+            <strong>{queueCounts.waitingRetries}</strong>
+          </div>
+        </section>
+
+        <section className={styles.stats} aria-label="목업 할당량">
+          <div>
+            <span>일일 잔여량</span>
+            <strong>{state.remainingQuota} / 400</strong>
+          </div>
+          <div>
+            <span>6시간 잔여량</span>
+            <strong>{Math.min(state.remainingQuota, 100)} / 100</strong>
+          </div>
+        </section>
       </section>
 
       <section className={styles.messages} aria-label="질문과 답변">
@@ -191,6 +268,12 @@ export default function MemberChatMockPreview() {
                   {statusLabels[message.status]}
                 </span>
                 <time dateTime={message.createdAt}>{new Date(message.createdAt).toLocaleString()}</time>
+                {message.acceptedAt && (
+                  <time dateTime={message.acceptedAt}>접수 {new Date(message.acceptedAt).toLocaleString()}</time>
+                )}
+                {message.expiresAt && (
+                  <time dateTime={message.expiresAt}>만료 {new Date(message.expiresAt).toLocaleString()}</time>
+                )}
               </div>
               {message.answer && (
                 <div className={styles.answer}>
