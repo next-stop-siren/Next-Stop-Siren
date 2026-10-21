@@ -38,6 +38,14 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
+// 늦게 도착한 응답이 처리될 시간을 주고 화면을 안정시킨다. "아무 일도 일어나지 않아야 한다"는 검사는
+// 응답을 처리할 기회를 준 뒤에 해야 의미가 있다. 기다리기만 하는 waitFor는 이미 참이면 바로 끝나 버린다.
+async function settle() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 30))
+  })
+}
+
 function mockApi(handler: Handler) {
   return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const url = typeof input === 'string' ? input : input.toString()
@@ -430,7 +438,8 @@ test('전송 중에 계정이 바뀌면 입력창이 잠긴 채로 남지 않고
   slowPost.resolve(
     json(201, { question: userMessage('1', 'A의 질문'), answer: assistantMessage('2', '1', 'completed', 'A의 답') }),
   )
-  await waitFor(() => expect(screen.queryByText('A의 답')).toBeNull())
+  await settle()
+  expect(screen.queryByText('A의 답')).toBeNull()
   expect(screen.getByText('Q-USER-B')).toBeTruthy()
   expect(fetchSpy.mock.calls).toHaveLength(callsBefore)
 })
@@ -509,7 +518,7 @@ test('상태 조회가 겹쳐도 늦게 도착한 이전 응답이 완료된 답
 
   // 먼저 시작했지만 늦게 도착한 응답은 진행 중 상태다.
   slowRead.resolve(json(200, page([userMessage('1', 'Q-1'), assistantMessage('2', '1', 'pending', null)])))
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  await settle()
 
   expect(screen.getByText('DONE')).toBeTruthy()
   expect(screen.queryByText('답변 대기 중')).toBeNull()
