@@ -17,7 +17,7 @@ mock 준비와 실제 완료를 구분하고 [공정진행도](development-flow.
 ## 함께 읽을 기준
 
 1. [실행 체크리스트](../01-start/onboarding.md)로 로컬 앱을 준비하고 현재 동작을 확인합니다. 과거 macOS 검증과 현재 소스 대조를 구분하며 Windows 실제 실행은 **NOT RUN**입니다.
-2. [서비스 범위](../01-start/service-scope.md)에서 비회원·회원 경계와 첫 내부 목표를 확인합니다. [API 요청·응답](../04-reference/api.md), [DB 설계](../04-reference/database.md), [인증 구현 기준](../04-reference/authentication.md)은 현재 백엔드 계약과 후속 구현의 공통 기준입니다. 제품 7개 테이블(인증·대화 5개, #15 한도 2개)은 등록되어 있지만 로컬 DB에는 `db-init`이 필요합니다.
+2. [서비스 범위](../01-start/service-scope.md)에서 비회원·회원 경계와 첫 내부 목표를 확인합니다. [API 요청·응답](../04-reference/api.md), [DB 설계](../04-reference/database.md), [인증 구현 기준](../04-reference/authentication.md)은 현재 백엔드 계약과 후속 구현의 공통 기준입니다. 10개 테이블(인증·대화 5개, #15 한도 2개, #52 대기열 3개)은 등록되어 있지만 로컬 DB에는 `db-init`이 필요합니다.
 3. 이슈에 적힌 범위대로 변경하고, [협업 흐름](../03-development/workflow.md)에 따라 PR에 결과와 검사 기록을 남깁니다. PM `xifoxy-ru`가 공통 API·DB·보안 형식과 미정 결정을 정리하고 PR을 검토합니다. 각 담당자는 자기 구현과 검사를 맡습니다.
 
 여기서 **fixture**는 pytest 검사에서 불러 쓰는 가짜 입력·예상 결과입니다. **ORM 모델**은 Python 클래스와 DB 테이블의 연결 정의이며, **DB 세션**은 한 작업의 DB 읽기·쓰기를 묶는 객체입니다. **확인된 사용자 정보(principal)**는 서버가 로그인 자격을 검사해 얻은 사용자 ID입니다. 화면에서 보낸 `user_id`만으로 소유권을 판단하지 않습니다.
