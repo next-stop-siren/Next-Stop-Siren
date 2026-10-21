@@ -133,9 +133,25 @@ ORDER BY m.id;
 - 대화 행 잠금, 오래된 `pending` 회복, 트랜잭션 밖 제공자 호출, `pending` 행에만 적용하는 결과 저장은 질문 전송과 같다. 따라서 늦게 도착한 이전 시도의 결과는 새 시도나 완료 답변을 덮어쓰지 못한다.
 - 현재 구현은 질문당 시도 횟수를 제한하지 않는다. 승인된 대기열 목표도 수동 시도 횟수를 제한하지 않으며, 새 시도의 한도 예약·10초 간격은 후속 구현이다.
 
+## 회원 한도 예약·정산 (#15 제안)
+
+[회원 채팅 정책](chat-policy.md)의 한도 값을 `app.services.quota`가 예약·정산한다. **현재 API에는 아직 연결하지 않았다.** 대기열 입장과 같은 트랜잭션으로 묶는 것은 #53이 맡는다. 아래 두 테이블은 검토용 제안이며 기존 5개 테이블은 바꾸지 않는다.
+
+| 테이블 | 역할 |
+| --- | --- |
+| `chat_quotas` | 회원당 한 행(`user_id` PK·`users` FK). 접수가 이 행을 `FOR UPDATE`로 잠가 같은 회원의 모든 탭·기기·대화의 예약을 하나씩 처리한다. `last_reserved_at`은 10초 간격 기준이다. |
+| `chat_quota_reservations` | 예약 원장. 접수 당시 KST 일 시작 `day_start`와 6시간 시작 `six_hour_start`, `state`(`reserved`·`settled`·`refunded`), 환불 사유 `refund_reason`(`failed`·`interrupted`·`canceled`·`expired`, 작업 상태와 같은 철자), `created_at`, `resolved_at`. |
+
+- 기간 사용량은 그 기간의 `refunded`가 아닌 예약 수다. 별도 카운터가 없어 원장과 어긋나지 않는다. 기간별 부분 인덱스 `state <> 'refunded'`로 센다.
+- 예약은 대기열 API 초안(PR #56)의 판정 순서대로 마지막 예약 후 10초(`attempt_too_soon`), 그다음 일일 400·6시간 100(`quota_exceeded`)을 검사한다. 대기 자리(`queue_full`)는 그 앞에서 #52가 검사한다. 거부는 사유 코드와 `Retry-After`용 남은 초를 함께 알린다. `quota_exceeded`는 잔량이 0인 기간 중 더 늦은 초기화까지이며, 그 전에 환불로 자리가 생길 수 있다.
+- `limits(...)`는 초안 `limits`의 `daily`·`six_hour`(`limit`, `used`=정산, `reserved`=미종결, `remaining`=`limit`−`used`−`reserved`, `resets_at`)와 `next_attempt_at`을 계산한다. `queue`는 #52가 채운다.
+- 정산·환불은 `state = 'reserved'`인 행만 조건부로 바꾸므로 한 예약은 한 번만 종결된다. 행에 접수 기간이 저장되어 있어 초기화 뒤 옛 예약을 환불해도 새 기간의 잔량은 늘지 않는다.
+- 결과가 불명인 동안 예약은 `reserved`로 남는다. `canceled`·`expired` 환불만 제공자 호출 전 종결이다. 성공·실패·중단·미종결은 회원 차감과 별개로 제공자 과금 가능성이 있다(`provider_may_have_charged`).
+- 같은 키의 재전송·재조회에는 예약을 다시 호출하지 않는다. 이는 호출하는 쪽이 지킨다.
+
 ## 소유자와 초기 적용
 
-1. PM 공통 엔진·세션·모델 등록, 개발·테스트 DB 분리, 테스트 세션과 초기화 명령은 현재 `main`에 구현되어 있다. 제품 5개 테이블의 모델도 등록되어 있다. `setup`은 제품 테이블을 생성하지 않으므로 개발 API 사용 전 `db-init`을 수행한다. 출력 5개는 등록 모델 수다. 초기 빈 개발·테스트 DB에서 ORM 메타데이터의 `create_all()`로 테이블을 만든다. 테이블 간 FK 순서는 모델 등록과 메타데이터가 다룬다.
+1. PM 공통 엔진·세션·모델 등록, 개발·테스트 DB 분리, 테스트 세션과 초기화 명령은 현재 `main`에 구현되어 있다. 제품 5개 테이블과 #15 한도 2개 테이블의 모델이 등록되어 있다. `setup`은 제품 테이블을 생성하지 않으므로 개발 API 사용 전 `db-init`을 수행한다. 출력 7개는 등록 모델 수다. 초기 빈 개발·테스트 DB에서 ORM 메타데이터의 `create_all()`로 테이블을 만든다. 테이블 간 FK 순서는 모델 등록과 메타데이터가 다룬다.
 2. 인증 담당은 `users`, `auth_identities`, `refresh_sessions` ORM 모델과 DB 검사를 맡는다. 채팅 담당은 인증 모델을 인계받아 `conversations`, `messages` ORM 모델과 DB 검사를 맡는다. 직접 선행 관계는 [공정진행도](../02-team/development-flow.md)의 #3 → #9 → #8 → #10을 따른다.
 3. 조회 함수는 사용자 소유권 조건을 포함하고, API 요청·응답의 Pydantic 모델과 ORM 모델을 분리한다. 실제 JWT/Google 보호와 사용자 간 격리는 통합 때 확인한다.
 
