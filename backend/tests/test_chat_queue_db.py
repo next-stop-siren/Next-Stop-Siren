@@ -27,7 +27,6 @@ from app.models.user import User
 from app.services import chat_queue, chat_runner
 from app.services.chat import NotLatestQuestion, RetryNotAllowed
 from app.services.chat_queue import (
-    COMPLETED,
     OUTCOME_UNKNOWN,
     PROVIDER_FAILED,
     RECOVERY_GRACE_SECONDS,
@@ -45,6 +44,8 @@ pytestmark = pytest.mark.db
 
 WORKERS = 6
 T0 = datetime(2026, 10, 20, 3, 0, tzinfo=UTC)
+# A completed answer must have content; the database refuses one without.
+ANSWERED = Outcome("completed", text="모의 답변")
 
 
 def at(seconds: float) -> datetime:
@@ -211,11 +212,11 @@ def test_jobs_run_first_in_first_out_and_a_failure_pauses_only_its_conversation(
 
     retry = chat_queue.admit_retry(session, ledger, user_id, a, failed.question_message_id, "r", now=at(40)).job
     # The older job of the other conversation is not overtaken.
-    assert run(session, ledger, user_id, COMPLETED, at(41)).job_id == other.id
+    assert run(session, ledger, user_id, ANSWERED, at(41)).job_id == other.id
     retried = run(session, ledger, user_id, Outcome("completed", text="재시도 답변"), at(42))
     assert retried.job_id == retry.id
     assert state(session, paused.id) == "queued"
-    resumed = run(session, ledger, user_id, COMPLETED, at(43))
+    resumed = run(session, ledger, user_id, ANSWERED, at(43))
     assert resumed.job_id == paused.id
     # The context is read at execution: the retried pair before the paused question.
     assert resumed.context == [
@@ -264,11 +265,11 @@ def test_retry_is_refused_after_a_later_question_started(orm_test_session):
     run(session, ledger, user_id, PROVIDER_FAILED, at(1))
     ask(session, ledger, user_id, a, "a2", at(20))
     chat_queue.skip(session, user_id, a, failed.question_message_id, now=at(21))
-    run(session, ledger, user_id, COMPLETED, at(22))
+    run(session, ledger, user_id, ANSWERED, at(22))
     with pytest.raises(NotLatestQuestion):
         chat_queue.admit_retry(session, ledger, user_id, a, failed.question_message_id, "r", now=at(30))
     completed = ask(session, ledger, user_id, a, "a3", at(40))
-    run(session, ledger, user_id, COMPLETED, at(41))
+    run(session, ledger, user_id, ANSWERED, at(41))
     with pytest.raises(RetryNotAllowed):
         chat_queue.admit_retry(session, ledger, user_id, a, completed.question_message_id, "r", now=at(50))
 
@@ -328,7 +329,7 @@ def test_recovery_keeps_a_live_execution_and_reconciles_one_past_its_deadline(or
     assert state(session, follower.id) == "paused"
 
     # A result of the interrupted execution arrives late and changes nothing.
-    assert chat_queue.finish(session, ledger, job.id, claimed.run_token, COMPLETED, now=at(60)) is None
+    assert chat_queue.finish(session, ledger, job.id, claimed.run_token, ANSWERED, now=at(60)) is None
     session.expire_all()
     assert session.get(Message, claimed.answer_message_id).status == "interrupted"
     assert len(ledger.resolutions(job.reservation_id)) == 1

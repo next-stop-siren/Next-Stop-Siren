@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.integrations.provider import AnswerProvider, ContextMessage, ProviderFailed, ProviderTimeout
 from app.services import chat_queue
 from app.services.chat import ANSWER_TIME_LIMIT_SECONDS
-from app.services.chat_queue import COMPLETED, OUTCOME_UNKNOWN, PROVIDER_FAILED, Outcome, QuotaLedger
+from app.services.chat_queue import OUTCOME_UNKNOWN, PROVIDER_FAILED, Outcome, QuotaLedger
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ def generate(
                 continue
             if isinstance(item, _Ended):
                 text = "".join(parts)
-                return Outcome(COMPLETED.status, text=text) if text.strip() else PROVIDER_FAILED
+                return Outcome("completed", text=text) if text.strip() else PROVIDER_FAILED
             if isinstance(item, ProviderFailed):
                 return PROVIDER_FAILED
             if not isinstance(item, ProviderTimeout):

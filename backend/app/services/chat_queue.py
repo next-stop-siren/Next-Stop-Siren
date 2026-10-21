@@ -123,12 +123,17 @@ class Claimed:
 
 @dataclass(frozen=True)
 class Outcome:
+    """How an execution ended; a completed one always carries its non-blank answer, as `messages` requires."""
+
     status: Literal["completed", "failed", "interrupted"]
     text: str | None = None
     error_code: str | None = None
 
+    def __post_init__(self) -> None:
+        if (self.status == "completed") != (self.text is not None and bool(self.text.strip())):
+            raise ValueError("a completed outcome needs its answer text, and only a completed one has text")
 
-COMPLETED = Outcome("completed")
+
 PROVIDER_FAILED = Outcome("failed", error_code="provider_failed")
 OUTCOME_UNKNOWN = Outcome("interrupted", error_code="outcome_unknown")
 

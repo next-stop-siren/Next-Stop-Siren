@@ -9,6 +9,8 @@ import time
 import uuid
 from contextlib import contextmanager
 
+import pytest
+
 from app.integrations.provider import ContextMessage, ProviderFailed, ProviderTimeout
 from app.services import chat_queue, chat_runner
 from app.services.chat_queue import Changes, Claimed, Outcome
@@ -41,6 +43,16 @@ def test_pieces_join_into_a_completed_answer_and_reach_on_delta():
     outcome = chat_runner.generate(Provider(("모의 ", "답변")), CONTEXT, on_delta=seen.append)
     assert outcome == Outcome("completed", text="모의 답변")
     assert seen == ["모의 ", "답변"]
+
+
+@pytest.mark.parametrize(
+    "values",
+    [{"status": "completed"}, {"status": "completed", "text": "  "}, {"status": "failed", "text": "답변"}],
+)
+def test_a_completed_outcome_needs_text_and_only_it_has_text(values):
+    # `messages` refuses a completed answer without content, so the mistake is caught before the database.
+    with pytest.raises(ValueError):
+        Outcome(**values)
 
 
 def test_blank_answer_and_provider_failure_are_failed():
