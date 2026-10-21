@@ -67,7 +67,13 @@ export const initialMemberChatState: MemberChatMockState = {
  * 실제 대기열, API 요청, 서버 상태 복구를 구현하지 않습니다.
  */
 export function transitionMockTask(message: MemberChatMessage, nextStatus: ChatTaskStatus): MemberChatMessage {
-  if (message.status === 'completed' || message.status === 'canceled' || message.status === 'quota-exceeded') {
+  // 최종 상태에 도달한 작업은 다시 변경하지 않습니다.
+  if (
+    message.status === 'completed' ||
+    message.status === 'canceled' ||
+    message.status === 'expired' ||
+    message.status === 'quota-exceeded'
+  ) {
     return message
   }
 

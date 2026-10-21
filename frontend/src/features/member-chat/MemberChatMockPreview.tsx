@@ -281,42 +281,45 @@ export default function MemberChatMockPreview() {
                   <p>{message.answer}</p>
                 </div>
               )}
+
               <section className={styles.actions} aria-label="목업 상태 전이">
                 <button
                   type="button"
                   onClick={() => updateMessage(message.id, 'pending')}
-                  disabled={['completed', 'canceled', 'quota-exceeded'].includes(message.status)}
+                  disabled={['completed', 'canceled', 'expired', 'quota-exceeded'].includes(message.status)}
                 >
                   대기로
                 </button>
                 <button
                   type="button"
                   onClick={() => updateMessage(message.id, 'running')}
-                  disabled={['completed', 'canceled', 'quota-exceeded'].includes(message.status)}
+                  disabled={['completed', 'canceled', 'expired', 'quota-exceeded'].includes(message.status)}
                 >
                   실행 중으로
                 </button>
                 <button
                   type="button"
                   onClick={() => updateMessage(message.id, 'completed')}
-                  disabled={['completed', 'canceled', 'quota-exceeded'].includes(message.status)}
+                  disabled={['completed', 'canceled', 'expired', 'quota-exceeded'].includes(message.status)}
                 >
                   완료로
                 </button>
                 <button
                   type="button"
                   onClick={() => updateMessage(message.id, 'failed')}
-                  disabled={['completed', 'canceled', 'quota-exceeded'].includes(message.status)}
+                  disabled={['completed', 'canceled', 'expired', 'quota-exceeded'].includes(message.status)}
                 >
                   실패로
                 </button>
-                <button
-                  type="button"
-                  onClick={() => updateMessage(message.id, 'canceled')}
-                  disabled={['completed', 'canceled', 'quota-exceeded', 'running'].includes(message.status)}
-                >
-                  취소
-                </button>
+                {message.status !== 'running' && (
+                  <button
+                    type="button"
+                    onClick={() => updateMessage(message.id, 'canceled')}
+                    disabled={['completed', 'canceled', 'expired', 'quota-exceeded'].includes(message.status)}
+                  >
+                    취소
+                  </button>
+                )}
               </section>
             </article>
           ))
