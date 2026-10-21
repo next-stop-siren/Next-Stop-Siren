@@ -113,24 +113,42 @@ export default function MemberChatMockPreview() {
   const updateMessage = (messageId: string, nextStatus: ChatTaskStatus) => {
     setState((current) => ({
       ...current,
-      conversations: current.conversations.map((conversation) =>
-        conversation.id !== activeConversationId
-          ? conversation
-          : {
-              ...conversation,
-              messages: conversation.messages.map((message) => {
-                if (message.id !== messageId) return message
-                const withAnswer: MemberChatMessage =
-                  nextStatus === 'completed' && !message.answer
-                    ? {
-                        ...message,
-                        answer: '목업 화면에서 완료 상태를 확인하기 위한 예시 답변입니다. 실제 서버 응답이 아닙니다.',
-                      }
-                    : message
-                return transitionMockTask(withAnswer, nextStatus)
-              }),
-            },
-      ),
+      conversations: current.conversations.map((conversation) => {
+        if (conversation.id !== activeConversationId) return conversation
+
+        const targetIndex = conversation.messages.findIndex((message) => message.id === messageId)
+
+        if (targetIndex === -1) return conversation
+
+        const targetMessage = conversation.messages[targetIndex]
+        const withAnswer: MemberChatMessage =
+          nextStatus === 'completed' && !targetMessage.answer
+            ? {
+                ...targetMessage,
+                answer: '목업 화면에서 완료 상태를 확인하기 위한 예시 답변입니다. 실제 서버 응답이 아닙니다.',
+              }
+            : targetMessage
+
+        const updatedTarget = transitionMockTask(withAnswer, nextStatus)
+
+        // 최종 상태 때문에 변경이 거부되었다면 후속 질문도 그대로 둡니다.
+        if (updatedTarget === targetMessage) return conversation
+
+        const shouldPauseFollowing = updatedTarget.status === 'failed' || updatedTarget.status === 'interrupted'
+
+        const messages = conversation.messages.map((message, index) => {
+          if (index === targetIndex) return updatedTarget
+
+          // 실패·중단된 질문 뒤의 대기 질문만 일시 정지합니다.
+          if (shouldPauseFollowing && index > targetIndex && message.status === 'pending') {
+            return { ...message, status: 'paused' as const }
+          }
+
+          return message
+        })
+
+        return { ...conversation, messages }
+      }),
     }))
   }
 
