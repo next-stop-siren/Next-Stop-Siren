@@ -1,0 +1,44 @@
+.status {
+  margin: 8px 0 0;
+  color: var(--color-muted, #697586);
+  font-size: 0.9rem;
+}
+
+.draft,
+.confirmed {
+  margin-top: 8px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  line-height: 1.7;
+}
+
+/* 임시 출력은 점선 테두리로 확정 답변과 구분한다. */
+.draft {
+  border: 1px dashed #94a3b8;
+  background: #f8fafc;
+  color: #475569;
+}
+
+.confirmed {
+  border: 1px solid #bbf7d0;
+  background: #f0fdf4;
+  color: var(--color-text, #202b38);
+}
+
+.label {
+  margin: 0 0 4px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: keep-all;
+}
+
+.failed {
+  margin: 8px 0 0;
+  color: #991b1b;
+  font-size: 0.9rem;
+}

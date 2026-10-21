@@ -17,6 +17,7 @@ import {
   type EnqueueRejection,
   type MemberChatMockState,
 } from './memberChatMock'
+import MockStreamingPanel from './MockStreamingPanel'
 import styles from './MemberChatMockPreview.module.css'
 
 const statusLabels: Record<ChatJobState, string> = {
@@ -310,6 +311,8 @@ export default function MemberChatMockPreview() {
           </button>
         </div>
       </form>
+
+      <MockStreamingPanel />
     </main>
   )
 }
