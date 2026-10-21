@@ -13,7 +13,7 @@ import {
   transitionMockTask,
   transitionTask,
   WAIT_LIMIT_MS,
-  type ChatTaskStatus,
+  type ChatJobState,
   type MemberChatConversation,
   type MemberChatMessage,
   type MemberChatMockState,
@@ -21,7 +21,7 @@ import {
 
 const NOW = new Date('2026-10-21T03:00:00Z')
 
-function message(id: string, status: ChatTaskStatus, extra: Partial<MemberChatMessage> = {}): MemberChatMessage {
+function message(id: string, status: ChatJobState, extra: Partial<MemberChatMessage> = {}): MemberChatMessage {
   return { id, question: `질문 ${id}`, status, createdAt: NOW.toISOString(), ...extra }
 }
 
@@ -33,12 +33,12 @@ function stateOf(...conversations: MemberChatConversation[]): MemberChatMockStat
   return { activeConversationId: conversations[0].id, conversations }
 }
 
-const allStatuses = Object.keys(allowedTransitions) as ChatTaskStatus[]
+const allStatuses = Object.keys(allowedTransitions) as ChatJobState[]
 
-test('취소는 실행 전(pending·paused)에만 허용된다', () => {
+test('취소는 실행 전(queued·paused)에만 허용된다', () => {
   for (const status of allStatuses) {
     const canCancel = allowedTransitions[status].includes('canceled')
-    expect(canCancel).toBe(status === 'pending' || status === 'paused')
+    expect(canCancel).toBe(status === 'queued' || status === 'paused')
   }
 
   // 실행 중·실패·중단·완료 작업은 취소 요청을 해도 그대로다.
@@ -47,7 +47,7 @@ test('취소는 실행 전(pending·paused)에만 허용된다', () => {
     expect(transitionMockTask(original, 'canceled')).toBe(original)
   }
 
-  expect(transitionMockTask(message('m1', 'pending'), 'canceled').status).toBe('canceled')
+  expect(transitionMockTask(message('m1', 'queued'), 'canceled').status).toBe('canceled')
   expect(transitionMockTask(message('m1', 'paused'), 'canceled').status).toBe('canceled')
 })
 
@@ -80,7 +80,7 @@ test('transitionTask는 완료로 바꿀 때 목업 답변을 채우고, 거절�
 })
 
 test('실행 중인 작업은 회원 전체에서 최대 1개다', () => {
-  const state = stateOf(conversation('c1', [message('m1', 'running')]), conversation('c2', [message('m2', 'pending')]))
+  const state = stateOf(conversation('c1', [message('m1', 'running')]), conversation('c2', [message('m2', 'queued')]))
 
   // 다른 대화의 작업이 실행 중이면 새로 실행을 시작할 수 없다.
   expect(transitionTask(state, 'c2', 'm2', 'running')).toBe(state)
@@ -92,23 +92,23 @@ test('실행 중인 작업은 회원 전체에서 최대 1개다', () => {
 test('실패·중단은 같은 대화의 대기 질문만 일시 정지하고 다른 대화는 그대로 둔다', () => {
   for (const failure of ['failed', 'interrupted'] as const) {
     const state = stateOf(
-      conversation('c1', [message('m1', 'running'), message('m2', 'pending'), message('m3', 'pending')]),
-      conversation('c2', [message('m4', 'pending')]),
+      conversation('c1', [message('m1', 'running'), message('m2', 'queued'), message('m3', 'queued')]),
+      conversation('c2', [message('m4', 'queued')]),
     )
 
     const next = transitionTask(state, 'c1', 'm1', failure)
 
     expect(next.conversations[0].messages.map((item) => item.status)).toEqual([failure, 'paused', 'paused'])
-    expect(next.conversations[1].messages[0].status).toBe('pending')
+    expect(next.conversations[1].messages[0].status).toBe('queued')
   }
 })
 
 test('실패 질문보다 앞에 있는 질문은 정지하지 않는다', () => {
-  const state = stateOf(conversation('c1', [message('m1', 'pending'), message('m2', 'running')]))
+  const state = stateOf(conversation('c1', [message('m1', 'queued'), message('m2', 'running')]))
 
   const next = transitionTask(state, 'c1', 'm2', 'failed')
 
-  expect(next.conversations[0].messages.map((item) => item.status)).toEqual(['pending', 'failed'])
+  expect(next.conversations[0].messages.map((item) => item.status)).toEqual(['queued', 'failed'])
 })
 
 test('정지 중 새로 접수한 질문도 정지 상태로 들어간다', () => {
@@ -117,7 +117,7 @@ test('정지 중 새로 접수한 질문도 정지 상태로 들어간다', () =
   expect(hasBlockingFailure([message('m1', 'interrupted')])).toBe(true)
 
   expect(createQuestionMessage('n1', '질문', true, NOW).status).toBe('paused')
-  expect(createQuestionMessage('n2', '질문', false, NOW).status).toBe('pending')
+  expect(createQuestionMessage('n2', '질문', false, NOW).status).toBe('queued')
 })
 
 test('접수 시각부터 5분 뒤가 만료 기한이다', () => {
@@ -133,28 +133,21 @@ test('5분이 지나면 대기와 일시 정지 질문이 모두 만료된다', 
   const nowMs = NOW.getTime() + WAIT_LIMIT_MS
 
   const messages = [
-    message('pending', 'pending', { expiresAt: expired }),
+    message('queued', 'queued', { expiresAt: expired }),
     message('paused', 'paused', { expiresAt: expired }),
-    message('not-yet', 'pending', { expiresAt: future }),
+    message('not-yet', 'queued', { expiresAt: future }),
     message('running', 'running', { expiresAt: expired }),
     message('completed', 'completed', { expiresAt: expired }),
-    message('no-deadline', 'pending'),
+    message('no-deadline', 'queued'),
   ]
 
   const result = expireWaitingMessages(messages, nowMs)
 
-  expect(result.map((item) => item.status)).toEqual([
-    'expired',
-    'expired',
-    'pending',
-    'running',
-    'completed',
-    'pending',
-  ])
+  expect(result.map((item) => item.status)).toEqual(['expired', 'expired', 'queued', 'running', 'completed', 'queued'])
 })
 
 test('만료할 것이 없으면 같은 배열과 같은 state를 돌려준다', () => {
-  const messages = [message('m1', 'pending', { expiresAt: new Date(NOW.getTime() + WAIT_LIMIT_MS).toISOString() })]
+  const messages = [message('m1', 'queued', { expiresAt: new Date(NOW.getTime() + WAIT_LIMIT_MS).toISOString() })]
   expect(expireWaitingMessages(messages, NOW.getTime())).toBe(messages)
 
   const state = stateOf(conversation('c1', messages))
@@ -163,7 +156,7 @@ test('만료할 것이 없으면 같은 배열과 같은 state를 돌려준다',
 
 test('초기 목업의 대기 질문도 5분 기한을 가진다', () => {
   const initial = createInitialMemberChatState(NOW)
-  const waiting = initial.conversations[0].messages.find((item) => item.status === 'pending')
+  const waiting = initial.conversations[0].messages.find((item) => item.status === 'queued')
 
   expect(waiting?.expiresAt).toBe(new Date(NOW.getTime() + WAIT_LIMIT_MS).toISOString())
 
@@ -173,7 +166,7 @@ test('초기 목업의 대기 질문도 5분 기한을 가진다', () => {
 
 test('새 질문 대기 수는 대기와 일시 정지를 함께 세고 실행 중은 세지 않는다', () => {
   const summary = summarizeQueue([
-    conversation('c1', [message('m1', 'running'), message('m2', 'pending'), message('m3', 'paused')]),
+    conversation('c1', [message('m1', 'running'), message('m2', 'queued'), message('m3', 'paused')]),
     conversation('c2', [message('m4', 'completed'), message('m5', 'failed')]),
   ])
 
@@ -181,7 +174,7 @@ test('새 질문 대기 수는 대기와 일시 정지를 함께 세고 실행 �
 })
 
 test('새 질문 대기가 3개면 접수를 거절한다', () => {
-  const waiting = Array.from({ length: QUESTIONS_MAX }, (_, index) => message(`w${index}`, 'pending'))
+  const waiting = Array.from({ length: QUESTIONS_MAX }, (_, index) => message(`w${index}`, 'queued'))
 
   expect(checkEnqueue([conversation('c1', waiting.slice(0, QUESTIONS_MAX - 1))])).toBeNull()
   expect(checkEnqueue([conversation('c1', waiting)])).toBe('queue_full')
@@ -195,7 +188,7 @@ test('한도는 완료를 차감, 실행 전·실행 중을 예약으로 세고 
   const limits = summarizeLimits([
     conversation('c1', [
       message('done', 'completed'),
-      message('wait', 'pending'),
+      message('wait', 'queued'),
       message('pause', 'paused'),
       message('run', 'running'),
       message('fail', 'failed'),
@@ -208,7 +201,7 @@ test('한도는 완료를 차감, 실행 전·실행 중을 예약으로 세고 
   expect(limits.sixHour).toEqual({ limit: 100, used: 1, reserved: 3, remaining: 96 })
 
   // 취소하면 예약이 돌아온다.
-  const state = stateOf(conversation('c1', [message('wait', 'pending')]))
+  const state = stateOf(conversation('c1', [message('wait', 'queued')]))
   const canceled = transitionTask(state, 'c1', 'wait', 'canceled')
   expect(summarizeLimits(canceled.conversations).daily.remaining).toBe(400)
 })

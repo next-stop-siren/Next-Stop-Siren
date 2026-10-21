@@ -44,7 +44,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .statusRow { justify-content: flex-start; }
 .statusRow time { color: #94a3b8; font-size: 11px; }
 .status { display: inline-flex; padding: 4px 9px; border-radius: 999px; background: #f1f5f9; color: #475569; font-size: 12px; font-weight: 700; }
-.status_pending { background: #fef3c7; color: #92400e; }
+.status_queued { background: #fef3c7; color: #92400e; }
 .status_running { background: #dbeafe; color: #1d4ed8; }
 .status_completed { background: #dcfce7; color: #166534; }
 .status_failed, .status_quota_exceeded { background: #fee2e2; color: #991b1b; }

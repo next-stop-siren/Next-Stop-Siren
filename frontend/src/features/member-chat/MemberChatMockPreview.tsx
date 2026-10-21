@@ -13,14 +13,14 @@ import {
   summarizeQueue,
   transitionTask,
   isWaitingStatus,
-  type ChatTaskStatus,
+  type ChatJobState,
   type EnqueueRejection,
   type MemberChatMockState,
 } from './memberChatMock'
 import styles from './MemberChatMockPreview.module.css'
 
-const statusLabels: Record<ChatTaskStatus, string> = {
-  pending: '대기 중',
+const statusLabels: Record<ChatJobState, string> = {
+  queued: '대기 중',
   running: '실행 중',
   paused: '앞 질문 실패로 대기 중',
   completed: '완료',
@@ -30,8 +30,8 @@ const statusLabels: Record<ChatTaskStatus, string> = {
   expired: '대기 시간이 지나 취소됨',
 }
 
-const actionLabels: Partial<Record<ChatTaskStatus, string>> = {
-  pending: '대기로 (재개)',
+const actionLabels: Partial<Record<ChatJobState, string>> = {
+  queued: '대기로 (재개)',
   running: '실행 시작',
   completed: '완료로',
   failed: '실패로',
@@ -44,8 +44,8 @@ const rejectionMessages: Record<EnqueueRejection, string> = {
   quota_exceeded: '질문 한도를 모두 썼습니다.',
 }
 
-const statusOrder: ChatTaskStatus[] = [
-  'pending',
+const statusOrder: ChatJobState[] = [
+  'queued',
   'running',
   'paused',
   'completed',
@@ -94,7 +94,7 @@ export default function MemberChatMockPreview() {
   const limits = useMemo(() => summarizeLimits(state.conversations), [state.conversations])
 
   const counts = useMemo(() => {
-    const result = Object.fromEntries(statusOrder.map((status) => [status, 0])) as Record<ChatTaskStatus, number>
+    const result = Object.fromEntries(statusOrder.map((status) => [status, 0])) as Record<ChatJobState, number>
 
     for (const message of messages) {
       result[message.status] += 1
@@ -103,7 +103,7 @@ export default function MemberChatMockPreview() {
     return result
   }, [messages])
 
-  const updateMessage = (messageId: string, nextStatus: ChatTaskStatus) => {
+  const updateMessage = (messageId: string, nextStatus: ChatJobState) => {
     setState((current) => transitionTask(current, activeConversationId, messageId, nextStatus))
   }
 
@@ -185,7 +185,7 @@ export default function MemberChatMockPreview() {
         <section className={styles.stats} aria-label="선택한 대화의 작업 상태 집계">
           <div>
             <span>대기 중</span>
-            <strong>{counts.pending}</strong>
+            <strong>{counts.queued}</strong>
           </div>
           <div>
             <span>실행 중</span>

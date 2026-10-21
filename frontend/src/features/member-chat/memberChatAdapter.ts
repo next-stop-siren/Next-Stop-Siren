@@ -3,18 +3,21 @@ import type { ApiConversation, ApiMessage } from './memberChatApiTypes'
 import type { MemberChatConversation, MemberChatMessage } from './memberChatMock'
 
 /**
- * 실제 API의 메시지 상태를 화면 상태로 변환한다.
- * API에 없는 UI 전용 상태는 임의로 만들어 내지 않는다.
+ * 실제 API의 답변 메시지 상태를 화면의 작업 상태로 변환한다.
+ * 메시지 `pending`은 답변 행이 만들어져 생성 중이라는 뜻이라 작업 상태 `running`에 해당한다.
+ * 실행 전 상태(`queued`·`paused`)는 답변 행이 없을 때의 상태라 여기서 만들지 않는다.
+ * 실패와 중단은 재시도 화면에서 구분이 필요할 수 있어 하나로 합치지 않는다.
  */
 function toUiStatus(message: ApiMessage): MemberChatMessage['status'] {
   switch (message.status) {
     case 'pending':
-      return 'pending'
+      return 'running'
     case 'completed':
       return 'completed'
     case 'failed':
-    case 'interrupted':
       return 'failed'
+    case 'interrupted':
+      return 'interrupted'
   }
 }
 
@@ -34,7 +37,8 @@ export function toUiMessages(messages: ApiMessage[]): MemberChatMessage[] {
         id: question.id,
         question: question.content ?? '',
         ...(answer?.status === 'completed' && answer.content ? { answer: answer.content } : {}),
-        status: answer ? toUiStatus(answer) : 'pending',
+        // 답변 행이 아직 없으면 실행 전이다. 현재 API는 접수 때 답변 행을 만들지만 목표 계약은 실행 시작 때 만든다.
+        status: answer ? toUiStatus(answer) : 'queued',
         createdAt: question.created_at,
       }
     })

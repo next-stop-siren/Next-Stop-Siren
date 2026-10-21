@@ -4,8 +4,8 @@
  * docs/04-reference/chat-queue-api-draft.md(API 제안 초안)입니다.
  */
 
-export type ChatTaskStatus =
-  | 'pending'
+export type ChatJobState =
+  | 'queued'
   | 'running'
   | 'paused'
   | 'completed'
@@ -18,7 +18,7 @@ export interface MemberChatMessage {
   id: string
   question: string
   answer?: string
-  status: ChatTaskStatus
+  status: ChatJobState
   createdAt: string
   acceptedAt?: string
   expiresAt?: string
@@ -46,19 +46,19 @@ export const WAIT_LIMIT_MS = 5 * 60 * 1000
 export const MOCK_ANSWER = '목업 화면에서 완료 상태를 확인하기 위한 예시 답변입니다. 실제 서버 응답이 아닙니다.'
 
 /** 실행 전 상태입니다. 한도를 예약하고 있고, 접수부터 5분이 지나면 만료됩니다. */
-export function isWaitingStatus(status: ChatTaskStatus): boolean {
-  return status === 'pending' || status === 'paused'
+export function isWaitingStatus(status: ChatJobState): boolean {
+  return status === 'queued' || status === 'paused'
 }
 
 /**
  * 상태별로 허용하는 다음 상태입니다. 화면의 동작 버튼은 이 표로만 그립니다.
- * - 취소는 실행 전(pending·paused)에만 가능하고 실행 중에는 없습니다.
- * - paused → pending은 "앞 질문 재시도 성공 또는 건너뛰기"로 재개되는 경우를 흉내 냅니다.
+ * - 취소는 실행 전(queued·paused)에만 가능하고 실행 중에는 없습니다.
+ * - paused → queued는 "앞 질문 재시도 성공 또는 건너뛰기"로 재개되는 경우를 흉내 냅니다.
  * - 실패·중단 뒤의 재시도·건너뛰기 동작은 별도 작업(#21) 범위라 여기서 다루지 않습니다.
  */
-export const allowedTransitions: Record<ChatTaskStatus, ChatTaskStatus[]> = {
-  pending: ['running', 'canceled'],
-  paused: ['pending', 'canceled'],
+export const allowedTransitions: Record<ChatJobState, ChatJobState[]> = {
+  queued: ['running', 'canceled'],
+  paused: ['queued', 'canceled'],
   running: ['completed', 'failed', 'interrupted'],
   completed: [],
   failed: [],
@@ -87,7 +87,7 @@ export function createInitialMemberChatState(now: Date = new Date()): MemberChat
           {
             id: 'message-2',
             question: '새로운 질문은 어떤 방식으로 처리되나요?',
-            status: 'pending',
+            status: 'queued',
             createdAt: accepted,
             acceptedAt: accepted,
             expiresAt: new Date(now.getTime() + WAIT_LIMIT_MS).toISOString(),
@@ -104,7 +104,7 @@ export function createInitialMemberChatState(now: Date = new Date()): MemberChat
 }
 
 /** 메시지 한 개의 상태를 바꿉니다. 허용되지 않은 전이는 같은 객체를 돌려줍니다. */
-export function transitionMockTask(message: MemberChatMessage, nextStatus: ChatTaskStatus): MemberChatMessage {
+export function transitionMockTask(message: MemberChatMessage, nextStatus: ChatJobState): MemberChatMessage {
   if (!allowedTransitions[message.status].includes(nextStatus)) {
     return message
   }
@@ -132,7 +132,7 @@ export function transitionTask(
   state: MemberChatMockState,
   conversationId: string,
   messageId: string,
-  nextStatus: ChatTaskStatus,
+  nextStatus: ChatJobState,
 ): MemberChatMockState {
   const conversation = state.conversations.find((item) => item.id === conversationId)
   const targetIndex = conversation?.messages.findIndex((message) => message.id === messageId) ?? -1
@@ -158,7 +158,7 @@ export function transitionTask(
   const messages = conversation.messages.map((message, index) => {
     if (index === targetIndex) return updated
 
-    if (shouldPauseFollowing && index > targetIndex && message.status === 'pending') {
+    if (shouldPauseFollowing && index > targetIndex && message.status === 'queued') {
       return { ...message, status: 'paused' as const }
     }
 
@@ -217,7 +217,7 @@ export function createQuestionMessage(
   return {
     id,
     question: content,
-    status: blocked ? 'paused' : 'pending',
+    status: blocked ? 'paused' : 'queued',
     createdAt: accepted,
     acceptedAt: accepted,
     expiresAt: new Date(now.getTime() + WAIT_LIMIT_MS).toISOString(),
@@ -226,7 +226,7 @@ export function createQuestionMessage(
 
 export interface QueueSummary {
   running: number
-  /** 대기(pending)와 일시 정지(paused)인 새 질문의 수입니다. 실행 중 작업은 세지 않습니다. */
+  /** 대기(queued)와 일시 정지(paused)인 새 질문의 수입니다. 실행 중 작업은 세지 않습니다. */
   waitingQuestions: number
   /** 수동 재시도 대기입니다. 재시도 동작이 별도 작업 범위라 목업에서는 항상 0입니다. */
   waitingRetries: number
