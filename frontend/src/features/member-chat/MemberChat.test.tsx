@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import MemberChat from './MemberChat'
 import type { ApiMessage } from './memberChatApiTypes'
@@ -609,4 +609,70 @@ test('질문 길이는 Unicode 코드 포인트 4,000자까지 허용하고, 이
   await user.click(send)
   await waitFor(() => expect(postCalls(fetchSpy)).toHaveLength(1))
   expect(Array.from(postCalls(fetchSpy)[0]?.body.content ?? '')).toHaveLength(4000)
+})
+
+test('대화가 없을 때 질문을 연달아 제출해도 대화는 하나만 만들고 질문도 한 번만 보낸다', async () => {
+  const slowCreate = deferred<Response | undefined>()
+  let createCalls = 0
+
+  const fetchSpy = mockApi((url, init) => {
+    if (url === '/api/conversations?limit=20') return json(200, page([]))
+    if (url === '/api/conversations' && init?.method === 'POST') {
+      createCalls += 1
+      return slowCreate.promise
+    }
+    if (url === '/api/conversations/700/messages' && init?.method === 'POST') {
+      return json(201, { question: userMessage('1', '첫 질문'), answer: assistantMessage('2', '1', 'completed', '답') })
+    }
+    if (url === '/api/conversations/700/messages?limit=100') return json(200, page([userMessage('1', '첫 질문')]))
+    return undefined
+  })
+
+  render(<MemberChat />)
+  await screen.findByRole('option', { name: '새 질문을 입력해 대화를 시작하세요' })
+
+  const input = screen.getByLabelText('질문 입력')
+  fireEvent.change(input, { target: { value: '첫 질문' } })
+
+  // 화면이 다시 그려지기 전에 같은 폼을 두 번 제출한다(엔터 연타·더블클릭). 한 번의 act 안에서 보내야 갱신이 끼어들지 않는다.
+  const form = input.closest('form') as HTMLFormElement
+  act(() => {
+    form.requestSubmit()
+    form.requestSubmit()
+  })
+
+  slowCreate.resolve(json(201, { conversation: conversation('700') }))
+  await screen.findByText('첫 질문')
+
+  expect(createCalls).toBe(1)
+  expect(postCalls(fetchSpy).filter((call) => call.url.endsWith('/messages'))).toHaveLength(1)
+})
+
+test('질문을 보내는 동안에는 대화를 바꿀 수 없다', async () => {
+  const user = userEvent.setup()
+  const slowPost = deferred<Response | undefined>()
+
+  mockApi((url, init) => {
+    if (url === '/api/conversations?limit=20') return json(200, page([conversation('502'), conversation('501')]))
+    if (url.startsWith('/api/conversations/502/messages?') || url.startsWith('/api/conversations/501/messages?')) {
+      return json(200, page([]))
+    }
+    if (url === '/api/conversations/502/messages' && init?.method === 'POST') return slowPost.promise
+    return undefined
+  })
+
+  render(<MemberChat />)
+  await screen.findByRole('option', { name: '대화 502' })
+
+  await user.type(screen.getByLabelText('질문 입력'), '질문')
+  await user.click(screen.getByRole('button', { name: '질문 보내기' }))
+
+  const select = screen.getByRole('combobox', { name: '대화 선택' }) as HTMLSelectElement
+  await waitFor(() => expect(select.disabled).toBe(true))
+  expect((screen.getByRole('button', { name: '새 대화' }) as HTMLButtonElement).disabled).toBe(true)
+
+  slowPost.resolve(
+    json(201, { question: userMessage('1', '질문'), answer: assistantMessage('2', '1', 'completed', '답') }),
+  )
+  await waitFor(() => expect(select.disabled).toBe(false))
 })

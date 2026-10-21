@@ -67,6 +67,9 @@ function MemberChat() {
   const messagesSeqRef = useRef(0)
   // 사용자가 목록을 읽는 동안 대화를 고르거나 새로 만들었는지 나타낸다. 그렇다면 첫 목록이 선택을 덮어쓰지 않는다.
   const navigatedRef = useRef(false)
+  // 전송 중 여부를 동기적으로 막는 가드다. state는 다시 그려져야 바뀌므로, 엔터 연타나 더블클릭이 겹치면
+  // 두 번째 제출이 통과해 (대화가 없을 때) 대화가 둘 만들어질 수 있다.
+  const sendingRef = useRef(false)
 
   const selectId = useCallback((id: string | null) => {
     conversationIdRef.current = id
@@ -97,6 +100,7 @@ function MemberChat() {
     pendingRequestsRef.current.clear()
     navigatedRef.current = false
     messagesSeqRef.current += 1
+    sendingRef.current = false
     setConversations([])
     selectId(null)
     setMessages([])
@@ -191,10 +195,11 @@ function MemberChat() {
     // 서버는 질문 원문을 보존하므로 앞뒤 공백을 지우지 않고 그대로 보낸다. trim은 공백뿐인지 확인할 때만 쓴다.
     const content = question
     const token = accessTokenRef.current
-    if (!canSubmit || !token || sending) return
+    if (!canSubmit || !token || sending || sendingRef.current) return
 
     const epoch = epochRef.current
 
+    sendingRef.current = true
     setSending(true)
     setError('')
 
@@ -238,7 +243,10 @@ function MemberChat() {
       // 실패 시 보관한 키를 유지해 다음 시도에서 재사용한다.
       if (epochRef.current === epoch) setError(errorText(err, '질문 전송에 실패했습니다.'))
     } finally {
-      if (epochRef.current === epoch) setSending(false)
+      if (epochRef.current === epoch) {
+        sendingRef.current = false
+        setSending(false)
+      }
     }
 
     if (!accepted) return
@@ -288,7 +296,7 @@ function MemberChat() {
             id="conversation-select"
             value={conversationId ?? ''}
             onChange={(event) => void selectConversation(event.target.value)}
-            disabled={loading || conversations.length === 0}
+            disabled={loading || sending || conversations.length === 0}
           >
             {conversations.length === 0 && <option value="">새 질문을 입력해 대화를 시작하세요</option>}
             {conversations.map((conversation) => (
