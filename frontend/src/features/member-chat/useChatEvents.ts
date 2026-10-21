@@ -13,9 +13,17 @@ export interface UseChatEventsOptions {
   resolveJob?: (accessToken: string, jobId: string) => Promise<ChatJobEnvelope | null>
   /** 끊긴 뒤 다시 연결하기까지 기다릴 시간. 연결 실패가 이어질수록 늘린다. */
   reconnectDelayMs?: (attempt: number) => number
+  /** 연결이 이 시간 이상 이어진 뒤에 끊겨야 재연결 간격을 처음으로 되돌린다. 기본 10초. */
+  stableConnectionMs?: number
+  /** 작업 조회가 실패하거나 답변이 비어 있을 때 다시 조회하기까지 기다릴 시간. 기본 3초. */
+  resolveRetryMs?: number
 }
 
 const MAX_RECONNECT_DELAY_MS = 15_000
+const DEFAULT_STABLE_CONNECTION_MS = 10_000
+const DEFAULT_RESOLVE_RETRY_MS = 3_000
+/** 같은 작업을 이 횟수까지 조회해 보고, 그래도 안 되면 다음 snapshot을 기다린다. */
+export const MAX_RESOLVE_ATTEMPTS = 5
 
 export function defaultReconnectDelayMs(attempt: number): number {
   return Math.min(1000 * 2 ** attempt, MAX_RECONNECT_DELAY_MS)
@@ -60,11 +68,22 @@ export function useChatEvents(options: UseChatEventsOptions): ChatEventsState {
   const sinceRef = useRef<string | null>(null)
   const epochRef = useRef(0)
   const resolvingRef = useRef(new Set<string>())
+  // 작업별 조회 횟수, 다음 조회까지 쉬는 중인 작업, 그 타이머. 사용자가 바뀌면 모두 버린다.
+  const attemptsRef = useRef(new Map<string, number>())
+  const cooldownRef = useRef(new Set<string>())
+  const timersRef = useRef(new Set<ReturnType<typeof setTimeout>>())
+  const lastServerTimeRef = useRef<string | null>(null)
+  const [resolveTick, bumpResolveTick] = useReducer((count: number) => count + 1, 0)
 
   useEffect(() => {
     epochRef.current += 1
     sinceRef.current = null
     resolvingRef.current.clear()
+    attemptsRef.current.clear()
+    cooldownRef.current.clear()
+    lastServerTimeRef.current = null
+    for (const timer of timersRef.current) clearTimeout(timer)
+    timersRef.current.clear()
     dispatch({ type: 'reset' })
 
     if (!userId) return
@@ -77,8 +96,14 @@ export function useChatEvents(options: UseChatEventsOptions): ChatEventsState {
       let everOpened = false
 
       while (!signal.aborted) {
-        const { getAccessToken, open = openChatEvents, reconnectDelayMs = defaultReconnectDelayMs } = optionsRef.current
+        const {
+          getAccessToken,
+          open = openChatEvents,
+          reconnectDelayMs = defaultReconnectDelayMs,
+          stableConnectionMs = DEFAULT_STABLE_CONNECTION_MS,
+        } = optionsRef.current
         const accessToken = getAccessToken()
+        let openedAt: number | null = null
 
         if (accessToken) {
           dispatch({ type: 'connection', status: everOpened ? 'reconnecting' : 'connecting' })
@@ -94,17 +119,21 @@ export function useChatEvents(options: UseChatEventsOptions): ChatEventsState {
                 if (event.type === 'snapshot') sinceRef.current = event.data.server_time
 
                 everOpened = true
-                attempt = 0
+                openedAt ??= Date.now()
                 dispatch({ type: 'connection', status: 'open' })
                 dispatch({ type: 'event', event })
               },
             })
           } catch {
-            // 연결 거절·형식 오류·네트워크 끊김은 모두 같은 방식으로 다시 연결한다.
+            // 연결 거절·형식 오류·오래 조용한 연결·네트워크 끊김은 모두 같은 방식으로 다시 연결한다.
           }
         }
 
         if (signal.aborted) return
+
+        // 이벤트를 한 번 받았다는 것만으로는 건강한 연결이 아니다. 서버가 snapshot만 보내고 바로 끊는 상황이
+        // 이어져도 간격이 늘어나도록, 충분히 오래 이어진 연결일 때만 간격을 처음으로 되돌린다.
+        if (openedAt !== null && Date.now() - openedAt >= stableConnectionMs) attempt = 0
 
         dispatch({ type: 'connection', status: 'reconnecting' })
         await sleep(reconnectDelayMs(attempt), signal)
@@ -116,23 +145,43 @@ export function useChatEvents(options: UseChatEventsOptions): ChatEventsState {
 
     return () => {
       controller.abort()
+      for (const timer of timersRef.current) clearTimeout(timer)
+      timersRef.current.clear()
       dispatch({ type: 'reset' })
     }
   }, [userId])
 
-  // 진행 중으로 알던 작업이 snapshot에 없으면 최종 결과를 따로 조회한다.
+  // 최종 결과를 따로 조회해야 하는 작업(snapshot에서 빠진 진행 중 작업, 답변이 비어 온 완료 작업)을 조회한다.
+  // 조회가 실패하거나 결과가 여전히 비어 있으면 잠시 쉬었다가 다시 조회하고, 횟수가 차면 다음 snapshot을 기다린다.
   useEffect(() => {
     if (!userId) return
 
     const epoch = epochRef.current
 
-    for (const jobId of state.unresolved) {
-      if (resolvingRef.current.has(jobId)) continue
+    // 새 snapshot이 오면 조회 횟수를 처음부터 센다. 이제 끝난 작업은 기록에서 지운다.
+    if (lastServerTimeRef.current !== state.serverTime) {
+      lastServerTimeRef.current = state.serverTime
+      attemptsRef.current.clear()
+    }
+    for (const jobId of [...attemptsRef.current.keys()]) {
+      if (!state.unresolved.includes(jobId)) attemptsRef.current.delete(jobId)
+    }
 
-      const { getAccessToken, resolveJob = fetchChatJob } = optionsRef.current
+    for (const jobId of state.unresolved) {
+      if (resolvingRef.current.has(jobId) || cooldownRef.current.has(jobId)) continue
+
+      const attempts = attemptsRef.current.get(jobId) ?? 0
+      if (attempts >= MAX_RESOLVE_ATTEMPTS) continue
+
+      const {
+        getAccessToken,
+        resolveJob = fetchChatJob,
+        resolveRetryMs = DEFAULT_RESOLVE_RETRY_MS,
+      } = optionsRef.current
       const accessToken = getAccessToken()
       if (!accessToken) continue
 
+      attemptsRef.current.set(jobId, attempts + 1)
       resolvingRef.current.add(jobId)
 
       resolveJob(accessToken, jobId)
@@ -141,13 +190,22 @@ export function useChatEvents(options: UseChatEventsOptions): ChatEventsState {
             dispatch({ type: 'event', event: { type: 'job', data: envelope } })
         })
         .catch(() => {
-          // 조회에 실패하면 unresolved에 남는다. 다음 재연결 snapshot이 저장된 결과를 다시 준다.
+          // 실패는 아래에서 잠시 쉰 뒤 다시 조회한다.
         })
         .finally(() => {
           resolvingRef.current.delete(jobId)
+          if (epochRef.current !== epoch) return
+
+          cooldownRef.current.add(jobId)
+          const timer = setTimeout(() => {
+            timersRef.current.delete(timer)
+            cooldownRef.current.delete(jobId)
+            bumpResolveTick()
+          }, resolveRetryMs)
+          timersRef.current.add(timer)
         })
     }
-  }, [state.unresolved, userId])
+  }, [state.unresolved, state.serverTime, userId, resolveTick])
 
   return state
 }

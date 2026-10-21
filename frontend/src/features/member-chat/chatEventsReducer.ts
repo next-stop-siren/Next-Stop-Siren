@@ -24,7 +24,7 @@ export interface ChatEventsState {
   limits: ChatLimits | null
   /** 마지막 snapshot의 server_time. 재연결할 때 `since`로 보낸다. */
   serverTime: string | null
-  /** 진행 중으로 알던 작업이 snapshot에 없다. `GET /api/chat/jobs/{id}`로 최종 결과를 조회해야 한다. */
+  /** 최종 결과를 `GET /api/chat/jobs/{id}`로 조회해야 하는 작업: snapshot에서 빠진 진행 중 작업, 답변이 비어 온 완료 작업 */
   unresolved: string[]
   connection: ConnectionStatus
 }
@@ -54,6 +54,21 @@ function omit(record: Record<string, string>, key: string): Record<string, strin
   return rest
 }
 
+/** 저장이 확인된 최종 답변이 들어 있는가 */
+function hasConfirmedAnswer(envelope: ChatJobEnvelope): boolean {
+  return envelope.answer?.status === 'completed' && typeof envelope.answer.content === 'string'
+}
+
+/**
+ * 최종 결과를 `GET /api/chat/jobs/{id}`로 따로 조회해야 하는 작업인가.
+ * 목록에서 사라졌거나 아직 종결되지 않았거나, 완료라고 했는데 저장된 답변 내용이 없는 경우다.
+ */
+function needsLookup(envelope: ChatJobEnvelope | undefined): boolean {
+  if (!envelope) return true
+  if (!isTerminalState(envelope.job.state)) return true
+  return envelope.job.state === 'completed' && !hasConfirmedAnswer(envelope)
+}
+
 /** 작업 하나를 반영한다. 이미 종결된 작업의 상태를 다른 상태로 되돌리는 이벤트는 버린다. */
 function applyEnvelope(state: ChatEventsState, envelope: ChatJobEnvelope): ChatEventsState {
   const id = envelope.job.id
@@ -64,13 +79,19 @@ function applyEnvelope(state: ChatEventsState, envelope: ChatJobEnvelope): ChatE
   }
 
   const terminal = isTerminalState(envelope.job.state)
+  // 완료라고 알렸는데 답변 내용이 비어 있으면 저장된 답변을 다시 조회한다.
+  const answerMissing = envelope.job.state === 'completed' && !hasConfirmedAnswer(envelope)
 
   return {
     ...state,
     jobs: { ...state.jobs, [id]: envelope },
     drafts: terminal ? omit(state.drafts, id) : state.drafts,
     gapped: terminal ? without(state.gapped, id) : state.gapped,
-    unresolved: without(state.unresolved, id),
+    unresolved: answerMissing
+      ? state.unresolved.includes(id)
+        ? state.unresolved
+        : [...state.unresolved, id]
+      : without(state.unresolved, id),
   }
 }
 
@@ -96,10 +117,7 @@ function applySnapshot(state: ChatEventsState, event: Extract<ChatEvent, { type:
   return {
     ...next,
     gapped,
-    unresolved: [...new Set([...next.unresolved, ...missing])].filter((id) => {
-      const job = next.jobs[id]
-      return !job || !isTerminalState(job.job.state)
-    }),
+    unresolved: [...new Set([...next.unresolved, ...missing])].filter((id) => needsLookup(next.jobs[id])),
   }
 }
 

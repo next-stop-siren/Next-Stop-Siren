@@ -1,6 +1,7 @@
-import { expect, test, vi } from 'vitest'
+import { afterEach, expect, test, vi } from 'vitest'
 import {
   ChatStreamHttpError,
+  ChatStreamIdleError,
   ChatStreamProtocolError,
   createSseParser,
   openChatEvents,
@@ -196,4 +197,104 @@ test('계약과 다른 이벤트가 오면 형식 오류로 끝난다', async ()
       fetchImpl: fetchImpl as unknown as typeof fetch,
     }),
   ).rejects.toBeInstanceOf(ChatStreamProtocolError)
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+/** abort에 반응하지 않는 열린 스트림. 끊긴 연결처럼 데이터가 오지 않다가 직접 보낸 조각만 전달한다. */
+function openStream() {
+  let controller!: ReadableStreamDefaultController<Uint8Array>
+  const body = new ReadableStream<Uint8Array>({
+    start(c) {
+      controller = c
+    },
+  })
+  const encoder = new TextEncoder()
+
+  return {
+    fetchImpl: (async () => new Response(body, { status: 200 })) as unknown as typeof fetch,
+    send: (text: string) => controller.enqueue(encoder.encode(text)),
+  }
+}
+
+test('오래 아무 데이터도 오지 않으면 연결이 끊긴 것으로 보고 형식 오류가 아닌 유휴 오류로 끝낸다', async () => {
+  vi.useFakeTimers()
+  const { fetchImpl } = openStream()
+
+  const result = expect(
+    openChatEvents({
+      accessToken: 't',
+      signal: new AbortController().signal,
+      onEvent: () => {},
+      idleTimeoutMs: 1000,
+      fetchImpl,
+    }),
+  ).rejects.toBeInstanceOf(ChatStreamIdleError)
+
+  await vi.advanceTimersByTimeAsync(1000)
+  await result
+})
+
+test('ping 주석만 와도 연결이 살아 있는 것으로 보고 시간을 다시 센다', async () => {
+  vi.useFakeTimers()
+  const { fetchImpl, send } = openStream()
+  let settled = false
+
+  const result = openChatEvents({
+    accessToken: 't',
+    signal: new AbortController().signal,
+    onEvent: () => {},
+    idleTimeoutMs: 1000,
+    fetchImpl,
+  }).catch((error: unknown) => {
+    settled = true
+    return error
+  })
+
+  await vi.advanceTimersByTimeAsync(800)
+  send(': ping\n\n')
+  await vi.advanceTimersByTimeAsync(800)
+  expect(settled).toBe(false)
+
+  await vi.advanceTimersByTimeAsync(300)
+  expect(await result).toBeInstanceOf(ChatStreamIdleError)
+})
+
+test('연결을 여는 동안 응답이 오지 않아도 유휴 오류로 끝낸다', async () => {
+  vi.useFakeTimers()
+  const fetchImpl = ((_path: string, init?: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+    })) as unknown as typeof fetch
+
+  const result = expect(
+    openChatEvents({
+      accessToken: 't',
+      signal: new AbortController().signal,
+      onEvent: () => {},
+      idleTimeoutMs: 1000,
+      fetchImpl,
+    }),
+  ).rejects.toBeInstanceOf(ChatStreamIdleError)
+
+  await vi.advanceTimersByTimeAsync(1000)
+  await result
+})
+
+test('호출한 쪽이 중단하면 유휴 오류가 아니라 AbortError로 끝난다', async () => {
+  const { fetchImpl } = openStream()
+  const controller = new AbortController()
+
+  const result = openChatEvents({
+    accessToken: 't',
+    signal: controller.signal,
+    onEvent: () => {},
+    idleTimeoutMs: 60_000,
+    fetchImpl,
+  })
+  controller.abort()
+
+  await expect(result).rejects.toMatchObject({ name: 'AbortError' })
 })

@@ -14,6 +14,13 @@ export interface SseFrame {
 /** 이벤트 형식이 계약과 다를 때 던진다. 연결을 끊고 다시 연결하는 대상이다. */
 export class ChatStreamProtocolError extends Error {}
 
+/** 일정 시간 동안 아무 데이터도 받지 못했을 때 던진다. 서버는 15초마다 `: ping`을 보내므로 연결이 죽은 것으로 본다. */
+export class ChatStreamIdleError extends Error {
+  constructor(idleMs: number) {
+    super(`구독에서 ${Math.round(idleMs / 1000)}초 동안 아무 데이터도 받지 못했습니다.`)
+  }
+}
+
 /** 구독 연결 자체가 거절됐을 때 던진다(401, 404, 5xx 등). */
 export class ChatStreamHttpError extends Error {
   readonly status: number
@@ -131,12 +138,17 @@ export function parseChatEvent(frame: SseFrame): ChatEvent | null {
   }
 }
 
+/** 서버의 `: ping` 간격(15초)의 세 배. 이보다 오래 조용하면 연결이 끊긴 것으로 본다. */
+export const DEFAULT_IDLE_TIMEOUT_MS = 45_000
+
 export interface OpenChatEventsOptions {
   accessToken: string
   /** 마지막으로 받은 snapshot의 server_time. 끊긴 사이 끝난 답변과 바뀐 버튼을 받기 위해 보낸다. */
   since?: string | null
   signal: AbortSignal
   onEvent: (event: ChatEvent) => void
+  /** 이 시간 동안 바이트(주석 ping 포함)를 하나도 받지 못하면 ChatStreamIdleError로 끝낸다. */
+  idleTimeoutMs?: number
   fetchImpl?: typeof fetch
 }
 
@@ -145,35 +157,74 @@ export type OpenChatEvents = (options: Omit<OpenChatEventsOptions, 'fetchImpl'>)
 
 /**
  * 구독을 열고 서버가 연결을 닫을 때까지 이벤트를 전달한다. 정상 종료하면 resolve하고,
- * 연결 거절은 ChatStreamHttpError, 형식 오류는 ChatStreamProtocolError, 중단(abort)은 fetch의 AbortError로 reject한다.
+ * 연결 거절은 ChatStreamHttpError, 형식 오류는 ChatStreamProtocolError, 오래 조용하면 ChatStreamIdleError,
+ * 호출한 쪽의 중단(abort)은 AbortError로 reject한다.
  * 연결이 끊겨도 서버 작업은 계속되므로, 호출한 쪽이 `since`를 담아 다시 연다.
  */
 export async function openChatEvents(options: OpenChatEventsOptions): Promise<void> {
-  const { accessToken, since, signal, onEvent, fetchImpl = fetch } = options
+  const { accessToken, since, signal, onEvent, fetchImpl = fetch, idleTimeoutMs = DEFAULT_IDLE_TIMEOUT_MS } = options
   const path = since ? `/api/chat/events?since=${encodeURIComponent(since)}` : '/api/chat/events'
 
-  const response = await fetchImpl(path, {
-    headers: { Accept: 'text/event-stream', Authorization: `Bearer ${accessToken}` },
-    signal,
-  })
+  // 바깥에서 받은 signal과 별개로, 오래 조용할 때 우리가 직접 연결을 끊기 위한 signal이다.
+  const inner = new AbortController()
+  const forwardAbort = () => inner.abort()
+  if (signal.aborted) inner.abort()
+  else signal.addEventListener('abort', forwardAbort, { once: true })
 
-  if (!response.ok) throw new ChatStreamHttpError(response.status)
-  if (!response.body) throw new ChatStreamHttpError(response.status, '구독 응답에 본문이 없습니다.')
-
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  const parser = createSseParser((frame) => {
-    const event = parseChatEvent(frame)
-    if (event) onEvent(event)
-  })
+  let idle = false
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const armIdleTimer = () => {
+    clearTimeout(timer)
+    timer = setTimeout(() => {
+      idle = true
+      inner.abort()
+    }, idleTimeoutMs)
+  }
 
   try {
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      parser.push(decoder.decode(value, { stream: true }))
+    // 연결을 여는 동안에도 응답이 오지 않을 수 있어 fetch 전에 시작한다.
+    armIdleTimer()
+
+    const response = await fetchImpl(path, {
+      headers: { Accept: 'text/event-stream', Authorization: `Bearer ${accessToken}` },
+      signal: inner.signal,
+    })
+
+    if (!response.ok) throw new ChatStreamHttpError(response.status)
+    if (!response.body) throw new ChatStreamHttpError(response.status, '구독 응답에 본문이 없습니다.')
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    const parser = createSseParser((frame) => {
+      const event = parseChatEvent(frame)
+      if (event) onEvent(event)
+    })
+
+    // 응답 스트림이 abort에 반응하지 않아도 읽기가 풀리도록 직접 취소한다.
+    const cancelReader = () => void reader.cancel().catch(() => {})
+    // 응답을 받기 전에 이미 중단됐다면 리스너가 호출되지 않으므로 바로 취소한다.
+    if (inner.signal.aborted) cancelReader()
+    else inner.signal.addEventListener('abort', cancelReader, { once: true })
+
+    try {
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        armIdleTimer()
+        parser.push(decoder.decode(value, { stream: true }))
+      }
+    } finally {
+      inner.signal.removeEventListener('abort', cancelReader)
+      reader.releaseLock()
     }
+  } catch (error) {
+    if (idle) throw new ChatStreamIdleError(idleTimeoutMs)
+    throw error
   } finally {
-    reader.releaseLock()
+    clearTimeout(timer)
+    signal.removeEventListener('abort', forwardAbort)
   }
+
+  if (idle) throw new ChatStreamIdleError(idleTimeoutMs)
+  if (signal.aborted) throw new DOMException('구독이 중단되었습니다.', 'AbortError')
 }

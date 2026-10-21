@@ -223,3 +223,27 @@ test('reset하면 비공개 상태를 모두 비운다', () => {
 
   expect(chatEventsReducer(state, { type: 'reset' })).toEqual(initialChatEventsState)
 })
+
+test('완료라고 알렸는데 저장된 답변 내용이 비어 있으면 따로 조회할 목록에 넣고, 내용이 오면 지운다', () => {
+  const emptyAnswer = makeEnvelope({
+    job: { id: '7004', question_message_id: '9006', state: 'completed', position: null, allowed_actions: [] },
+    answer: { id: '9007', status: 'completed', content: null },
+  })
+
+  const state = run([job(emptyAnswer)])
+  expect(state.unresolved).toEqual(['7004'])
+  expect(selectAnswerView(state, '7004')).toEqual({ kind: 'unconfirmed' })
+
+  const resolved = run([job(completed())], state)
+  expect(resolved.unresolved).toEqual([])
+  expect(selectAnswerView(resolved, '7004').kind).toBe('confirmed')
+})
+
+test('snapshot의 완료 작업에 답변 내용이 비어 있어도 조회 대상으로 남는다', () => {
+  const emptyAnswer = makeEnvelope({
+    job: { id: '7004', question_message_id: '9006', state: 'completed', position: null, allowed_actions: [] },
+    answer: { id: '9007', status: 'completed', content: null },
+  })
+
+  expect(run([snapshot([emptyAnswer])]).unresolved).toEqual(['7004'])
+})

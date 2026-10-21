@@ -5,7 +5,7 @@ import { ChatStreamHttpError, type OpenChatEvents } from './chatEventStream'
 import { selectAnswerView } from './chatEventsReducer'
 import { makeEnvelope, makeLimits } from './chatQueueBuilders'
 import { createMockChatServer, MOCK_ANSWER_TEXT } from './mockChatServer'
-import { useChatEvents, type UseChatEventsOptions } from './useChatEvents'
+import { MAX_RESOLVE_ATTEMPTS, useChatEvents, type UseChatEventsOptions } from './useChatEvents'
 
 afterEach(() => {
   cleanup()
@@ -279,4 +279,173 @@ test('재연결 snapshot에 없는 진행 중 작업은 작업 조회로 최종 
   )
   expect(resolveJob).toHaveBeenCalledWith('token-1', '7001')
   expect(result.current.unresolved).toEqual([])
+})
+
+// 서버가 snapshot만 보내고 바로 연결을 닫는 상황. 연결이 이어진 시간이 짧다.
+function snapshotThenClose(counter: { calls: number }): OpenChatEvents {
+  return async ({ onEvent }) => {
+    counter.calls += 1
+    onEvent({
+      type: 'snapshot',
+      data: { items: [], limits: makeLimits(), server_time: `2026-10-20T03:00:0${counter.calls % 10}Z` },
+    })
+  }
+}
+
+test('snapshot만 받고 바로 끊기는 연결이 이어지면 재연결 간격이 계속 늘어난다', async () => {
+  const counter = { calls: 0 }
+  const attempts: number[] = []
+
+  renderHook(() =>
+    useChatEvents({
+      userId: 'u1',
+      getAccessToken: () => 'token-1',
+      open: snapshotThenClose(counter),
+      reconnectDelayMs: (attempt) => {
+        attempts.push(attempt)
+        return 0
+      },
+    }),
+  )
+
+  await waitFor(() => expect(attempts.length).toBeGreaterThanOrEqual(4))
+  expect(attempts.slice(0, 4)).toEqual([0, 1, 2, 3])
+})
+
+test('충분히 오래 이어진 연결이 끊긴 뒤에는 재연결 간격을 처음부터 다시 센다', async () => {
+  const counter = { calls: 0 }
+  const attempts: number[] = []
+
+  renderHook(() =>
+    useChatEvents({
+      userId: 'u1',
+      getAccessToken: () => 'token-1',
+      open: snapshotThenClose(counter),
+      // 0이면 이어진 시간과 상관없이 안정된 연결로 본다.
+      stableConnectionMs: 0,
+      reconnectDelayMs: (attempt) => {
+        attempts.push(attempt)
+        return 0
+      },
+    }),
+  )
+
+  await waitFor(() => expect(attempts.length).toBeGreaterThanOrEqual(3))
+  expect(attempts.slice(0, 3)).toEqual([0, 0, 0])
+})
+
+function runningThenGone(): { open: OpenChatEvents; running: ReturnType<typeof makeEnvelope> } {
+  const running = makeEnvelope({
+    job: { id: '7001', state: 'running', position: null, allowed_actions: [] },
+    answer: { id: '9002', status: 'pending' },
+  })
+  let call = 0
+
+  // 첫 연결은 실행 중인 작업을 알려 주고 닫힌다. 재연결 snapshot에는 그 작업이 없고 이후로는 안정적으로 열려 있다.
+  const open: OpenChatEvents = async ({ onEvent, signal }) => {
+    call += 1
+    onEvent({
+      type: 'snapshot',
+      data: { items: call === 1 ? [running] : [], limits: makeLimits(), server_time: `2026-10-20T03:00:0${call}Z` },
+    })
+
+    if (call === 1) return
+
+    await new Promise<void>((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
+    })
+  }
+
+  return { open, running }
+}
+
+test('작업 조회가 실패해도 잠시 뒤 다시 조회해 최종 결과를 받는다', async () => {
+  const { open } = runningThenGone()
+  const completed = makeEnvelope({
+    job: { id: '7001', state: 'completed', position: null, allowed_actions: [] },
+    answer: { id: '9002', status: 'completed', content: '두 번째 조회로 받은 답변' },
+  })
+  const resolveJob = vi
+    .fn<NonNullable<UseChatEventsOptions['resolveJob']>>()
+    .mockRejectedValueOnce(new Error('네트워크 오류'))
+    .mockResolvedValue(completed)
+
+  const { result } = renderHook(() =>
+    useChatEvents({
+      userId: 'u1',
+      getAccessToken: () => 'token-1',
+      open,
+      resolveJob,
+      reconnectDelayMs: () => 0,
+      resolveRetryMs: 10,
+    }),
+  )
+
+  await waitFor(() =>
+    expect(selectAnswerView(result.current, '7001')).toEqual({
+      kind: 'confirmed',
+      content: '두 번째 조회로 받은 답변',
+    }),
+  )
+  expect(resolveJob).toHaveBeenCalledTimes(2)
+})
+
+test('조회가 계속 실패하면 정해진 횟수까지만 시도하고 멈춘다', async () => {
+  const { open } = runningThenGone()
+  const resolveJob = vi
+    .fn<NonNullable<UseChatEventsOptions['resolveJob']>>()
+    .mockRejectedValue(new Error('네트워크 오류'))
+
+  const { result } = renderHook(() =>
+    useChatEvents({
+      userId: 'u1',
+      getAccessToken: () => 'token-1',
+      open,
+      resolveJob,
+      reconnectDelayMs: () => 0,
+      resolveRetryMs: 5,
+    }),
+  )
+
+  await waitFor(() => expect(resolveJob).toHaveBeenCalledTimes(MAX_RESOLVE_ATTEMPTS))
+  // 멈췄는지 확인하려면 더 시도할 시간을 줘야 한다.
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  })
+
+  expect(resolveJob).toHaveBeenCalledTimes(MAX_RESOLVE_ATTEMPTS)
+  expect(result.current.unresolved).toEqual(['7001'])
+})
+
+test('완료라고 왔는데 답변 내용이 비어 있으면 저장된 답변을 조회해 확정 답변으로 바꾼다', async () => {
+  const emptyAnswer = makeEnvelope({
+    job: { id: '7001', state: 'completed', position: null, allowed_actions: [] },
+    answer: { id: '9002', status: 'completed', content: null },
+  })
+  const full = makeEnvelope({
+    job: { id: '7001', state: 'completed', position: null, allowed_actions: [] },
+    answer: { id: '9002', status: 'completed', content: '조회로 받은 저장된 답변' },
+  })
+  const resolveJob = vi.fn(async (_accessToken: string, _jobId: string) => full)
+
+  const open: OpenChatEvents = async ({ onEvent, signal }) => {
+    onEvent({
+      type: 'snapshot',
+      data: { items: [], limits: makeLimits(), server_time: '2026-10-20T03:00:01Z' },
+    })
+    onEvent({ type: 'job', data: emptyAnswer })
+
+    await new Promise<void>((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
+    })
+  }
+
+  const { result } = renderHook(() =>
+    useChatEvents({ userId: 'u1', getAccessToken: () => 'token-1', open, resolveJob, resolveRetryMs: 10 }),
+  )
+
+  await waitFor(() =>
+    expect(selectAnswerView(result.current, '7001')).toEqual({ kind: 'confirmed', content: '조회로 받은 저장된 답변' }),
+  )
+  expect(resolveJob).toHaveBeenCalledTimes(1)
 })
