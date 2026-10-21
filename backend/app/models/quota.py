@@ -16,8 +16,8 @@ from app.db import Base
 RESERVATION_SHAPE = """
 (state = 'reserved' AND refund_reason IS NULL AND resolved_at IS NULL)
 OR (state = 'settled' AND refund_reason IS NULL AND resolved_at IS NOT NULL)
-OR (state = 'refunded' AND refund_reason IN ('failed', 'interrupted', 'canceled', 'expired')
-    AND resolved_at IS NOT NULL)
+OR (state = 'refunded' AND refund_reason IS NOT NULL
+    AND refund_reason IN ('failed', 'interrupted', 'canceled', 'expired') AND resolved_at IS NOT NULL)
 """
 
 

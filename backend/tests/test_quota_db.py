@@ -68,6 +68,8 @@ def fill(session, user_id: int, count: int, moment: datetime, *, state: str = "s
         {"state": "settled"},
         {"state": "refunded", "refund_reason": "failed"},
         {"state": "refunded", "refund_reason": "other", "resolved_at": kst(1)},
+        # NULL IN (...) is unknown, which a CHECK alone would let through.
+        {"state": "refunded", "refund_reason": None, "resolved_at": kst(1)},
         # The job state is spelled `canceled`.
         {"state": "refunded", "refund_reason": "cancelled", "resolved_at": kst(1)},
         {"state": "settled", "refund_reason": "failed", "resolved_at": kst(1)},
@@ -234,8 +236,12 @@ def test_concurrent_admissions_from_many_tabs_start_one_generation_per_interval(
 
     results = run_together(WORKERS, admit)
 
-    assert sum(isinstance(result, int) for result in results) == 1
-    assert {result.reason for result in results if isinstance(result, QuotaRejected)} == {"attempt_too_soon"}
+    admitted = [result for result in results if isinstance(result, int)]
+    refused = [result for result in results if isinstance(result, QuotaRejected)]
+    assert len(admitted) == 1 and len(refused) == WORKERS - 1
+    assert all(error.reason == "attempt_too_soon" for error in refused)
+    with sessions() as reader:
+        assert reader.scalar(select(func.count()).select_from(QuotaReservation)) == 1
 
 
 def test_concurrent_refunds_of_one_reservation_resolve_it_once(committed_quota_sessions):
