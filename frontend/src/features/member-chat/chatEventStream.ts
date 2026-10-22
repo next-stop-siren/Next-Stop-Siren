@@ -215,6 +215,10 @@ export async function openChatEvents(options: OpenChatEventsOptions): Promise<vo
       }
     } finally {
       inner.signal.removeEventListener('abort', cancelReader)
+      // 형식 오류나 onEvent 오류로 빠져나와도 응답이 열린 채 남지 않게 읽기를 취소하고 요청을 중단한다.
+      // releaseLock만 하면 서버가 닫기 전까지 연결이 남고, 재연결을 거듭할수록 쌓인다. 정상 종료 때는 영향이 없다.
+      await reader.cancel().catch(() => {})
+      inner.abort()
       reader.releaseLock()
     }
   } catch (error) {

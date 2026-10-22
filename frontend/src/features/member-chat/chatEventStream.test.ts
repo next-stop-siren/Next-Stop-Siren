@@ -298,3 +298,60 @@ test('호출한 쪽이 중단하면 유휴 오류가 아니라 AbortError로 끝
 
   await expect(result).rejects.toMatchObject({ name: 'AbortError' })
 })
+
+/** 서버가 닫기 전까지 열려 있는 응답. 연결이 정리됐는지(스트림 취소, 요청 중단)를 확인할 수 있다. */
+function trackedResponse(chunk: string) {
+  const cancel = vi.fn()
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(chunk))
+      // close하지 않는다. 클라이언트가 정리하지 않으면 연결이 계속 열려 있는 상황이다.
+    },
+    cancel,
+  })
+  let usedSignal: AbortSignal | undefined
+
+  return {
+    cancel,
+    usedSignal: () => usedSignal,
+    fetchImpl: (async (_path: string, init?: RequestInit) => {
+      usedSignal = init?.signal ?? undefined
+      return new Response(body, { status: 200 })
+    }) as unknown as typeof fetch,
+  }
+}
+
+test('계약과 다른 이벤트로 끝나면 다시 연결하기 전에 이전 응답을 취소하고 요청을 중단한다', async () => {
+  const tracked = trackedResponse('event: delta\ndata: {"job_id":1}\n\n')
+
+  await expect(
+    openChatEvents({
+      accessToken: 't',
+      signal: new AbortController().signal,
+      onEvent: () => {},
+      fetchImpl: tracked.fetchImpl,
+    }),
+  ).rejects.toBeInstanceOf(ChatStreamProtocolError)
+
+  // 오류가 호출한 쪽에 닿았을 때는 이미 정리가 끝나 있어야 한다.
+  expect(tracked.cancel).toHaveBeenCalledTimes(1)
+  expect(tracked.usedSignal()?.aborted).toBe(true)
+})
+
+test('이벤트를 처리하다 오류가 나도 이전 응답을 취소하고 요청을 중단한다', async () => {
+  const tracked = trackedResponse(sseFrame('limits', makeLimits()))
+
+  await expect(
+    openChatEvents({
+      accessToken: 't',
+      signal: new AbortController().signal,
+      onEvent: () => {
+        throw new Error('화면 처리 중 오류')
+      },
+      fetchImpl: tracked.fetchImpl,
+    }),
+  ).rejects.toThrow('화면 처리 중 오류')
+
+  expect(tracked.cancel).toHaveBeenCalledTimes(1)
+  expect(tracked.usedSignal()?.aborted).toBe(true)
+})
