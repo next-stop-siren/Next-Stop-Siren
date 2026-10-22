@@ -1,12 +1,8 @@
 # 공통 API 형식과 첫 모의 응답
 
-이 문서의 기존 경로·JSON·네 메시지 상태·`409 conversation_busy`·D4·연결 중단 처리는 **현재 구현 계약**이다. PR #44와 #51은 병합됐다.
+이 문서는 **현재 구현 계약**이다. #53부터 질문·재시도는 [회원 채팅 정책](chat-policy.md)의 대기열로 접수하고, 결과는 회원 단위 구독과 작업 조회로 받는다([회원 채팅 대기열](#회원-채팅-대기열-53)). 이전의 동기 생성(`201`), `409 conversation_busy`, `502`·`504`, `/messages/stream`, D4 재시도와 60초 `pending` 회복은 더 이상 쓰지 않는다. 네 메시지 상태와 공개 메시지 형식은 그대로다.
 
-[회원 채팅 정책](chat-policy.md)은 접수·실행·구독을 분리하는 **승인된 미구현 목표**다. #53은 작업 접수·조회·실행 전 취소·재시도·건너뛰기·구독을, #15는 잔량·기간·한도와 간격 응답을 설계한다. 구체적인 새 경로·응답·오류 코드는 담당 제안과 검토 전 확정 API가 아니다.
-
-목표 작업에는 회원·소유권 확인, 원자적 입장·예약, 같은 키의 무료 재조회와 재접속 후 저장 결과 조회가 필요하다. 아래 현재 예제를 목표 API로 해석하지 않는다.
-
-현재 백엔드는 health/ready, 로컬·Google 인증, 쿠키 세션, 본인 대화·메시지 API를 등록한다. 일반 채팅은 모의 답변을 저장·재조회하며 실제 AI 키를 요구하지 않는다. 화면의 인증·회원 채팅 연결은 미구현이다. 실행·Swagger 확인은 [온보딩](../01-start/onboarding.md#3-1-swagger로-가입로그인과-모의-대화-확인)을 따른다. 예시 계정·내용·시각은 가짜다.
+현재 백엔드는 health/ready, 로컬·Google 인증, 쿠키 세션, 본인 대화·메시지 API와 대기열·구독 API를 등록한다. 일반 채팅은 모의 답변을 저장·재조회하며 실제 AI 키를 요구하지 않는다. 화면의 대기열·구독 실제 연동은 화면 담당(#20, #21)이 이어서 한다. 실행·Swagger 확인은 [온보딩](../01-start/onboarding.md#3-1-swagger로-가입로그인과-모의-대화-확인)을 따른다. 예시 계정·내용·시각은 가짜다.
 
 ## 공통 규칙
 
@@ -19,7 +15,7 @@
 - 목록은 `items` 배열과 `next_cursor`(십진 ID 문자열 또는 `null`)를 반환한다. `limit` 기본값은 20, 허용 범위는 1~100이다.
 - 대화는 생성 ID 내림차순이고 다음 페이지에 `before_id=next_cursor`를 보낸다. 최근 수정 순서가 아니라 생성 순서를 택해 페이지 이동 중 위치가 바뀌지 않게 한다.
 - 메시지는 ID 오름차순이다. 다음 페이지에는 `after_id=next_cursor`를 보낸다. `next_cursor`는 반환한 마지막 항목 ID이며 더 없으면 `null`이다. 새 행이 추가돼도 이미 읽은 행을 중복하지 않는다.
-- 커서 페이지는 이미 받은 행의 상태 변경을 알려 주지 않는다. 진행 중인 답변은 같은 요청 키로 다시 조회한다.
+- 커서 페이지는 이미 받은 행의 상태 변경을 알려 주지 않는다. 진행 중인 답변은 구독 이벤트나 작업 조회(`GET /api/chat/jobs/{id}`)로 확인한다.
 - 입력 오류 본문은 아래 공통 형식을 쓴다. 내부 예외, DB 정보, 제공자 응답과 비밀값은 본문에 넣지 않는다.
 
 **오류 본문 예시 — `422 Unprocessable Entity`**
@@ -47,15 +43,14 @@
 | 403 | `csrf_failed` | Origin 또는 CSRF 검증 실패; 재사용의 증거는 아님 |
 | 404 | `not_found` | 자원이 없거나 다른 사용자 소유 |
 | 409 | `request_key_conflict` | 같은 대화·키에 다른 질문 본문 |
-| 409 | `conversation_busy` | 다른 질문의 답변이 진행 중 |
-| 409 | `retry_not_allowed` | 수동 재시도를 허용하지 않는 답변 상태(완료 등); 이력 재조회 |
-| 409 | `retry_not_latest` | 가장 최근 질문이 아니어서 수동 재시도 불가 |
+| 409 | `retry_not_allowed` | 수동 재시도를 허용하지 않는 답변 상태(완료 등) 또는 그 질문의 시도가 대기·실행 중 |
+| 409 | `retry_not_latest` | 같은 대화의 뒤 질문이 실행을 시작해 수동 재시도 불가 |
+| 409 | `queue_full`, `retry_queue_full`, `job_not_cancelable`, `skip_not_allowed` | [대기열 오류](#오류-코드-대기열) |
 | 409 | `refresh_race` | 회전된 refresh가 5초 경합 창에 재제출됨 |
 | 409 | `local_email_exists` | 로컬 가입 이메일이 이미 존재함 |
 | 422 | `validation_error` | 경로·본문·페이지 입력 오류 |
 | 429 | `rate_limited` | 로컬 로그인 실패 제한 초과; `Retry-After` 포함 |
-| 502 | `provider_failed` | 모의 제공자 실패가 저장됨; 이력 재조회 |
-| 504 | `provider_timeout` | 모의 제공자 시간 초과가 중단 상태로 저장됨 |
+| 429 | `attempt_too_soon`, `quota_exceeded` | 채팅 접수 간격·한도; `Retry-After` 포함 |
 | 503 | `temporarily_unavailable` | 저장 전 서비스·DB 실패 |
 
 ## 인증 요청·응답
@@ -234,7 +229,7 @@ Google 트랜잭션 쿠키는 시작과 callback을 모두 포함하는 `Path=/a
 | `updated_at` | UTC 시각 | 항상 있음 |
 | `completed_at` | UTC 시각 또는 `null` | 질문·완료 답변에만 시각 |
 
-첫 질문 전송의 답변은 `attempt_no: 1`이고, 아래 수동 재시도가 만든 답변은 2부터 1씩 오른다. `retry_key`는 화면이 보관하는 값이므로 공개 메시지 형식에 넣지 않는다. 첫 목표의 저장된 `error_code`는 `provider_failed`(실패) 또는 `outcome_unknown`(시간 초과·중단)이다.
+답변 행은 작업이 **실행을 시작할 때** 생기므로 대기 중인 질문에는 답변이 없다. 첫 실행의 답변은 `attempt_no: 1`이고, 아래 수동 재시도가 만든 답변은 2부터 1씩 오른다. `retry_key`는 화면이 보관하는 값이므로 공개 메시지 형식에 넣지 않는다. 첫 목표의 저장된 `error_code`는 `provider_failed`(실패) 또는 `outcome_unknown`(시간 초과·중단)이다.
 
 ### 이력 — `GET /api/conversations/501/messages?limit=20`
 
@@ -276,171 +271,128 @@ Google 트랜잭션 쿠키는 시작과 callback을 모두 포함하는 `Path=/a
 
 비인증 `401`, 없는/타인 대화 `404`, 잘못된 ID·쿼리 `422`다. 다른 사용자 `202`에게 대화 `501`의 존재 여부를 알리지 않는다.
 
-### 질문 전송 — `POST /api/conversations/501/messages`
+## 회원 채팅 대기열 (#53)
 
-요청은 `content`와 `request_key` 문자열만 받는다. 승인된 S10 입력 기준은 다음과 같다.
+질문과 재시도는 **접수만 하고 `202`로 바로 응답**한다. 생성은 서버의 실행기가 회원별 대기열 순서대로 하고, 진행·완료는 회원 단위 구독 `GET /api/chat/events`로 알린다. 응답·이벤트 예시 전문과 시나리오는 [대기열 API 상세](chat-queue-api-draft.md), 승인 정책은 [회원 채팅 정책](chat-policy.md)이다. 아래는 구현된 계약이며 예시와 다르면 이 절이 우선한다.
 
-| 입력 | 기준 |
+| 바뀐 점 | #53 이전 | 지금 |
+| --- | --- | --- |
+| 질문 전송 | 생성까지 기다려 `201` + 완료 답변 | 접수 `202` + `job`·`limits`, `answer`는 `null` |
+| 답변 행 | 접수 때 `pending` 생성 | **실행 시작 때** 생성 |
+| 다른 질문 진행 중 | `409 conversation_busy` | 대기열에 넣음; 새 질문 대기 3개면 `409 queue_full` |
+| 결과 받기 | 응답 본문 또는 요청별 스트림 | `GET /api/chat/events` 구독, `GET /api/chat/jobs/{id}` 조회 |
+| 연결 끊김·로그아웃 | 스트림 생성을 `interrupted`로 중단 | 서버 작업은 계속; 재접속 후 저장 결과 조회 |
+| 재시도 대상 | 가장 최근 **생성된** 질문 | 가장 최근 **실행된** 질문 |
+| 한도 | 없음 | 일일 400·6시간 100 예약·정산, 접수 간격 10초 |
+| `502`·`504`·`/messages/stream` | 사용 | **제거**; 실패는 작업 `state`와 답변 `error_code`로 알림 |
+
+모든 경로는 Bearer access가 필요하다. 비인증 `401`(세션을 열기 전), 없는/타인 대화·질문·작업은 같은 `404`, 입력 오류 `422`, 저장 전 DB 실패 `503`이다. 구독 이벤트에도 본인 작업만 온다.
+
+### 작업 — `job`
+
+질문 1회 또는 재시도 1회의 생성 작업이다. 필드는 `id`, `kind`(`question`·`retry`), `conversation_id`, `question_message_id`, `answer_message_id`(실행 전 `null`), `state`, `position`(`queued`에서만 1부터, 1이 다음 실행), `paused_by_message_id`(`paused`에서만), `error_code`(`failed`·`interrupted`에서만 저장된 답변의 값), `accepted_at`, `started_at`, `finished_at`, `expires_at`(= 접수 + 5분), `allowed_actions`다.
+
+| `state` | 뜻 | 한도 | `allowed_actions` |
+| --- | --- | --- | --- |
+| `queued` | 순서 대기 | 예약 | `["cancel"]` |
+| `paused` | 같은 대화의 앞 질문 실패로 대기 | 예약 | `["cancel"]` |
+| `running` | 생성 중 또는 저장 여부 확인 중; 회원당 1개 | 예약 유지 | `[]` |
+| `completed` | 답변 저장 확인 | 1회 차감 | `[]` |
+| `failed` | 제공자 실패(`provider_failed`) | 환불 | 아래 규칙 |
+| `interrupted` | 30초 초과·재시작 등, 저장 없음 확인(`outcome_unknown`) | 환불 | 아래 규칙 |
+| `canceled` | 실행 전 취소 | 환불 | `[]` |
+| `expired` | 실행 전 5분 경과 | 환불 | `[]` |
+
+`failed`·`interrupted` 작업은 답변이 그 질문의 **최신 시도**이고, 그 질문의 다른 시도가 대기·실행 중이 아니며, 같은 대화의 뒤 질문이 실행을 시작하지 않았을 때 `retry`를 허용한다. 그 대화가 이 작업 때문에 정지 중이면 `skip`도 허용한다(`["retry", "skip"]`). 건너뛴 뒤에는 `["retry"]`, 뒤 질문이 시작되면 `[]`다. 화면은 버튼을 `allowed_actions`로만 정하고, 한도·간격은 `limits`로 비활성화한다.
+
+### 한도 — `limits`
+
+`daily`·`six_hour`는 `limit`, `used`(정산), `reserved`(미종결), `remaining`(= `limit` − `used` − `reserved`), `resets_at`(KST 00:00 / 00·06·12·18시를 UTC로)이다. `queue`는 `running`, `questions_waiting`(`queued`·`paused` 새 질문), `questions_max: 3`, `retries_waiting`(`queued` 재시도), `retries_max: 1`이다. `next_attempt_at`은 직전 접수 + 10초이며 지금 접수할 수 있으면 `null`이다.
+
+### 질문 접수 — `POST /api/conversations/501/messages`
+
+요청과 입력 기준(`content` 최대 4000자·공백만 거부·원문 보존, `request_key` 1~200자, NUL 거부)은 그대로다. 새 접수는 질문 행, 작업, **일일·6시간 예약**을 한 트랜잭션으로 저장한다. 하나라도 거부되면 아무것도 저장하지 않는다. 같은 대화가 앞 질문 실패로 정지 중이면 새 질문은 `paused`다.
+
+`202 Accepted` 본문은 `{question, answer: null, job, limits}`다. **같은 키·같은 본문 재전송**은 새 예약·호출·차감 없이 그 작업을 같은 형식으로 돌려준다. 한도가 0이거나 10초 전이어도 된다. 작업이 끝났으면 `200`, 아니면 `202`이며, 시작된 작업의 `answer`는 그 시도의 답변이다. #53 이전에 저장된 질문의 재전송은 `job: null`과 최신 답변이다.
+
+판정 순서: 인증 → 입력 → 대화 소유권 → 같은 키 재조회 → `409 request_key_conflict` → `409 queue_full` → `429 attempt_too_soon` → `429 quota_exceeded` → 예약·입장.
+
+### 수동 재시도 — `POST /api/conversations/501/messages/9003/retry`
+
+요청은 `{"retry_key": "..."}`(기준은 `request_key`와 같음)다. 질문이 대화에서 **가장 최근 실행된 질문**이고 최신 답변이 `failed`·`interrupted`일 때 허용한다. 뒤 질문이 `queued`·`paused`로만 있으면 막지 않으며, 재시도는 같은 대화의 뒤 질문보다 먼저 실행되지만 다른 작업을 선점하지 않는다. 같은 `retry_key`는 위 판정보다 먼저 그 작업을 돌려준다(종결 `200`, 아니면 `202`).
+
+| 상황 | 결과 |
 | --- | --- |
-| `content` | 공백을 포함해 Unicode 코드 포인트 최대 4000자; 공백만인 질문은 거부하고 원문을 보존 |
-| `request_key` | 1~200자; 보낸 값을 그대로 저장·비교하고 별도 공백 제한을 추가하지 않음; 화면에서는 UUID 사용 권장 |
-| 두 필드의 NUL(`U+0000`) | 저장 전에 `422 validation_error`로 거부 |
+| 허용 | `202`, `{question, answer: null, job(kind: retry), limits}` |
+| 최신 답변이 `completed`이거나 이 질문의 시도가 대기·실행 중 | `409 retry_not_allowed` |
+| 같은 대화의 뒤 질문이 실행을 시작함 | `409 retry_not_latest` |
+| 재시도 대기 1개가 이미 있음 | `409 retry_queue_full` |
+| 10초 간격 전 / 한도 0 | `429 attempt_too_soon` / `429 quota_exceeded` |
 
-`request_key`는 한 대화에서 한 질문을 식별하며 응답을 잃고 재전송할 때 **같은 값과 같은 본문**을 쓴다. 앞뒤 공백 제거 등으로 질문이나 키를 바꿔 비교하지 않는다. 길이 초과·공백만인 질문·빈 키도 `422 validation_error`다.
+재시도가 완료되면 정지가 풀리고 뒤 질문이 `queued`로 돌아간다. 재시도의 실패는 정지를 새 실패 작업으로 옮기고, 취소·만료는 정지를 그대로 둔다.
 
-```json
-{
-  "content": "안녕?",
-  "request_key": "q-demo-1"
-}
-```
+### 건너뛰기 — `POST /api/conversations/501/messages/9003/skip`
 
-모의 제공자 완성 답변을 저장한 신규 요청은 `201 Created`와 다음 본문을 돌려준다. `question`과 `answer`는 위 공개 메시지 형식이다.
+본문은 `{}`다. 정지를 일으킨 실패 질문을 그대로 두고 정지된 뒤 질문을 다시 대기열에 넣는다. 한도를 쓰지 않는다. `200`, `{skipped_message_id, resumed_jobs, limits}`다. 그 질문이 정지를 일으킨 질문이 아니거나, 이미 건너뛰었거나, 그 질문의 재시도가 대기·실행 중이면 `409 skip_not_allowed`다(대기 중인 재시도는 먼저 취소한다). 질문이 아닌 ID는 `404`다.
 
-```json
-{
-  "question": {
-    "id": "9001",
-    "role": "user",
-    "status": "completed",
-    "content": "안녕?",
-    "request_key": "q-demo-1",
-    "reply_to_message_id": null,
-    "attempt_no": null,
-    "error_code": null,
-    "created_at": "2026-01-02T03:06:00Z",
-    "updated_at": "2026-01-02T03:06:00Z",
-    "completed_at": "2026-01-02T03:06:00Z"
-  },
-  "answer": {
-    "id": "9002",
-    "role": "assistant",
-    "status": "completed",
-    "content": "안녕하세요.",
-    "request_key": null,
-    "reply_to_message_id": "9001",
-    "attempt_no": 1,
-    "error_code": null,
-    "created_at": "2026-01-02T03:06:00Z",
-    "updated_at": "2026-01-02T03:07:00Z",
-    "completed_at": "2026-01-02T03:07:00Z"
-  }
-}
-```
+### 내 작업 조회 — `GET /api/chat/jobs`, `GET /api/chat/jobs/7004`
 
-같은 키·같은 본문의 재전송은 새 행이나 제공자 호출 없이 기존 질문·답변 쌍을 반환한다.
+- 쿼리 없음: 종결 전(`queued`, `paused`, `running`) 작업 전체, ID 오름차순.
+- `conversation_id=501`: 그 대화의 작업 전체(종결 포함), ID 내림차순, `limit`·`before_id` 페이지.
 
-- 완료 상태: `200 OK`와 같은 쌍을 반환한다.
-- 진행 상태(아래 회복 기준에 해당하지 않는 경우): `202 Accepted`와 같은 쌍을 반환하되 `answer.status`는 `pending`, `answer.content`와 `answer.completed_at`은 `null`이다. 이는 기존 작업의 조회이며 새 제공자 호출을 시작하지 않는다.
-- 실패·중단 상태: `200 OK`와 기존 쌍을 반환한다. `answer.status`, `answer.error_code`, `answer.content: null`로 실패를 구분한다.
+본문은 `{items: [job...], next_cursor, limits, server_time}`이다. `server_time`은 응답을 만든 DB 시각이며 이어서 여는 구독의 `since`로 쓴다. 작업 하나 조회는 `{job, question, answer}`이며, 끝난 작업의 `answer`는 저장된 최종 답변이다.
 
-화면은 전송 전에 `request_key`와 본문을 보관하고, 연결이 끊기거나 `pending`이면 **같은 값으로 이 경로를 다시 호출**해 결과를 확인한다. 이미 받은 메시지 ID 뒤의 `after_id` 페이지만 조회하면 같은 답변 행의 상태 변경을 놓친다.
+### 실행 전 취소 — `POST /api/chat/jobs/7003/cancel`
 
-제공자 호출의 제한 시간은 **30초**다. 실제 제공자 어댑터가 이 시간을 강제해야 하며, timeout 인자를 전달한 것만으로 보장했다고 판단하지 않는다.
+본문은 `{}`다. `queued`·`paused`만 취소하고 예약을 환불한다. `200`, `{job, limits}`다. 이미 `canceled`면 같은 결과를 `200`으로 돌려준다. `running`과 다른 종결 상태는 `409 job_not_cancelable`이다. 실행 시작·만료와 겹치면 먼저 반영된 하나만 결과가 된다. 실행 중 취소는 없다.
 
-오래된 `pending`의 회복 기준:
+### 한도 조회 — `GET /api/chat/limits`
 
-- 같은 대화의 다음 메시지 `POST`에서 **같은 키 재전송을 포함해** 생성 시각부터 **60초를 초과**했는지 확인한다. 정확히 60초이면 아직 회복 대상이 아니다.
-- 아직 `pending`인 답변만 조건부로 `interrupted`, `error_code: outcome_unknown`으로 종결한다. `content`와 `completed_at`은 `null`로 유지한다.
-- 회복을 기존 결과 반환 전에 적용한다. 같은 키·같은 본문은 중단된 기존 쌍을 `200`으로 반환하고, 새 키는 기존 요청 충돌·대화 진행 상태 판정에 따라 처리한다.
-- 늦게 돌아온 제공자 결과는 이미 종결된 답변을 덮어쓰지 못한다.
-- 별도 예약 작업은 두지 않으며 `GET` 조회만으로는 회복하지 않는다.
+`200`과 `limits` 객체만 돌려준다.
 
-신규 요청의 실패 상태는 다음과 같다.
+### 구독 — `GET /api/chat/events?since=2026-10-20T03:00:52Z`
 
-- 같은 키에 다른 본문: `409 request_key_conflict`.
-- 다른 질문이 진행 중: `409 conversation_busy`.
-- 비인증: `401`. 없는 대화 또는 타인 대화: `404`. 빈 질문·키 또는 잘못된 본문: `422`.
-- 모의 제공자 실패를 `failed`로 저장: `502 provider_failed`.
-- 시간 초과·결과 불명을 `interrupted`로 저장: `504 provider_timeout`.
-
-실패·중단 답변의 `content`는 `null`이고 완료 답변으로 표시하거나 다음 AI 문맥에 넣지 않는다. S11의 승인된 [GPT 기준](ai.md)에 따라 과거 완성 질문+답변 쌍 뒤 현재 질문을 추가한다. 실패·중단·진행 쌍은 AI 문맥에서 제외하고 DB·UI 이력은 유지한다.
-
-완성 쌍 필터링은 S11에서 `list_context_messages()`와 관련 검사에 구현되어 있다. 실제 GPT 어댑터는 격리 시험에서만 연결되며 일반 앱은 모의 제공자를 유지한다. 연결만 끊긴 경우 새 키로 제출하지 않는다. 같은 키 재전송은 실패·중단 상태도 추가 호출 없이 기존 쌍으로 보여 준다. 새 답변을 받으려면 아래 [수동 재시도](#수동-재시도--post-apiconversations501messages9001retry)를 쓴다.
-
-**제공자 실패 예시 — `502 Bad Gateway`**
-
-```json
-{
-  "error": {
-    "code": "provider_failed",
-    "message": "답변을 만들지 못했습니다. 대화 기록을 확인해 주세요.",
-    "fields": {},
-    "trace_id": "trace-demo-003"
-  }
-}
-```
-
-### 질문 전송 스트리밍 — `POST /api/conversations/501/messages/stream`
-
-S12(#13)의 경로다. 요청 본문, 입력 기준, 인증, 같은 키 처리와 회복 기준은 위 [질문 전송](#질문-전송--post-apiconversations501messages)과 같다. 다른 점은 새 질문의 답변을 만들어지는 대로 `text/event-stream`(SSE)으로 보내는 것뿐이다. 위 JSON 경로는 그대로 유지한다.
-
-**스트림 전에 끝나는 응답은 JSON이다.** 스트림은 새 질문을 저장한 뒤에만 시작한다.
-
-- 비인증 `401`, 없는/타인 대화 `404`, 같은 키·다른 본문과 다른 질문 진행 중 `409`, 입력 오류 `422`, 저장 전 DB 실패 `503`은 위 경로와 같은 상태 코드와 오류 본문이다.
-- **이미 저장된 키·같은 본문은 스트림 없이 JSON으로 돌려준다.** 진행 중이면 `202`, 완료·실패·중단이면 `200`이며 본문은 위 경로의 재전송과 같은 `{question, answer}`다. 제공자를 다시 호출하지 않는다. 화면은 응답의 `Content-Type`으로 스트림과 JSON을 구분한다.
-
-**새 질문은 `200 OK`와 다음 이벤트를 차례로 보낸다.** 각 이벤트는 `event: <이름>`과 한 줄의 `data: <JSON>`이다.
+회원 단위 SSE(`text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`)다. `Authorization` 헤더가 필요하므로 화면은 `fetch` 스트림으로 읽는다. `since`는 시간대가 있는 ISO 시각이어야 하며 없으면 `422`다.
 
 | 이벤트 | 보내는 시점 | `data` |
 | --- | --- | --- |
-| `start` | 질문과 `pending` 답변을 커밋한 직후 | `{question, answer}`; `answer.status`는 `pending` |
-| `delta` | 제공자가 조각을 보낼 때마다 | `{"text": "<조각>"}` |
-| `done` | 답변을 `completed`로 커밋한 **뒤** | `{question, answer}`; 위 경로의 `201` 본문과 같은 값 |
-| `error` | 실패·시간 초과·저장 실패 | 공통 오류 본문; `error.code`는 아래 표 |
+| `snapshot` | 연결 직후 1회, 다른 이벤트보다 먼저 | `{items: [{job, question, answer}...], limits, server_time}` |
+| `job` | 작업 상태·순번·`allowed_actions`가 바뀐 변경이 **커밋된 뒤** | `{job, question, answer}` |
+| `delta` | 실행 중 답변 조각 | `{job_id, text}` |
+| `limits` | 예약·정산·환불 뒤, 한도 기간이 초기화된 뒤 | `limits` |
 
-스트림은 `done` 또는 `error` 하나로 끝난다. 상태 코드를 이미 보냈으므로 위 경로가 상태 코드로 알리는 실패를 `error` 이벤트로 알린다.
+- `snapshot.items`: 종결 전 작업 전체. `since`가 있으면 그 시각(서버가 30초 여유를 둠) 이후 끝난 작업과, 같은 대화의 변경으로 버튼이 바뀌었을 수 있는 실패 작업도 넣는다. 같은 작업이 겹쳐 오면 `job.id`로 덮어쓴다.
+- 한 변경이 다른 작업의 버튼·순번을 바꾸면 그 작업들의 `job` 이벤트도 보낸다. 한 회원의 이벤트는 읽은 순서대로 도착한다.
+- `delta`는 저장하지 않는 임시 출력이다. `completed` `job` 이벤트의 `answer.content`로 교체하고 `failed`·`interrupted`면 지운다. **놓친 `delta`는 다시 보내지 않는다.**
+- 15초마다 `: ping` 주석 줄을 보낸다. 너무 밀린 연결은 서버가 닫으며, 화면은 마지막 `server_time`을 `since`로 다시 연결한다.
+- **연결 끊김·탭 닫기·로그아웃은 작업을 취소하지 않는다.** 로그아웃은 기존 access·refresh 규칙을 바꾸지 않는다. 화면은 로그아웃 때 대화·임시 출력·구독을 지운다.
+- 구독은 이 서버 프로세스 안에서만 실시간으로 전달된다. 여러 프로세스로 배포하면 다른 프로세스의 변경은 재연결 `snapshot`으로 받는다.
 
-| 끝난 상태 | 저장 | `error.code` (위 경로의 상태) |
-| --- | --- | --- |
-| 제공자 실패, 빈 답변 | `failed` / `provider_failed` | `provider_failed` (`502`) |
-| 30초 초과, 결과 불명 | `interrupted` / `outcome_unknown` | `provider_timeout` (`504`) |
-| 답변 저장 실패 | 저장 안 됨, `pending` 유지 | `temporarily_unavailable` (`503`) |
+### 서버 보장
 
-```text
-event: start
-data: {"question": {"id": "9001", ...}, "answer": {"id": "9002", "status": "pending", ...}}
-
-event: delta
-data: {"text": "안녕"}
-
-event: delta
-data: {"text": "하세요."}
-
-event: done
-data: {"question": {"id": "9001", ...}, "answer": {"id": "9002", "status": "completed", "content": "안녕하세요.", ...}}
-```
-
-**`delta`는 임시 출력이다.** 조각은 DB에 쓰지 않는다. 제공자가 끝까지 보낸 뒤 이어 붙인 전체 답변만 `completed`로 저장하고, 그 커밋 뒤에만 `done`을 보낸다. `done`을 받지 못한 화면은 받은 조각을 완료 답변으로 표시하지 않는다. 실패·중단 답변의 `content`는 `null`이며 받은 조각은 DB 답변이나 다음 AI 문맥에 들어가지 않는다.
-
-**30초 제한은 스트림 전체에 적용한다.** 제공자 호출부터 마지막 조각과 끝 알림까지가 30초 안이어야 한다. 서버가 이 기한을 직접 지킨다. 조각 사이에서 제공자가 멈추면 기한에 `interrupted` / `outcome_unknown`으로 저장하고 `provider_timeout` 오류를 보내며, 기한 뒤에 도착한 조각과 끝 알림은 쓰지 않는다.
-
-**연결이 끊기면 생성을 멈추고 `interrupted` / `outcome_unknown`으로 저장한다.** `start` 직후 첫 조각 전, 조각 사이, 마지막 조각 뒤 제공자의 종료를 기다리는 중 모두 같다. 끊긴 뒤 제공자가 끝나도 `completed`로 저장하지 않는다. 이 저장이 실패한 경우에만 답변이 `pending`으로 남고, 위 60초 회복 기준이 닫는다. 화면은 끊긴 뒤 **같은 `request_key`와 본문으로 다시 요청**해 저장된 상태를 JSON으로 확인하며, 새 키로 다시 묻지 않는다. 다시 요청할 경로는 이 경로와 위 JSON 경로 중 어느 쪽이든 같은 결과다.
-
-응답에는 `Cache-Control: no-cache`와 `X-Accel-Buffering: no`를 붙인다. 프록시의 버퍼링·시간 제한 설정은 배포 구현에서 확인한다.
-
-### 수동 재시도 — `POST /api/conversations/501/messages/9001/retry`
-
-S13 / #14의 PM 결정 D4를 따른다. 경로의 `9001`은 다시 답변받을 질문 ID다. 요청은 `retry_key` 문자열만 받으며 `request_key`와 같은 기준(1~200자, NUL 거부, 원문 비교, UUID 권장)이다. 화면은 재시도 버튼을 누를 때 새 `retry_key`를 만들어 보관하고, 응답을 잃으면 **같은 값으로** 다시 호출한다.
-
-```json
-{
-  "retry_key": "r-demo-1"
-}
-```
-
-| 질문의 최신 답변 | 결과 |
+| 보장 | 동작 |
 | --- | --- |
-| `failed`, `interrupted` (가장 최근 질문) | 새 시도(`attempt_no` + 1)를 저장하고 제공자를 호출한다. 완료면 `201`과 `{question, answer}`이며 실패·시간 초과는 질문 전송과 같은 `502 provider_failed`·`504 provider_timeout`이다. |
-| `completed` | `409 retry_not_allowed`. 대화 기록을 다시 조회하도록 안내한다. |
-| `pending` | `409 conversation_busy`. 같은 키 재전송이나 이력 조회로 결과를 확인한다. 생성 후 60초를 초과했으면 먼저 회복해 `interrupted`로 닫은 뒤 위 첫 행을 따른다. |
-| 뒤에 다른 질문이 있는 이전 질문 | `409 retry_not_latest`. 같은 내용을 새 질문으로 보내도록 안내한다. |
+| 원자적 입장 | 질문·작업·두 기간 예약을 한 트랜잭션으로 저장. 회원 행 → 대화 → 한도 행 순으로 잠가 동시 탭·기기에서도 대기 3개·재시도 1개·10초 간격을 넘지 않는다. |
+| 실행 시 문맥 | 실행 시작 때 그 질문 이전의 `completed` 질문+답변 쌍을 순서대로 읽고 현재 질문을 한 번 붙인다. 실패·중단·진행 중 답변과 `delta`는 넣지 않는다. |
+| 저장 뒤 완료 알림 | 답변 저장과 정산이 커밋된 뒤에만 `completed` 이벤트를 보낸다. 커밋이 실패하면 알리지 않고 작업은 `running`으로 남아 복구가 종결한다. |
+| 한 번만 정산 | 작업마다 차감 또는 환불은 정확히 한 번이다. 결과 불명 동안 예약을 유지한다. 초기화를 넘긴 환불은 새 기간 잔량을 늘리지 않는다. |
+| 자동 재시도 없음 | 실패·중단 뒤나 재시작 복구에서 제공자를 다시 부르지 않는다. 기한 + 15초가 지난 `running`은 저장된 완료 답변이 있으면 완료, 아니면 `interrupted`로 종결한다. |
+| 늦은 결과 무시 | 결과는 시작 때 발급한 실행 토큰이 일치하는 `running` 작업에만 저장한다. 종결 상태·새 시도·완료 답변은 덮어쓰지 않는다. |
+| 재시작 | 서버가 다시 뜨면 실행기가 만료 전 대기 작업을 이어서 실행한다. #53 이전 동기 API가 남긴 작업 없는 `pending` 답변은 그 대화의 다음 실행 시작 때 `interrupted`로 닫는다. |
 
-같은 질문에 이미 쓴 `retry_key`는 위 판정보다 먼저 확인하며, 새 행이나 제공자 호출 없이 그 시도를 반환한다. 종결이면 `200`, 진행 중이면 `202`다. 그 뒤 다른 질문이 생겼어도 같은 결과다.
+### 오류 코드 (대기열)
 
-새 시도의 AI 문맥은 질문 전송과 같은 규칙으로 그 질문 이전의 완료 메시지 뒤에 그 질문을 붙인다. 이전 실패·중단 시도는 이력에 남고 문맥에는 들어가지 않는다. 늦게 도착한 이전 시도의 결과는 `pending`이 아닌 행을 바꾸지 못하므로 새 시도나 완료 답변을 덮어쓰지 않는다.
+| 상태 | `error.code` | 뜻 |
+| --- | --- | --- |
+| 409 | `queue_full` | 새 질문 대기 3개 |
+| 409 | `retry_queue_full` | 재시도 대기 1개 |
+| 409 | `job_not_cancelable` | 실행 중이거나 이미 끝난 작업 |
+| 409 | `skip_not_allowed` | 건너뛸 수 있는 실패 질문이 아니거나 그 재시도가 대기·실행 중 |
+| 409 | `retry_not_latest` | 같은 대화의 뒤 질문이 이미 실행을 시작함 |
+| 429 | `attempt_too_soon` | 직전 접수 후 10초 전; `Retry-After`는 `next_attempt_at`까지 남은 초 |
+| 429 | `quota_exceeded` | 일일 또는 6시간 잔량 0; `Retry-After`는 잔량 0인 기간이 모두 초기화될 때까지의 초 |
 
-비인증 `401`, 없는/타인 대화와 그 대화의 질문이 아닌 ID(답변 ID 포함)는 `404`, 잘못된 ID·본문은 `422`다. 현재 구현은 질문당 시도 횟수를 제한하지 않는다. 승인된 대기열 목표도 수동 시도 횟수를 제한하지 않으며, 새 시도의 한도 예약·10초 간격은 후속 구현이다.
+`Retry-After`는 1 이상의 정수 초(올림)이며 CORS `Access-Control-Expose-Headers`에 포함된다.
 
 ## 의존 관계와 인수 확인
 
@@ -454,7 +406,9 @@ S13 / #14의 PM 결정 D4를 따른다. 경로의 `9001`은 다시 답변받을 
 - [ ] `bigint` ID를 문자열로 유지하고 목록 페이지에 누락·중복이 없다.
 - [ ] 질문 4000자 경계와 초과, 공백만인 질문, 키 1~200자 경계와 초과, 두 필드의 NUL 거부를 확인한다. 원문은 보존하고 같은 키·다른 본문은 409, 같은 키·같은 본문은 기존 결과다.
 - [ ] 성공 답변은 저장 후 재조회되며 실패·중단 답변은 완료나 다음 문맥으로 취급하지 않는다.
-- [ ] 모의 제공자 호출 중 DB 트랜잭션을 열어 두지 않고 30초 제한을 실제 어댑터가 강제한다. 생성 후 60초를 초과한 `pending`은 같은 키 재전송을 포함한 다음 메시지 POST에서 회복하고, GET만으로는 회복하지 않으며 늦은 결과가 덮어쓰지 못한다.
-- [ ] 스트리밍은 `completed` 커밋 뒤에만 `done`을 보내고, 저장 실패 시 `done`을 보내지 않는다. 첫 조각 전·조각 사이·종료 대기 중의 연결 중단과 30초 초과는 `interrupted`로 저장되고 같은 키 재요청으로 확인되며, 다음 질문을 막지 않고 조각이 다음 문맥에 들어가지 않는다.
+- [ ] 제공자 호출 중 DB 트랜잭션·잠금을 열어 두지 않고 30초 기한을 실행기가 강제한다. 기한 + 15초가 지난 `running`은 복구가 종결하고 늦은 결과가 덮어쓰지 못한다.
+- [ ] 접수와 두 기간 예약이 함께 저장되거나 함께 거부되고, 같은 키는 한도 0·10초 전에도 기존 작업을 돌려준다.
+- [ ] 실패는 같은 대화의 뒤 질문만 정지하고, 재시도 성공이나 건너뛰기만 재개한다. 뒤 질문이 시작되면 앞 질문 재시도는 `409 retry_not_latest`다.
+- [ ] `completed` 이벤트는 저장·정산 커밋 뒤에만 오고, 작업마다 차감 또는 환불은 한 번이다. 연결 끊김·로그아웃은 작업을 멈추지 않고 재연결 `snapshot`이 저장 결과를 준다.
 
-백엔드 라우트·ORM 모델·인증/채팅 검사는 존재하지만 실제 화면 가입→채팅 E2E나 운영 준비 완료를 뜻하지 않는다. 실제 GPT 어댑터·격리 시험 경계는 [S11 기준](ai.md)을 따른다. 스트리밍(PR #44)과 현재 D4 재시도(PR #51)는 병합됐다. 수동 시도 횟수 무제한과 회원 한도 값은 [회원 채팅 정책](chat-policy.md)에 승인됐다. 대기열·예약 한도와의 결합 및 배포는 후속 구현·검증이다.
+백엔드 라우트·ORM 모델·인증/채팅 검사는 존재하지만 실제 화면 가입→채팅 E2E나 운영 준비 완료를 뜻하지 않는다. 실제 GPT 어댑터·격리 시험 경계는 [S11 기준](ai.md)을 따른다. 대기열 실행기는 제공자의 `stream`을 쓰는데 실제 Codyssey 어댑터에는 아직 `complete`만 있으므로, 공개 서비스는 모의 제공자를 유지하고 실제 AI 연결은 별도 작업에서 `stream`을 더해 검증한다. 화면의 대기열·구독 실제 연동(#20, #21)과 독립 검증(#54)이 뒤따른다.
