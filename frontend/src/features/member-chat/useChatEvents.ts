@@ -81,6 +81,10 @@ export function useChatEvents(options: UseChatEventsOptions): ChatEventsView {
   const cooldownRef = useRef(new Set<string>())
   const timersRef = useRef(new Set<ReturnType<typeof setTimeout>>())
   const lastServerTimeRef = useRef<string | null>(null)
+  // 구독 이벤트를 받을 때마다 올라가는 번호와, 작업별로 마지막 이벤트를 받은 번호.
+  // 작업 조회를 시작한 뒤 같은 작업의 이벤트가 먼저 오면, 늦게 온 조회 결과는 오래된 상태라 버린다.
+  const eventSeqRef = useRef(0)
+  const lastEventSeqRef = useRef(new Map<string, number>())
   const [resolveTick, bumpResolveTick] = useReducer((count: number) => count + 1, 0)
 
   useEffect(() => {
@@ -90,6 +94,7 @@ export function useChatEvents(options: UseChatEventsOptions): ChatEventsView {
     attemptsRef.current.clear()
     cooldownRef.current.clear()
     lastServerTimeRef.current = null
+    lastEventSeqRef.current.clear()
     for (const timer of timersRef.current) clearTimeout(timer)
     timersRef.current.clear()
     dispatch({ type: 'reset' })
@@ -125,6 +130,14 @@ export function useChatEvents(options: UseChatEventsOptions): ChatEventsView {
                 if (signal.aborted) return
 
                 if (event.type === 'snapshot') sinceRef.current = event.data.server_time
+
+                // 이 이벤트가 바꾼 작업을 기록해 둔다. 진행 중이던 작업 조회 결과가 이보다 늦게 오면 버린다.
+                const seq = ++eventSeqRef.current
+                if (event.type === 'snapshot') {
+                  for (const item of event.data.items) lastEventSeqRef.current.set(item.job.id, seq)
+                } else if (event.type === 'job') {
+                  lastEventSeqRef.current.set(event.data.job.id, seq)
+                }
 
                 everOpened = true
                 openedAt ??= Date.now()
@@ -191,11 +204,15 @@ export function useChatEvents(options: UseChatEventsOptions): ChatEventsView {
 
       attemptsRef.current.set(jobId, attempts + 1)
       resolvingRef.current.add(jobId)
+      const startedAt = eventSeqRef.current
 
       resolveJob(accessToken, jobId)
         .then((envelope) => {
-          if (epochRef.current === epoch && envelope)
-            dispatch({ type: 'event', event: { type: 'job', data: envelope } })
+          if (epochRef.current !== epoch || !envelope) return
+          // 조회하는 동안 같은 작업의 구독 이벤트가 왔다면 그쪽이 더 최신이다.
+          if ((lastEventSeqRef.current.get(jobId) ?? 0) > startedAt) return
+
+          dispatch({ type: 'event', event: { type: 'job', data: envelope } })
         })
         .catch(() => {
           // 실패는 아래에서 잠시 쉰 뒤 다시 조회한다.
@@ -221,12 +238,17 @@ export function useChatEvents(options: UseChatEventsOptions): ChatEventsView {
     if (!accessToken) return
 
     const epoch = epochRef.current
+    const startedAt = eventSeqRef.current
 
     try {
       const envelope = await resolveJob(accessToken, jobId)
 
       // 그 사이 사용자가 바뀌었다면 이전 사용자의 응답은 버린다.
-      if (envelope && epochRef.current === epoch) dispatch({ type: 'event', event: { type: 'job', data: envelope } })
+      if (!envelope || epochRef.current !== epoch) return
+      // 조회하는 동안 같은 작업의 구독 이벤트가 왔다면 그쪽이 더 최신이라 이 응답은 버린다.
+      if ((lastEventSeqRef.current.get(jobId) ?? 0) > startedAt) return
+
+      dispatch({ type: 'event', event: { type: 'job', data: envelope } })
     } catch {
       // 다시 읽지 못해도 구독 이벤트와 재연결 snapshot이 상태를 맞춰 준다.
     }

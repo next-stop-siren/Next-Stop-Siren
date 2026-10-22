@@ -11,15 +11,15 @@ afterEach(() => {
   cleanup()
 })
 
-function setup(overrides: Partial<UseChatEventsOptions> = {}) {
-  const server = createMockChatServer()
+function setup(overrides: Partial<UseChatEventsOptions> & { server?: ReturnType<typeof createMockChatServer> } = {}) {
+  const { server = createMockChatServer(), ...hookOverrides } = overrides
   const open = vi.fn<OpenChatEvents>((options) => server.open(options))
   const initialProps: UseChatEventsOptions = {
     userId: 'u1',
     getAccessToken: () => 'token-1',
     open,
     reconnectDelayMs: () => 0,
-    ...overrides,
+    ...hookOverrides,
   }
   const hook = renderHook((props: UseChatEventsOptions) => useChatEvents(props), { initialProps })
 
@@ -544,4 +544,117 @@ test('refreshJob은 토큰이 없으면 조회하지 않는다', async () => {
   })
 
   expect(resolveJob).not.toHaveBeenCalled()
+})
+
+test('refreshJob: 조회하는 동안 같은 작업의 구독 이벤트가 먼저 오면, 늦게 온 조회 결과로 버튼을 되돌리지 않는다', async () => {
+  const server = createMockChatServer()
+  let staleEnvelope: ReturnType<typeof server.getEnvelope> = null
+  let release: () => void = () => undefined
+  // 조회는 재시도 전의 상태(재시도·건너뛰기 버튼)를 담아 늦게 돌아온다.
+  const resolveJob = vi.fn<NonNullable<UseChatEventsOptions['resolveJob']>>(
+    () =>
+      new Promise((resolve) => {
+        release = () => resolve(staleEnvelope)
+      }),
+  )
+  const { result } = setup({ server, resolveJob })
+  await waitFor(() => expect(result.current.connection).toBe('open'))
+
+  let failed = ''
+  act(() => {
+    failed = startRunning(server)
+    server.fail(failed)
+    server.advance(10)
+  })
+  staleEnvelope = server.getEnvelope(failed)
+  expect(result.current.jobs[failed]?.job.allowed_actions).toEqual(['retry', 'skip'])
+
+  let pending: Promise<void> = Promise.resolve()
+  act(() => {
+    pending = result.current.refreshJob(failed)
+  })
+
+  // 조회 응답이 오기 전에 구독으로 재시도 이벤트가 먼저 도착한다. 원래 실패 작업의 버튼은 사라진다.
+  act(() => {
+    server.retry(failed, 'key-1')
+  })
+  expect(result.current.jobs[failed]?.job.allowed_actions).toEqual([])
+
+  await act(async () => {
+    release()
+    await pending
+  })
+
+  expect(result.current.jobs[failed]?.job.allowed_actions).toEqual([])
+})
+
+test('refreshJob: 조회하는 동안 그 작업의 이벤트가 없었다면 조회 결과를 반영한다', async () => {
+  const { server, result, jobId } = await setupDisconnectedWithFailure()
+
+  act(() => {
+    server.skip(jobId)
+  })
+  await act(async () => {
+    await result.current.refreshJob(jobId)
+  })
+
+  expect(result.current.jobs[jobId]?.job.allowed_actions).toEqual(['retry'])
+})
+
+test('snapshot에서 빠진 작업을 조회하는 동안 그 작업의 새 이벤트가 오면, 늦게 온 조회 결과로 버튼을 되돌리지 않는다', async () => {
+  const running = makeEnvelope({
+    job: { id: '7001', state: 'running', position: null, allowed_actions: [] },
+    answer: { id: '9002', status: 'pending' },
+  })
+  // 조회 결과는 재시도 전 상태(재시도·건너뛰기 버튼)이고, 그 사이 구독으로 더 최신인 같은 상태의 이벤트가 먼저 도착한다.
+  const failedStale = makeEnvelope({
+    job: { id: '7001', state: 'failed', position: null, allowed_actions: ['retry', 'skip'] },
+    answer: { id: '9002', status: 'failed', error_code: 'provider_failed' },
+  })
+  const failedNewer = makeEnvelope({
+    job: { id: '7001', state: 'failed', position: null, allowed_actions: [] },
+    answer: { id: '9002', status: 'failed', error_code: 'provider_failed' },
+  })
+  let release: () => void = () => undefined
+  const resolveJob = vi.fn<NonNullable<UseChatEventsOptions['resolveJob']>>(
+    () =>
+      new Promise((resolve) => {
+        release = () => resolve(failedStale)
+      }),
+  )
+
+  let call = 0
+  let pushEvent: Parameters<OpenChatEvents>[0]['onEvent'] = () => undefined
+  const open: OpenChatEvents = async ({ onEvent, signal }) => {
+    call += 1
+    pushEvent = onEvent
+    onEvent({
+      type: 'snapshot',
+      data: { items: call === 1 ? [running] : [], limits: makeLimits(), server_time: `2026-10-20T03:00:0${call}Z` },
+    })
+
+    if (call === 1) return
+
+    await new Promise<void>((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
+    })
+  }
+
+  const { result } = renderHook(() =>
+    useChatEvents({ userId: 'u1', getAccessToken: () => 'token-1', open, resolveJob, reconnectDelayMs: () => 0 }),
+  )
+
+  await waitFor(() => expect(resolveJob).toHaveBeenCalledTimes(1))
+
+  act(() => {
+    pushEvent({ type: 'job', data: failedNewer })
+  })
+  expect(result.current.jobs['7001']?.job.allowed_actions).toEqual([])
+
+  await act(async () => {
+    release()
+    await Promise.resolve()
+  })
+
+  expect(result.current.jobs['7001']?.job.allowed_actions).toEqual([])
 })

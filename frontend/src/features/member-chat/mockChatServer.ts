@@ -10,6 +10,8 @@
  * 재시도·건너뛰기·일시 정지(#21)
  * - 같은 대화의 앞 질문이 실패·중단하면 뒤 질문은 `paused`가 되고, 앞 질문의 재시도가 성공하거나 건너뛰면 다시 `queued`가 된다.
  * - `allowed_actions`는 문서의 버튼 표대로 서버가 정한다. 바뀌면 영향받는 모든 작업의 `job` 이벤트를 함께 보낸다.
+ * - 건너뛰기는 그 시점의 실패 하나에 대한 결정이다. 재시도가 다시 실패하면 뒤 질문을 다시 정지시키고 건너뛰기도 다시 허용한다.
+ * - 같은 대화의 재시도는 그 대화의 뒤 질문보다 먼저 실행한다(docs/04-reference/chat-policy.md). 다른 대화의 작업은 앞지르지 않는다.
  * - `retry`는 새 작업(kind: retry)을 만든다. 같은 `retry_key`로 다시 보내면 새로 예약하지 않고 기존 작업을 돌려준다.
  * - 시간은 논리 시계다. `advance`로만 흐르고, 10초 간격과 5분 만료는 이 시계를 따른다.
  */
@@ -90,8 +92,11 @@ export function createMockChatServer(): MockChatServer {
   const subscribers = new Set<Subscriber>()
   /** retry_key → 그 키로 만든 재시도 작업과 원래 실패 작업 */
   const retryKeys = new Map<string, { original: string; retry: string }>()
-  /** 건너뛴 질문(question_message_id) */
-  const skipped = new Set<string>()
+  /**
+   * 건너뛴 실패 시도(job.id). 건너뛰기는 그 시점의 실패 하나에 대한 결정이다. 같은 질문의 재시도가 다시 실패하면
+   * 새 실패 시도는 이 기록에 없으므로 다시 뒤 질문을 멈춰 세우고 건너뛰기도 다시 허용된다.
+   */
+  const skippedFailures = new Set<string>()
 
   const iso = (at = tick) => new Date(BASE_MS + at * 1000).toISOString()
   const nowMs = () => BASE_MS + tick * 1000
@@ -124,15 +129,33 @@ export function createMockChatServer(): MockChatServer {
 
   /**
    * 실패해서 뒤 질문을 멈춰 세우는 질문인가. 재시도의 실패·취소·만료는 정지를 풀지 않고,
-   * 재시도 성공이나 건너뛰기만 정지를 푼다.
+   * 재시도 성공이나 가장 최근 실패를 건너뛰는 것만 정지를 푼다.
    */
   function isStalled(questionMessageId: string): boolean {
-    if (skipped.has(questionMessageId)) return false
+    if (attemptsOf(questionMessageId).some((attempt) => attempt.job.state === 'completed')) return false
 
-    const attempts = attemptsOf(questionMessageId)
-    if (attempts.some((attempt) => attempt.job.state === 'completed')) return false
+    const failure = latestFailure(questionMessageId)
+    return failure !== null && !skippedFailures.has(failure.job.id)
+  }
 
-    return attempts.some(isFailure)
+  /** 같은 대화에서 이 질문이 몇 번째로 접수됐는가 */
+  function questionIndex(job: ChatJob): number {
+    return questionJobsOf(job.conversation_id).findIndex(
+      (envelope) => envelope.job.question_message_id === job.question_message_id,
+    )
+  }
+
+  /** 이 질문보다 앞선 질문의 재시도가 같은 대화에서 대기 중인가. 재시도가 뒤 질문보다 먼저 실행된다. */
+  function hasQueuedRetryAhead(job: ChatJob): boolean {
+    const index = questionIndex(job)
+
+    return envelopes().some(
+      (envelope) =>
+        envelope.job.kind === 'retry' &&
+        envelope.job.state === 'queued' &&
+        envelope.job.conversation_id === job.conversation_id &&
+        questionIndex(envelope.job) < index,
+    )
   }
 
   /** 같은 대화에서 이 질문보다 뒤에 접수된 질문이 이미 실행을 시작했는가 */
@@ -165,33 +188,66 @@ export function createMockChatServer(): MockChatServer {
     if (latestFailure(job.question_message_id)?.job.id !== job.id) return []
     if (laterQuestionStarted(job)) return []
 
-    return skipped.has(job.question_message_id) ? ['retry'] : ['retry', 'skip']
+    return skippedFailures.has(job.id) ? ['retry'] : ['retry', 'skip']
   }
 
-  /** 상태에서 정해지는 값(대기 순번, 일시 정지 여부, 버튼)을 다시 계산한다. */
-  function derive() {
-    let position = 0
+  function applyPatch(id: string, patch: Partial<ChatJob>) {
+    const record = records.get(id)
+    if (!record) return
 
-    for (const [id, record] of records) {
-      const { job } = record.envelope
-      let patch: Partial<ChatJob> = {}
+    const { job } = record.envelope
+    const changed = Object.entries(patch).some(([key, value]) => !sameValue(job[key as keyof ChatJob], value))
+    if (changed) records.set(id, { ...record, envelope: { ...record.envelope, job: { ...job, ...patch } } })
+  }
+
+  /**
+   * 대기 순서. 기본은 먼저 접수한 순서(FIFO)이고, 같은 대화의 실패 질문 재시도만 그 대화의 뒤 질문보다 앞선다.
+   * 다른 대화의 작업이나 이미 실행 중인 작업을 앞지르지는 않는다.
+   */
+  function queueOrder(queued: ChatJobEnvelope[]): ChatJobEnvelope[] {
+    const sortKey = (envelope: ChatJobEnvelope) => {
+      const id = Number(envelope.job.id)
+      if (envelope.job.kind !== 'retry') return id
+
+      const origin = questionIndex(envelope.job)
+      const laterQuestionIds = queued
+        .filter(
+          (other) =>
+            other.job.kind === 'question' &&
+            other.job.conversation_id === envelope.job.conversation_id &&
+            questionIndex(other.job) > origin,
+        )
+        .map((other) => Number(other.job.id))
+
+      return Math.min(id, ...laterQuestionIds) - 0.5
+    }
+
+    return [...queued].sort((a, b) => sortKey(a) - sortKey(b))
+  }
+
+  /** 상태에서 정해지는 값(일시 정지 여부, 버튼, 대기 순번)을 다시 계산한다. */
+  function derive() {
+    for (const envelope of envelopes()) {
+      const { job } = envelope
 
       if (job.state === 'queued' || job.state === 'paused') {
         const blocker = job.kind === 'question' ? stallingFailure(job) : null
-        const state = blocker ? 'paused' : 'queued'
 
-        patch = {
-          state,
-          position: state === 'queued' ? ++position : null,
+        applyPatch(job.id, {
+          state: blocker ? 'paused' : 'queued',
           paused_by_message_id: blocker?.answer?.id ?? null,
           allowed_actions: ['cancel'],
-        }
-      } else if (isFailure(record.envelope)) {
-        patch = { allowed_actions: failureActions(record.envelope) }
+        })
+      } else if (isFailure(envelope)) {
+        applyPatch(job.id, { allowed_actions: failureActions(envelope) })
       }
+    }
 
-      const changed = Object.entries(patch).some(([key, value]) => !sameValue(job[key as keyof ChatJob], value))
-      if (changed) records.set(id, { ...record, envelope: { ...record.envelope, job: { ...job, ...patch } } })
+    const order = queueOrder(envelopes().filter((envelope) => envelope.job.state === 'queued'))
+
+    for (const envelope of envelopes()) {
+      const index = order.findIndex((queued) => queued.job.id === envelope.job.id)
+      applyPatch(envelope.job.id, { position: index === -1 ? null : index + 1 })
     }
   }
 
@@ -363,9 +419,9 @@ export function createMockChatServer(): MockChatServer {
     start(jobId) {
       const envelope = get(jobId)
       if (envelope.job.state !== 'queued') throw new Error('대기 중인 작업만 시작할 수 있습니다.')
-      // 뒤 질문이 이미 실행을 시작했다면 앞 질문의 재시도는 더 이상 실행할 수 없다. 접수는 건너뛴 뒤에도 가능했으므로 여기서 막는다.
-      if (envelope.job.kind === 'retry' && laterQuestionStarted(envelope.job)) {
-        throw new Error('뒤 질문이 이미 실행을 시작해 재시도할 수 없습니다.')
+      // 같은 대화의 실패 질문 재시도는 그 대화의 뒤 질문보다 먼저 실행한다(chat-policy.md).
+      if (envelope.job.kind === 'question' && hasQueuedRetryAhead(envelope.job)) {
+        throw new Error('같은 대화의 앞 질문 재시도가 먼저 실행됩니다.')
       }
       if (envelopes().some((other) => other.job.state === 'running')) {
         throw new Error('실행 중인 작업이 있습니다. 회원당 실행은 1개입니다.')
@@ -490,7 +546,7 @@ export function createMockChatServer(): MockChatServer {
       if (!envelope.job.allowed_actions.includes('skip')) throw new Error('지금은 건너뛸 수 없습니다.')
 
       mutate(() => {
-        skipped.add(envelope.job.question_message_id)
+        skippedFailures.add(envelope.job.id)
       })
     },
 

@@ -408,18 +408,94 @@ test('연결이 끊긴 사이 바뀐 버튼은 since 뒤의 snapshot으로 받�
   expect(snapshot.items.find((item) => item.job.id === failed)?.job.allowed_actions).toEqual(['retry'])
 })
 
-test('건너뛴 뒤 접수한 재시도는 뒤 질문이 먼저 실행을 시작하면 실행할 수 없고, 취소할 수 있다', () => {
+test('같은 대화의 재시도는 뒤 질문보다 먼저 실행되고, 뒤 질문은 재시도가 끝난 뒤에 시작할 수 있다', () => {
   const server = createMockChatServer()
   const failed = failedQuestion(server)
   const later = acceptAndWait(server, '501', '뒤 질문')
   server.skip(failed)
   const retry = server.retry(failed, 'key-1')
 
-  server.start(later.job.id)
-  server.complete(later.job.id)
+  // 건너뛰어서 풀린 뒤 질문보다 재시도가 앞선다.
+  expect(server.getEnvelope(retry.job.id)?.job.position).toBe(1)
+  expect(server.getEnvelope(later.job.id)?.job.position).toBe(2)
+  expect(() => server.start(later.job.id)).toThrow('재시도가 먼저')
+  expect(stateOf(server, later.job.id)).toBe('queued')
 
-  expect(() => server.start(retry.job.id)).toThrow('이미 실행을 시작해')
-  expect(stateOf(server, retry.job.id)).toBe('queued')
-  expect(actionsOf(server, retry.job.id)).toEqual(['cancel'])
-  expect(() => server.cancel(retry.job.id)).not.toThrow()
+  server.start(retry.job.id)
+  server.complete(retry.job.id)
+
+  expect(server.getEnvelope(later.job.id)?.job.position).toBe(1)
+  expect(() => server.start(later.job.id)).not.toThrow()
+})
+
+test('재시도는 같은 대화의 뒤 질문만 앞서고, 다른 대화의 작업은 앞지르지 않는다', () => {
+  const server = createMockChatServer()
+  const failed = failedQuestion(server, '501')
+  const sameConversation = acceptAndWait(server, '501', '같은 대화 뒤 질문')
+  const otherConversation = acceptAndWait(server, '502', '다른 대화 질문')
+  server.skip(failed)
+  const retry = server.retry(failed, 'key-1')
+
+  expect(server.getEnvelope(retry.job.id)?.job.position).toBe(1)
+  expect(server.getEnvelope(sameConversation.job.id)?.job.position).toBe(2)
+  expect(server.getEnvelope(otherConversation.job.id)?.job.position).toBe(3)
+  // 다른 대화의 질문은 재시도를 기다리지 않고 시작할 수 있다.
+  expect(() => server.start(otherConversation.job.id)).not.toThrow()
+})
+
+test('재시도가 취소되면 뒤 질문이 다시 시작할 수 있다', () => {
+  const server = createMockChatServer()
+  const failed = failedQuestion(server)
+  const later = acceptAndWait(server, '501', '뒤 질문')
+  server.skip(failed)
+  const retry = server.retry(failed, 'key-1')
+
+  server.cancel(retry.job.id)
+
+  expect(() => server.start(later.job.id)).not.toThrow()
+})
+
+test.each([
+  ['실패', (server: Server, id: string) => server.fail(id)],
+  ['중단', (server: Server, id: string) => server.interrupt(id)],
+])('건너뛴 질문의 재시도가 %s하면 뒤 질문을 다시 정지시키고, 새 실패에 건너뛰기를 다시 허용한다', (_name, end) => {
+  const server = createMockChatServer()
+  const failed = failedQuestion(server)
+  const later = acceptAndWait(server, '501', '뒤 질문')
+
+  server.skip(failed)
+  expect(stateOf(server, later.job.id)).toBe('queued')
+
+  const retry = server.retry(failed, 'key-1')
+  server.start(retry.job.id)
+  end(server, retry.job.id)
+
+  // 새 실패가 뒤 질문을 다시 멈춰 세운다.
+  expect(server.getEnvelope(later.job.id)?.job).toMatchObject({
+    state: 'paused',
+    position: null,
+    paused_by_message_id: server.getEnvelope(retry.job.id)?.answer?.id,
+  })
+  // 버튼은 새 실패에만 있고, 이전 실패에는 없다.
+  expect(actionsOf(server, retry.job.id)).toEqual(['retry', 'skip'])
+  expect(actionsOf(server, failed)).toEqual([])
+
+  // 새 실패도 건너뛰면 뒤 질문이 다시 풀린다.
+  server.skip(retry.job.id)
+
+  expect(stateOf(server, later.job.id)).toBe('queued')
+  expect(actionsOf(server, retry.job.id)).toEqual(['retry'])
+})
+
+test('건너뛴 뒤 접수한 재시도가 취소돼도 뒤 질문은 정지하지 않고, 원래 실패에는 재시도만 남는다', () => {
+  const server = createMockChatServer()
+  const failed = failedQuestion(server)
+  const later = acceptAndWait(server, '501', '뒤 질문')
+  server.skip(failed)
+  const retry = server.retry(failed, 'key-1')
+
+  server.cancel(retry.job.id)
+
+  expect(stateOf(server, later.job.id)).toBe('queued')
+  expect(actionsOf(server, failed)).toEqual(['retry'])
 })
