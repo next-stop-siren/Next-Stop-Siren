@@ -257,3 +257,38 @@ test('연결이 끊긴 사이 바뀐 버튼은 다시 연결했을 때 저장된
   })
   expect(cardOf('끊긴 사이 질문').getByRole('button', { name: '재시도' })).toBeTruthy()
 })
+
+test('대기 중인 질문에는 만료까지 남은 시간이 보이고, 시간을 보내면 줄어든다', async () => {
+  const user = userEvent.setup()
+  render(<MockStreamingPanel reconnectDelayMs={() => 0} />)
+  await waitFor(() => expect(screen.getByText('구독: 연결됨')).toBeTruthy())
+
+  await acceptQuestion(user, '만료 확인 질문')
+  expect(await cardOf('만료 확인 질문').findByText(/^만료까지 \d분 \d+초$/)).toBeTruthy()
+
+  const before = cardOf('만료 확인 질문').getByText(/^만료까지/).textContent
+  await user.click(screen.getByRole('button', { name: '10초 보내기 (목업 시계)' }))
+
+  expect(cardOf('만료 확인 질문').getByText(/^만료까지/).textContent).not.toBe(before)
+})
+
+test('서버가 이미 상태를 바꿔 거절하면 오류를 보여 주고, 구독을 놓쳤어도 최신 상태로 맞춘다', async () => {
+  const user = userEvent.setup()
+  // 끊긴 구독이 다시 연결되기 전에 확인하도록 재연결을 아주 늦춘다.
+  render(<MockStreamingPanel reconnectDelayMs={() => 60_000} />)
+  await waitFor(() => expect(screen.getByText('구독: 연결됨')).toBeTruthy())
+
+  await failFirstQuestion(user, '뒤처진 화면 질문')
+  await user.click(screen.getByRole('button', { name: '연결 끊기 (탭 닫기 흉내)' }))
+
+  // 처음 누른 건너뛰기는 서버가 받아들이지만, 구독이 끊겨 화면은 버튼을 그대로 둔다.
+  await user.click(cardOf('뒤처진 화면 질문').getByRole('button', { name: '건너뛰기' }))
+  expect(cardOf('뒤처진 화면 질문').getByRole('button', { name: '건너뛰기' })).toBeTruthy()
+
+  // 뒤처진 화면에서 다시 누르면 서버가 거절한다. 그 작업을 다시 읽어 버튼이 바로 맞춰진다.
+  await user.click(cardOf('뒤처진 화면 질문').getByRole('button', { name: '건너뛰기' }))
+
+  expect((await cardOf('뒤처진 화면 질문').findByRole('alert')).textContent).toBe('지금은 건너뛸 수 없습니다.')
+  await waitFor(() => expect(cardOf('뒤처진 화면 질문').queryByRole('button', { name: '건너뛰기' })).toBeNull())
+  expect(cardOf('뒤처진 화면 질문').getByRole('button', { name: '재시도' })).toBeTruthy()
+})

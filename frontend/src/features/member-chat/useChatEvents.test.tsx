@@ -449,3 +449,99 @@ test('완료라고 왔는데 답변 내용이 비어 있으면 저장된 답변�
   )
   expect(resolveJob).toHaveBeenCalledTimes(1)
 })
+
+// --- 작업 다시 읽기 (#21) ---
+
+/** 실패한 질문 하나를 만들고 구독을 끊어 둔다. 이후 서버에서 바뀌는 일은 화면이 이벤트로 받지 못한다. */
+async function setupDisconnectedWithFailure(overrides: Partial<UseChatEventsOptions> = {}) {
+  const ctx = setup({
+    reconnectDelayMs: () => 60_000,
+    resolveJob: async (_token, id) => ctx.server.getEnvelope(id),
+    ...overrides,
+  })
+  await waitFor(() => expect(ctx.result.current.connection).toBe('open'))
+
+  let jobId = ''
+  act(() => {
+    jobId = startRunning(ctx.server)
+    ctx.server.fail(jobId)
+  })
+
+  act(() => {
+    ctx.server.disconnectAll()
+  })
+  await waitFor(() => expect(ctx.result.current.connection).toBe('reconnecting'))
+
+  return { ...ctx, jobId }
+}
+
+test('refreshJob은 구독 이벤트를 놓쳐 뒤처진 작업을 지금 서버 상태로 맞춘다', async () => {
+  const { server, result, jobId } = await setupDisconnectedWithFailure()
+  expect(result.current.jobs[jobId]?.job.allowed_actions).toEqual(['retry', 'skip'])
+
+  act(() => {
+    server.skip(jobId)
+  })
+  // 구독이 끊겨 있어 화면은 아직 모른다.
+  expect(result.current.jobs[jobId]?.job.allowed_actions).toEqual(['retry', 'skip'])
+
+  await act(async () => {
+    await result.current.refreshJob(jobId)
+  })
+
+  expect(result.current.jobs[jobId]?.job.allowed_actions).toEqual(['retry'])
+})
+
+test('refreshJob이 가져오지 못하거나 작업이 없으면 상태를 바꾸지 않고 던지지도 않는다', async () => {
+  const resolveJob = vi
+    .fn<NonNullable<UseChatEventsOptions['resolveJob']>>()
+    .mockRejectedValueOnce(new Error('network'))
+    .mockResolvedValueOnce(null)
+  const { result, jobId } = await setupDisconnectedWithFailure({ resolveJob })
+  const before = result.current.jobs[jobId]
+
+  await act(async () => {
+    await result.current.refreshJob(jobId)
+    await result.current.refreshJob(jobId)
+  })
+
+  expect(resolveJob).toHaveBeenCalledTimes(2)
+  expect(result.current.jobs[jobId]).toBe(before)
+})
+
+test('refreshJob은 사용자가 바뀐 뒤 늦게 온 이전 사용자의 응답을 버린다', async () => {
+  let release: (envelope: ReturnType<typeof makeEnvelope> | null) => void = () => undefined
+  const resolveJob = vi.fn<NonNullable<UseChatEventsOptions['resolveJob']>>(
+    () =>
+      new Promise((resolve) => {
+        release = resolve
+      }),
+  )
+  const { result, rerender } = setup({ resolveJob })
+  await waitFor(() => expect(result.current.connection).toBe('open'))
+
+  let pending: Promise<void> = Promise.resolve()
+  act(() => {
+    pending = result.current.refreshJob('7001')
+  })
+
+  rerender({ userId: 'u2', getAccessToken: () => 'token-2', reconnectDelayMs: () => 0 })
+
+  await act(async () => {
+    release(makeEnvelope({ job: { id: '7001', state: 'queued' } }))
+    await pending
+  })
+
+  expect(result.current.jobs['7001']).toBeUndefined()
+})
+
+test('refreshJob은 토큰이 없으면 조회하지 않는다', async () => {
+  const resolveJob = vi.fn<NonNullable<UseChatEventsOptions['resolveJob']>>(async () => null)
+  const { result } = setup({ resolveJob, getAccessToken: () => null })
+
+  await act(async () => {
+    await result.current.refreshJob('7001')
+  })
+
+  expect(resolveJob).not.toHaveBeenCalled()
+})

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { activeRetryFor, retryBlockReason } from './chatRetryRules'
+import { activeRetryFor, formatExpiresIn, retryBlockReason } from './chatRetryRules'
 import type { ChatJobEnvelope, ChatLimits } from './chatQueueTypes'
 import type { ChatJobCommands } from './useChatJobCommands'
 import styles from './ChatJobActions.module.css'
@@ -44,11 +44,14 @@ function ChatJobActions({ envelope, jobs, limits, nowMs, commands }: ChatJobActi
   }
 
   const reasonId = `retry-reason-${job.id}`
+  const waiting = job.state === 'queued' || job.state === 'paused'
 
-  if (actions.length === 0 && !activeRetry && !error) return null
+  if (actions.length === 0 && !activeRetry && !waiting && !error) return null
 
   return (
     <div className={styles.actions}>
+      {waiting && <p className={styles.note}>만료까지 {formatExpiresIn(job.expires_at, nowMs)}</p>}
+
       {activeRetry && (
         <p className={styles.note} role="status">
           {activeRetry.state === 'running' ? '재시도 중' : '재시도 대기 중 · 취소하면 건너뛸 수 있습니다'}

@@ -66,3 +66,17 @@ export function activeRetryFor(job: ChatJob, jobs: Record<string, ChatJobEnvelop
 
   return latestFailure?.id === job.id ? last : null
 }
+
+/**
+ * 실행 전 작업이 만료되기까지 남은 시간을 "4분 59초" 모양으로 쓴다. 기한은 접수 5분 뒤(`expires_at`)다.
+ *
+ * @param nowMs 지금 시각(ms). 서버 시각에 맞춘 값을 넘긴다.
+ */
+export function formatExpiresIn(expiresAt: string, nowMs: number): string {
+  const seconds = Math.ceil((Date.parse(expiresAt) - nowMs) / 1000)
+
+  if (seconds <= 0) return '곧 만료됩니다'
+  if (seconds < 60) return `${seconds}초`
+
+  return `${Math.floor(seconds / 60)}분 ${seconds % 60}초`
+}

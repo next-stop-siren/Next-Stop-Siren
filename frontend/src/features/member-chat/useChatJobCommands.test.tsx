@@ -126,3 +126,43 @@ test('사용자가 바뀌면 이전 사용자의 retry_key를 쓰지 않는다',
   const [first, second] = api.retry.mock.calls
   expect(second?.[1]).not.toBe(first?.[1])
 })
+
+test('요청이 실패하면 그 작업을 다시 읽게 하고, 원래 오류는 그대로 전달한다', async () => {
+  const api = makeApi({
+    skip: vi.fn<ChatJobCommandApi['skip']>().mockRejectedValue(new Error('지금은 건너뛸 수 없습니다.')),
+  })
+  const onFailure = vi.fn()
+  const { result } = renderHook(() => useChatJobCommands('user-1', api, { onFailure }))
+
+  await act(async () => {
+    await expect(result.current.skip('7001')).rejects.toThrow('지금은 건너뛸 수 없습니다.')
+  })
+
+  expect(onFailure).toHaveBeenCalledTimes(1)
+  expect(onFailure).toHaveBeenCalledWith('7001')
+})
+
+test('요청이 성공하면 다시 읽지 않는다', async () => {
+  const onFailure = vi.fn()
+  const { result } = renderHook(() => useChatJobCommands('user-1', makeApi(), { onFailure }))
+
+  await act(async () => {
+    await result.current.retry('7001')
+    await result.current.skip('7002')
+    await result.current.cancel('7003')
+  })
+
+  expect(onFailure).not.toHaveBeenCalled()
+})
+
+test('다시 읽기가 실패해도 원래 오류를 가리지 않는다', async () => {
+  const api = makeApi({ cancel: vi.fn<ChatJobCommandApi['cancel']>().mockRejectedValue(new Error('원래 오류')) })
+  const onFailure = vi.fn().mockRejectedValue(new Error('다시 읽기 실패'))
+  const { result } = renderHook(() => useChatJobCommands('user-1', api, { onFailure }))
+
+  await act(async () => {
+    await expect(result.current.cancel('7001')).rejects.toThrow('원래 오류')
+  })
+
+  expect(onFailure).toHaveBeenCalledTimes(1)
+})

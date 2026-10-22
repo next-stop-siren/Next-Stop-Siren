@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { activeRetryFor, formatResetTime, retryBlockReason } from './chatRetryRules'
+import { activeRetryFor, formatExpiresIn, formatResetTime, retryBlockReason } from './chatRetryRules'
 import { makeEnvelope, makeLimits } from './chatQueueBuilders'
 import type { ChatJobEnvelope } from './chatQueueTypes'
 
@@ -132,5 +132,24 @@ describe('activeRetryFor', () => {
     const retry = attempt('7002', 'retry', 'queued')
 
     expect(activeRetryFor(running.job, byId(running, retry))).toBeNull()
+  })
+})
+
+describe('formatExpiresIn', () => {
+  const expiresAt = new Date(NOW + 5 * 60 * 1000).toISOString()
+
+  test('분과 초로 쓴다', () => {
+    expect(formatExpiresIn(expiresAt, NOW)).toBe('5분 0초')
+    expect(formatExpiresIn(expiresAt, NOW + 61_000)).toBe('3분 59초')
+  })
+
+  test('1분이 안 남으면 초만 쓰고, 남은 시간은 올림한다', () => {
+    expect(formatExpiresIn(expiresAt, NOW + 4 * 60_000 + 59_500)).toBe('1초')
+    expect(formatExpiresIn(expiresAt, NOW + 4 * 60_000 + 30_000)).toBe('30초')
+  })
+
+  test('기한이 지났으면 곧 만료된다고 쓴다', () => {
+    expect(formatExpiresIn(expiresAt, NOW + 5 * 60_000)).toBe('곧 만료됩니다')
+    expect(formatExpiresIn(expiresAt, NOW + 6 * 60_000)).toBe('곧 만료됩니다')
   })
 })

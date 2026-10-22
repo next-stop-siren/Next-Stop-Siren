@@ -202,3 +202,28 @@ test('요청이 진행 중인 동안은 모든 버튼을 막는다', async () =>
     expect((screen.getByRole('button', { name: '재시도' }) as HTMLButtonElement).disabled).toBe(false),
   )
 })
+
+test.each(['queued', 'paused'] as const)('%s 작업에는 만료까지 남은 시간을 보여 준다', (state) => {
+  const expiresAt = new Date(NOW + 4 * 60_000 + 59_000).toISOString()
+  const envelope = makeEnvelope({ job: { id: '7001', state, allowed_actions: ['cancel'], expires_at: expiresAt } })
+
+  renderActions(envelope)
+
+  expect(screen.getByText('만료까지 4분 59초')).toBeTruthy()
+})
+
+test('실행 중이거나 끝난 작업에는 만료 시간을 보여 주지 않는다', () => {
+  renderActions(failed(['retry', 'skip']))
+
+  expect(screen.queryByText(/만료까지/)).toBeNull()
+})
+
+test('버튼이 없는 대기 작업도 만료까지 남은 시간은 보여 준다', () => {
+  const envelope = makeEnvelope({
+    job: { id: '7001', state: 'queued', allowed_actions: [], expires_at: new Date(NOW + 30_000).toISOString() },
+  })
+
+  renderActions(envelope)
+
+  expect(screen.getByText('만료까지 30초')).toBeTruthy()
+})

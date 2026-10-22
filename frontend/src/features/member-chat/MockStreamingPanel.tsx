@@ -56,29 +56,34 @@ function MockStreamingPanel({ reconnectDelayMs }: MockStreamingPanelProps) {
   })
 
   // 재시도·건너뛰기·취소는 사용자가 누르는 동작이다. 화면은 응답이 아니라 구독 이벤트로 바뀐다.
-  const commands = useChatJobCommands(signedIn ? 'mock-user' : null, {
-    retry: async (jobId, retryKey) => {
-      try {
-        return server.retry(jobId, retryKey)
-      } finally {
-        refresh()
-      }
+  const commands = useChatJobCommands(
+    signedIn ? 'mock-user' : null,
+    {
+      retry: async (jobId, retryKey) => {
+        try {
+          return server.retry(jobId, retryKey)
+        } finally {
+          refresh()
+        }
+      },
+      skip: async (jobId) => {
+        try {
+          server.skip(jobId)
+        } finally {
+          refresh()
+        }
+      },
+      cancel: async (jobId) => {
+        try {
+          server.cancel(jobId)
+        } finally {
+          refresh()
+        }
+      },
     },
-    skip: async (jobId) => {
-      try {
-        server.skip(jobId)
-      } finally {
-        refresh()
-      }
-    },
-    cancel: async (jobId) => {
-      try {
-        server.cancel(jobId)
-      } finally {
-        refresh()
-      }
-    },
-  })
+    // 서버가 거절했다면 화면이 뒤처졌을 수 있으니 그 작업을 다시 읽는다.
+    { onFailure: state.refreshJob },
+  )
 
   // 서버 쪽 조작은 서버 상태만 바꾸므로, 서버에 남은 작업 수를 다시 그리도록 갱신한다.
   const operate = (action: () => void) => {

@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
 import { openChatEvents, type OpenChatEvents } from './chatEventStream'
 import { chatEventsReducer, initialChatEventsState, type ChatEventsState } from './chatEventsReducer'
 import { fetchChatJob } from './chatQueueApi'
@@ -17,6 +17,14 @@ export interface UseChatEventsOptions {
   stableConnectionMs?: number
   /** 작업 조회가 실패하거나 답변이 비어 있을 때 다시 조회하기까지 기다릴 시간. 기본 3초. */
   resolveRetryMs?: number
+}
+
+export interface ChatEventsView extends ChatEventsState {
+  /**
+   * 작업 하나를 지금 서버 상태로 다시 읽어 화면에 반영한다. 버튼을 눌렀는데 서버가 거절했을 때처럼,
+   * 구독 이벤트를 놓쳐 화면이 뒤처졌을 수 있을 때 쓴다. 실패하면 아무것도 바꾸지 않는다.
+   */
+  refreshJob: (jobId: string) => Promise<void>
 }
 
 const MAX_RECONNECT_DELAY_MS = 15_000
@@ -55,7 +63,7 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
  * - 연결을 끊거나 다시 여는 일은 서버 작업에 영향이 없다. 이 훅은 질문을 다시 제출하지 않는다.
  * - 사용자가 바뀌거나 로그아웃하면 구독을 끊고 대화·임시 출력·작업 상태를 모두 지운다.
  */
-export function useChatEvents(options: UseChatEventsOptions): ChatEventsState {
+export function useChatEvents(options: UseChatEventsOptions): ChatEventsView {
   const { userId } = options
   const [state, dispatch] = useReducer(chatEventsReducer, initialChatEventsState)
 
@@ -207,5 +215,22 @@ export function useChatEvents(options: UseChatEventsOptions): ChatEventsState {
     }
   }, [state.unresolved, state.serverTime, userId, resolveTick])
 
-  return state
+  const refreshJob = useCallback(async (jobId: string) => {
+    const { getAccessToken, resolveJob = fetchChatJob } = optionsRef.current
+    const accessToken = getAccessToken()
+    if (!accessToken) return
+
+    const epoch = epochRef.current
+
+    try {
+      const envelope = await resolveJob(accessToken, jobId)
+
+      // 그 사이 사용자가 바뀌었다면 이전 사용자의 응답은 버린다.
+      if (envelope && epochRef.current === epoch) dispatch({ type: 'event', event: { type: 'job', data: envelope } })
+    } catch {
+      // 다시 읽지 못해도 구독 이벤트와 재연결 snapshot이 상태를 맞춰 준다.
+    }
+  }, [])
+
+  return useMemo(() => ({ ...state, refreshJob }), [state, refreshJob])
 }

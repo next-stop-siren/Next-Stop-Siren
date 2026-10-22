@@ -7,6 +7,14 @@ export interface ChatJobCommandApi {
   cancel: (jobId: string) => Promise<unknown>
 }
 
+export interface ChatJobCommandOptions {
+  /**
+   * 요청이 실패했을 때 그 작업을 서버 상태로 다시 읽도록 부른다. 서버가 이미 상태를 바꿔 거절했을 수 있고,
+   * 그때 화면은 구독 이벤트를 놓쳐 뒤처져 있을 수 있기 때문이다. 이 함수가 실패해도 원래 오류는 그대로 전달한다.
+   */
+  onFailure?: (jobId: string) => void | Promise<void>
+}
+
 export interface ChatJobCommands {
   retry: (jobId: string) => Promise<void>
   skip: (jobId: string) => Promise<void>
@@ -19,13 +27,20 @@ export interface ChatJobCommands {
  * - 재시도의 `retry_key`는 버튼 시도 하나에 하나다. 응답을 못 받았거나 거절돼 실패하면 키를 남겨 두고,
  *   다시 누르면 같은 키로 보낸다. 접수가 확인되면 키를 버린다(다음 재시도는 새 시도라 새 키를 쓴다).
  * - 같은 작업·같은 동작이 진행 중일 때 다시 호출하면 새로 보내지 않고 진행 중인 요청을 기다린다.
+ * - 요청이 실패하면 `onFailure`로 그 작업을 다시 읽게 해서, 거절 이유가 된 최신 서버 상태로 화면을 맞춘다.
  * - 사용자가 바뀌거나 로그아웃하면 보관한 키와 진행 중 표시를 모두 버린다.
  * - 결과 화면은 이 함수의 반환값이 아니라 구독 이벤트로 바뀐다. 성공해도 화면 상태를 여기서 바꾸지 않는다.
  */
-export function useChatJobCommands(userId: string | null, api: ChatJobCommandApi): ChatJobCommands {
+export function useChatJobCommands(
+  userId: string | null,
+  api: ChatJobCommandApi,
+  options: ChatJobCommandOptions = {},
+): ChatJobCommands {
   const apiRef = useRef(api)
+  const optionsRef = useRef(options)
   useEffect(() => {
     apiRef.current = api
+    optionsRef.current = options
   })
 
   const retryKeysRef = useRef(new Map<string, string>())
@@ -46,9 +61,18 @@ export function useChatJobCommands(userId: string | null, api: ChatJobCommandApi
 
     const inFlight = inFlightRef.current
 
-    const promise = send().finally(() => {
-      if (inFlight.get(id) === promise) inFlight.delete(id)
-    })
+    const promise = send()
+      .catch((error: unknown) => {
+        // 화면을 최신 서버 상태로 맞추는 일이 실패해도 원래 오류를 가리지 않는다.
+        void Promise.resolve()
+          .then(() => optionsRef.current.onFailure?.(jobId))
+          .catch(() => undefined)
+
+        throw error
+      })
+      .finally(() => {
+        if (inFlight.get(id) === promise) inFlight.delete(id)
+      })
     inFlight.set(id, promise)
 
     return promise
