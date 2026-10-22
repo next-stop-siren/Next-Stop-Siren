@@ -41,6 +41,9 @@ def test_product_registry_is_repeatable_without_test_models():
     )
     assert json.loads(result.stdout) == [
         "auth_identities",
+        "chat_conversation_holds",
+        "chat_jobs",
+        "chat_queue_members",
         "chat_quota_reservations",
         "chat_quotas",
         "conversations",
