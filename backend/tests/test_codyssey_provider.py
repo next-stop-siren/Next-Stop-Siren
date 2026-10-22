@@ -23,11 +23,6 @@ from app.integrations.codyssey import (
     GptSettingsError,
 )
 from app.integrations.provider import ContextMessage, MockProvider, ProviderFailed, ProviderTimeout, get_provider
-from app.main import app
-from app.repositories import conversations as repository
-from app.db import get_session
-from test_conversations_api import error_of, sign_in
-from test_messages_api import REPOSITORY_FUNCTIONS, FakeChatStore, send, stored
 
 KEY = "fixture-codyssey-key"
 QUESTION = "합성 질문 fixture-question"
@@ -286,63 +281,6 @@ def test_logs_hold_only_status_and_time(gpt, caplog):
     assert "outcome=completed status=200" in caplog.text and "status=429" in caplog.text
     for private in (KEY, QUESTION, ANSWER, "fixture-provider-detail", "이전 질문"):
         assert private not in caplog.text
-
-
-@pytest.fixture
-def chat(monkeypatch, auth_user_a, gpt):
-    """The send route with in-memory storage and the real adapter pointed at the stand-in server."""
-    store = FakeChatStore(auth_user_a["principal"]["user_id"])
-    for name in REPOSITORY_FUNCTIONS:
-        monkeypatch.setattr(repository, name, getattr(store, name))
-    app.dependency_overrides[get_session] = lambda: store
-    app.dependency_overrides[get_provider] = lambda: gpt.provider
-    sign_in(store.owner)
-    yield SimpleNamespace(store=store, gpt=gpt)
-    app.dependency_overrides.clear()
-
-
-def test_through_the_api_an_answer_is_stored_and_the_unfinished_pair_stays_out_of_the_context(chat):
-    assert send(content="하나", request_key="q-1").status_code == 201
-    chat.gpt.reply = (429, {"error": {"code": "insufficient_quota"}})
-    failed = send(content="둘", request_key="q-2")
-    assert failed.status_code == 502 and error_of(failed)["code"] == "provider_failed"
-    chat.gpt.reply = (200, completion("세 번째 답변"))
-    assert send(content="셋", request_key="q-3").status_code == 201
-    assert chat.gpt.requests[-1].body["messages"] == [
-        {"role": "user", "content": "하나"},
-        {"role": "assistant", "content": ANSWER},
-        {"role": "user", "content": "셋"},
-    ]
-    answers = [row[1] for row in stored(chat.store) if row[0] == "assistant"]
-    assert answers == ["completed", "failed", "completed"]
-    # A resend of the failed question shows it without another request.
-    assert send(content="둘", request_key="q-2").status_code == 200
-    assert len(chat.gpt.requests) == 3
-
-
-@pytest.mark.parametrize(
-    "finish_reason",
-    ["length", "content_filter", ["stop"], {"reason": "stop"}],
-    ids=["length limit", "content filter", "array reason", "object reason"],
-)
-def test_through_the_api_a_cut_answer_is_502_and_never_stored_as_completed(chat, finish_reason):
-    chat.gpt.reply = (200, completion("잘린 답변", finish_reason))
-    response = send()
-    assert response.status_code == 502 and error_of(response)["code"] == "provider_failed"
-    assert stored(chat.store)[1] == ("assistant", "failed", None, "provider_failed")
-    # The cut pair stays out of the next context.
-    chat.gpt.reply = (200, completion())
-    assert send(content="하나 더", request_key="q-demo-2").status_code == 201
-    assert chat.gpt.requests[-1].body["messages"] == [{"role": "user", "content": "하나 더"}]
-
-
-def test_through_the_api_a_timeout_is_504_and_stored_as_interrupted(chat, monkeypatch):
-    monkeypatch.setattr("app.services.chat.ANSWER_TIME_LIMIT_SECONDS", 0.3)
-    chat.gpt.hold = True
-    response = send()
-    assert response.status_code == 504 and error_of(response)["code"] == "provider_timeout"
-    assert stored(chat.store)[1] == ("assistant", "interrupted", None, "outcome_unknown")
-    assert len(chat.gpt.requests) == 1
 
 
 def test_the_public_service_still_uses_the_free_mock():

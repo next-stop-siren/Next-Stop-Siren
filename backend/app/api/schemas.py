@@ -121,14 +121,99 @@ class RetryIn(BaseModel):
     retry_key: Annotated[str, Field(min_length=1, max_length=MAX_REQUEST_KEY_LENGTH), AfterValidator(storable_text)]
 
 
-class QuestionAnswer(BaseModel):
+JobState = Literal["queued", "paused", "running", "completed", "failed", "interrupted", "canceled", "expired"]
+JobAction = Literal["cancel", "retry", "skip"]
+
+
+class JobOut(BaseModel):
+    """One generation attempt of a question (docs/04-reference/api.md, member chat queue)."""
+
+    id: IdText
+    kind: Literal["question", "retry"]
+    conversation_id: IdText
+    question_message_id: IdText
+    answer_message_id: IdText | None
+    state: JobState
+    # 1 is the next to run; only while queued.
+    position: int | None
+    paused_by_message_id: IdText | None
+    # The stored answer's error code; only when failed or interrupted.
+    error_code: str | None
+    accepted_at: UtcTime
+    started_at: UtcTime | None
+    finished_at: UtcTime | None
+    expires_at: UtcTime
+    allowed_actions: list[JobAction]
+
+
+class WindowOut(BaseModel):
+    limit: int
+    used: int
+    reserved: int
+    remaining: int
+    resets_at: UtcTime
+
+
+class QueueOut(BaseModel):
+    running: int
+    questions_waiting: int
+    questions_max: int
+    retries_waiting: int
+    retries_max: int
+
+
+class LimitsOut(BaseModel):
+    daily: WindowOut
+    six_hour: WindowOut
+    queue: QueueOut
+    next_attempt_at: UtcTime | None
+
+
+class JobItem(BaseModel):
+    """A job with its question and, once it started, its answer."""
+
+    job: JobOut
     question: MessageOut
-    answer: MessageOut
+    answer: MessageOut | None
+
+
+class Accepted(BaseModel):
+    """A question or retry as admitted; `job` is null only for a question stored before the queue."""
+
+    question: MessageOut
+    answer: MessageOut | None
+    job: JobOut | None
+    limits: LimitsOut
+
+
+class JobPage(BaseModel):
+    items: list[JobOut]
+    next_cursor: str | None
+    limits: LimitsOut
+    server_time: UtcTime
+
+
+class Canceled(BaseModel):
+    job: JobOut
+    limits: LimitsOut
+
+
+class Skipped(BaseModel):
+    skipped_message_id: IdText
+    resumed_jobs: list[JobOut]
+    limits: LimitsOut
+
+
+class Snapshot(BaseModel):
+    items: list[JobItem]
+    limits: LimitsOut
+    server_time: UtcTime
 
 
 class AnswerDelta(BaseModel):
-    """One piece of an answer being streamed: temporary output, not a stored message."""
+    """One piece of an answer being made: temporary output, not a stored message."""
 
+    job_id: IdText
     text: str
 
 

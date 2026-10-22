@@ -2,18 +2,60 @@
 
 import logging
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import psycopg
 from fastapi import FastAPI
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import conversations, cookie_sessions, google_auth, me
+from app.api import chat, conversations, cookie_sessions, google_auth, me
 from app.api.auth import router as auth_router
+from app.api.chat_events import ChatEvents
 from app.api.errors import register_error_handlers
+from app.db import get_session_factory
+from app.integrations.provider import get_provider
 from app.observability import RegistrationTraceMiddleware, protect_google_callback_logs
 from app.security.login_limits import LoginFailureLimiter
 from app.security.settings import AuthSettings, AuthSettingsError, GoogleSettings, get_auth_settings
+from app.services import quota
+from app.services.chat_runner import ChatJobWorker
+
+logger = logging.getLogger(__name__)
+# Seconds a shutdown waits for running chat jobs; one cut off is interrupted by recovery after a restart.
+WORKER_STOP_SECONDS = 35.0
+
+
+def chat_worker_enabled() -> bool:
+    """`CHAT_WORKER=off` keeps this process from running chat jobs; tests use it."""
+    return os.environ.get("CHAT_WORKER", "on").strip().lower() != "off"
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+    """Run the member chat queue's worker while the app serves; waiting jobs resume after a restart."""
+    events: ChatEvents = application.state.chat_events
+    worker = None
+    # A second start of the same app, as two test clients do, shares the first one's worker.
+    if chat_worker_enabled() and not events.attached:
+        try:
+            sessions = get_session_factory()
+        except RuntimeError:
+            logger.warning("Chat worker not started: the database is not configured")
+        else:
+            worker = ChatJobWorker(
+                sessions, get_provider(), quota.MemberQuota(), notify=events.notify, on_delta=events.delta
+            )
+            events.attach(sessions, worker)
+            worker.start()
+    try:
+        yield
+    finally:
+        if worker is not None:
+            events.detach()
+            await run_in_threadpool(worker.stop, timeout=WORKER_STOP_SECONDS)
 
 
 def health() -> dict[str, str]:
@@ -61,10 +103,11 @@ def create_app(auth_settings: AuthSettings | None = None, google_settings: Googl
         except AuthSettingsError:
             # Google 설정이 없어도 로컬 가입·로그인과 상태 확인 경로는 유지한다.
             google_settings = None
-    application = FastAPI(title="B7-1 API")
+    application = FastAPI(title="B7-1 API", lifespan=lifespan)
     application.state.auth_settings = auth_settings
     application.state.google_settings = google_settings
     application.state.login_failure_limiter = LoginFailureLimiter()
+    application.state.chat_events = ChatEvents()
     register_error_handlers(application)
     application.add_middleware(RegistrationTraceMiddleware)
     application.add_middleware(
@@ -82,6 +125,7 @@ def create_app(auth_settings: AuthSettings | None = None, google_settings: Googl
     application.include_router(google_auth.router)
     application.include_router(me.router)
     application.include_router(conversations.router)
+    application.include_router(chat.router)
     return application
 
 

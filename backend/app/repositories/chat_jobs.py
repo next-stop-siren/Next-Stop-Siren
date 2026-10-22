@@ -224,6 +224,24 @@ def due_waiting(session: Session, user_id: int, now: datetime) -> Sequence[ChatJ
     return session.scalars(statement).all()
 
 
+def close_orphan_pending(session: Session, conversation_id: int) -> list[int]:
+    """Interrupt pending answers of the conversation that no job runs; return their IDs.
+
+    Only the synchronous API before #53 made such answers. One left by a crash would
+    otherwise block the conversation's next start, as a conversation has one pending
+    answer at most.
+    """
+    statement = (
+        update(Message)
+        .where(Message.conversation_id == conversation_id, Message.role == "assistant", Message.status == "pending")
+        .where(~exists().where(ChatJob.answer_message_id == Message.id))
+        .values(status="interrupted", error_code="outcome_unknown", updated_at=func.now())
+        .returning(Message.id)
+        .execution_options(synchronize_session=False)
+    )
+    return list(session.scalars(statement).all())
+
+
 def add_answer(
     session: Session, conversation_id: int, question_id: int, attempt_no: int, retry_key: str | None
 ) -> Message:
@@ -304,6 +322,98 @@ def delete_hold(session: Session, conversation_id: int) -> None:
     if held is not None:
         session.delete(held)
         session.flush()
+
+
+def owned_job(session: Session, user_id: int, job_id: int) -> ChatJob | None:
+    """The member's job read without a lock; None also for another member's."""
+    statement = select(ChatJob).where(ChatJob.id == job_id, ChatJob.user_id == user_id)
+    return session.scalars(statement.execution_options(populate_existing=True)).one_or_none()
+
+
+def owned_jobs(session: Session, user_id: int, job_ids: Sequence[int]) -> Sequence[ChatJob]:
+    statement = select(ChatJob).where(ChatJob.user_id == user_id, ChatJob.id.in_(job_ids)).order_by(ChatJob.id)
+    return session.scalars(statement.execution_options(populate_existing=True)).all()
+
+
+def active_jobs(session: Session, user_id: int) -> Sequence[ChatJob]:
+    """The member's jobs that have not ended, oldest first."""
+    statement = select(ChatJob).where(ChatJob.user_id == user_id, ChatJob.state.in_(ACTIVE_STATES)).order_by(ChatJob.id)
+    return session.scalars(statement.execution_options(populate_existing=True)).all()
+
+
+def queued_jobs(session: Session, user_id: int) -> Sequence[ChatJob]:
+    statement = select(ChatJob).where(ChatJob.user_id == user_id, ChatJob.state == "queued").order_by(ChatJob.id)
+    return session.scalars(statement).all()
+
+
+def conversation_jobs(
+    session: Session, conversation_id: int, *, limit: int, before_id: int | None
+) -> Sequence[ChatJob]:
+    """At most `limit` jobs of the conversation, newest ID first, below `before_id`."""
+    statement = select(ChatJob).where(ChatJob.conversation_id == conversation_id)
+    if before_id is not None:
+        statement = statement.where(ChatJob.id < before_id)
+    return session.scalars(statement.order_by(ChatJob.id.desc()).limit(limit)).all()
+
+
+def ended_since(session: Session, user_id: int, since: datetime) -> Sequence[ChatJob]:
+    statement = select(ChatJob).where(ChatJob.user_id == user_id, ChatJob.finished_at >= since).order_by(ChatJob.id)
+    return session.scalars(statement).all()
+
+
+def touched_conversations(session: Session, user_id: int, since: datetime) -> Sequence[int]:
+    """Conversations where a job was admitted, started, ended or skipped at or after `since`.
+
+    Every change of an `allowed_actions` is caused by one of these in the same conversation.
+    """
+    statement = (
+        select(ChatJob.conversation_id)
+        .where(ChatJob.user_id == user_id)
+        .where(
+            or_(
+                ChatJob.accepted_at >= since,
+                ChatJob.started_at >= since,
+                ChatJob.finished_at >= since,
+                ChatJob.skipped_at >= since,
+            )
+        )
+        .distinct()
+    )
+    return session.scalars(statement).all()
+
+
+def failed_latest_jobs(session: Session, conversation_ids: Sequence[int]) -> Sequence[ChatJob]:
+    """Failed or interrupted jobs whose answer is the newest attempt of one of the two last executed questions.
+
+    Only these can offer retry or skip, or have just stopped offering them: a new start
+    in a conversation affects its latest executed question and the one before it.
+    """
+    if not conversation_ids:
+        return []
+    answer = aliased(Message)
+    recent = (
+        select(answer.reply_to_message_id)
+        .where(answer.conversation_id == ChatJob.conversation_id, answer.role == "assistant")
+        .group_by(answer.reply_to_message_id)
+        .order_by(func.max(answer.id).desc())
+        .limit(2)
+        .correlate(ChatJob)
+    )
+    newer = aliased(Message)
+    statement = (
+        select(ChatJob)
+        .where(ChatJob.conversation_id.in_(conversation_ids), ChatJob.state.in_(("failed", "interrupted")))
+        .where(ChatJob.question_message_id.in_(recent))
+        .where(
+            ~exists().where(
+                newer.reply_to_message_id == ChatJob.question_message_id,
+                newer.role == "assistant",
+                newer.id > ChatJob.answer_message_id,
+            )
+        )
+        .order_by(ChatJob.id)
+    )
+    return session.scalars(statement.execution_options(populate_existing=True)).all()
 
 
 def members_with_work(session: Session, now: datetime, stale_before: datetime) -> Sequence[int]:

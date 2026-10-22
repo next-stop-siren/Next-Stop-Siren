@@ -153,6 +153,19 @@ def limits(session: Session, user_id: int, *, now: datetime | None = None) -> Qu
     return _limits(session, user_id, now, repository.last_reserved_at(session, user_id))
 
 
+class MemberQuota:
+    """This module in the shape of the chat queue's `QuotaLedger`, which takes reservation IDs."""
+
+    def reserve(self, session: Session, user_id: int, *, now: datetime) -> int:
+        return reserve(session, user_id, now=now).id
+
+    def settle(self, session: Session, reservation_id: int) -> bool:
+        return settle(session, reservation_id)
+
+    def refund(self, session: Session, reservation_id: int, reason: RefundReason) -> bool:
+        return refund(session, reservation_id, reason)
+
+
 def provider_may_have_charged(reservation: QuotaReservation) -> bool:
     """Whether the provider may have used tokens for this reservation, apart from what the member was charged.
 

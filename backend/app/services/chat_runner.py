@@ -9,8 +9,10 @@ it after its deadline; the provider is never called again for it.
 `ChatJobWorker` polls for members with work and runs each member's jobs one after
 another on a small thread pool, so one member's generation never waits for another
 member's. The database lock decides who runs; the worker's own bookkeeping only avoids
-asking twice. #53 starts the worker with the app and turns `notify` and `on_delta` into
-subscription events. Log entries carry row IDs only, never a question or an answer.
+asking twice. The app starts the worker (#53) and turns its `notify` and `on_delta`,
+which also receive the member's ID, into subscription events. `notify` is called only
+after a commit, so a stored outcome that failed to commit is never announced. Log
+entries carry row IDs only, never a question or an answer.
 """
 
 import logging
@@ -19,6 +21,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -31,6 +34,9 @@ logger = logging.getLogger(__name__)
 
 Notify = Callable[[Sequence[int]], None]
 OnDelta = Callable[[int, str], None]
+# The worker's callbacks also receive the member whose jobs changed.
+MemberNotify = Callable[[int, Sequence[int]], None]
+MemberDelta = Callable[[int, int, str], None]
 
 
 class _Ended:
@@ -145,8 +151,8 @@ class ChatJobWorker:
         *,
         max_members: int = 4,
         poll_seconds: float = 1.0,
-        notify: Notify | None = None,
-        on_delta: OnDelta | None = None,
+        notify: MemberNotify | None = None,
+        on_delta: MemberDelta | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._provider = provider
@@ -195,6 +201,8 @@ class ChatJobWorker:
         return dispatched
 
     def _drain(self, user_id: int) -> None:
+        notify = None if self._notify is None else partial(self._notify, user_id)
+        on_delta = None if self._on_delta is None else partial(self._on_delta, user_id)
         try:
             while not self._stopping.is_set():
                 if not run_next(
@@ -202,8 +210,8 @@ class ChatJobWorker:
                     self._provider,
                     self._ledger,
                     user_id,
-                    notify=self._notify,
-                    on_delta=self._on_delta,
+                    notify=notify,
+                    on_delta=on_delta,
                 ):
                     break
         except Exception:
