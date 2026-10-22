@@ -407,3 +407,19 @@ test('연결이 끊긴 사이 바뀐 버튼은 since 뒤의 snapshot으로 받�
 
   expect(snapshot.items.find((item) => item.job.id === failed)?.job.allowed_actions).toEqual(['retry'])
 })
+
+test('건너뛴 뒤 접수한 재시도는 뒤 질문이 먼저 실행을 시작하면 실행할 수 없고, 취소할 수 있다', () => {
+  const server = createMockChatServer()
+  const failed = failedQuestion(server)
+  const later = acceptAndWait(server, '501', '뒤 질문')
+  server.skip(failed)
+  const retry = server.retry(failed, 'key-1')
+
+  server.start(later.job.id)
+  server.complete(later.job.id)
+
+  expect(() => server.start(retry.job.id)).toThrow('이미 실행을 시작해')
+  expect(stateOf(server, retry.job.id)).toBe('queued')
+  expect(actionsOf(server, retry.job.id)).toEqual(['cancel'])
+  expect(() => server.cancel(retry.job.id)).not.toThrow()
+})

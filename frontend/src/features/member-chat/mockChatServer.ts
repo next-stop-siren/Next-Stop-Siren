@@ -363,6 +363,10 @@ export function createMockChatServer(): MockChatServer {
     start(jobId) {
       const envelope = get(jobId)
       if (envelope.job.state !== 'queued') throw new Error('대기 중인 작업만 시작할 수 있습니다.')
+      // 뒤 질문이 이미 실행을 시작했다면 앞 질문의 재시도는 더 이상 실행할 수 없다. 접수는 건너뛴 뒤에도 가능했으므로 여기서 막는다.
+      if (envelope.job.kind === 'retry' && laterQuestionStarted(envelope.job)) {
+        throw new Error('뒤 질문이 이미 실행을 시작해 재시도할 수 없습니다.')
+      }
       if (envelopes().some((other) => other.job.state === 'running')) {
         throw new Error('실행 중인 작업이 있습니다. 회원당 실행은 1개입니다.')
       }
