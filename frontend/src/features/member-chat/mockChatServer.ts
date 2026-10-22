@@ -201,28 +201,31 @@ export function createMockChatServer(): MockChatServer {
   }
 
   /**
-   * 대기 순서. 기본은 먼저 접수한 순서(FIFO)이고, 같은 대화의 실패 질문 재시도만 그 대화의 뒤 질문보다 앞선다.
-   * 다른 대화의 작업이나 이미 실행 중인 작업을 앞지르지는 않는다.
+   * 대기 순서. 기본은 먼저 접수한 순서(FIFO)이다. 재시도도 자기가 접수된 자리를 지키고, 다른 대화의 작업이나
+   * 이미 실행 중인 작업을 앞지르지 않는다. 다만 같은 대화의 뒤 질문은 그 질문보다 앞선 질문의 재시도 바로 뒤로 밀린다.
+   * 예: 같은 대화의 뒤 질문 B, 다른 대화의 질문 C, 앞 질문의 재시도 R 순으로 접수하면 C → R → B.
    */
   function queueOrder(queued: ChatJobEnvelope[]): ChatJobEnvelope[] {
     const sortKey = (envelope: ChatJobEnvelope) => {
       const id = Number(envelope.job.id)
-      if (envelope.job.kind !== 'retry') return id
+      if (envelope.job.kind !== 'question') return id
 
-      const origin = questionIndex(envelope.job)
-      const laterQuestionIds = queued
+      const index = questionIndex(envelope.job)
+      const retryIds = queued
         .filter(
           (other) =>
-            other.job.kind === 'question' &&
+            other.job.kind === 'retry' &&
             other.job.conversation_id === envelope.job.conversation_id &&
-            questionIndex(other.job) > origin,
+            questionIndex(other.job) < index,
         )
         .map((other) => Number(other.job.id))
+        .filter((retryId) => retryId > id)
 
-      return Math.min(id, ...laterQuestionIds) - 0.5
+      // 재시도가 더 늦게 접수됐다면 그 재시도 바로 뒤(재시도 번호 + 0.5)로 밀린다.
+      return retryIds.length > 0 ? Math.max(...retryIds) + 0.5 : id
     }
 
-    return [...queued].sort((a, b) => sortKey(a) - sortKey(b))
+    return [...queued].sort((a, b) => sortKey(a) - sortKey(b) || Number(a.job.id) - Number(b.job.id))
   }
 
   /** 상태에서 정해지는 값(일시 정지 여부, 버튼, 대기 순번)을 다시 계산한다. */

@@ -428,7 +428,7 @@ test('같은 대화의 재시도는 뒤 질문보다 먼저 실행되고, 뒤 �
   expect(() => server.start(later.job.id)).not.toThrow()
 })
 
-test('재시도는 같은 대화의 뒤 질문만 앞서고, 다른 대화의 작업은 앞지르지 않는다', () => {
+test('재시도는 접수된 자리를 지키고 같은 대화의 뒤 질문만 뒤로 민다. 먼저 접수된 다른 대화의 질문은 앞지르지 않는다', () => {
   const server = createMockChatServer()
   const failed = failedQuestion(server, '501')
   const sameConversation = acceptAndWait(server, '501', '같은 대화 뒤 질문')
@@ -436,11 +436,26 @@ test('재시도는 같은 대화의 뒤 질문만 앞서고, 다른 대화의 �
   server.skip(failed)
   const retry = server.retry(failed, 'key-1')
 
+  // 접수 순서는 같은 대화의 뒤 질문 B → 다른 대화의 질문 C → 재시도 R이다. 순번은 C → R → B.
+  expect(server.getEnvelope(otherConversation.job.id)?.job.position).toBe(1)
+  expect(server.getEnvelope(retry.job.id)?.job.position).toBe(2)
+  expect(server.getEnvelope(sameConversation.job.id)?.job.position).toBe(3)
+  // 다른 대화의 질문은 재시도를 기다리지 않고 시작할 수 있다.
+  expect(() => server.start(otherConversation.job.id)).not.toThrow()
+})
+
+test('재시도를 다른 대화의 질문보다 먼저 접수했다면 R → B → C 순이다', () => {
+  const server = createMockChatServer()
+  const failed = failedQuestion(server, '501')
+  const sameConversation = acceptAndWait(server, '501', '같은 대화 뒤 질문')
+  server.skip(failed)
+  const retry = server.retry(failed, 'key-1')
+  server.advance(10)
+  const otherConversation = server.accept('502', '다른 대화 질문')
+
   expect(server.getEnvelope(retry.job.id)?.job.position).toBe(1)
   expect(server.getEnvelope(sameConversation.job.id)?.job.position).toBe(2)
   expect(server.getEnvelope(otherConversation.job.id)?.job.position).toBe(3)
-  // 다른 대화의 질문은 재시도를 기다리지 않고 시작할 수 있다.
-  expect(() => server.start(otherConversation.job.id)).not.toThrow()
 })
 
 test('재시도가 취소되면 뒤 질문이 다시 시작할 수 있다', () => {
