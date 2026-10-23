@@ -1,0 +1,30 @@
+.actions {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.note,
+.reason,
+.error {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.note {
+  color: #4b5563;
+}
+
+.reason {
+  color: #92400e;
+}
+
+.error {
+  color: #b91c1c;
+}

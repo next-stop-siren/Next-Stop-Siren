@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, test } from 'vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import MockStreamingPanel from './MockStreamingPanel'
 
@@ -122,8 +122,173 @@ test('실행 전 질문은 취소할 수 있고 취소하면 대기 순번이 �
 
   expect(await screen.findByText('대기 중 · 2번째')).toBeTruthy()
 
-  await user.click(screen.getAllByRole('button', { name: '취소' })[0] as HTMLElement)
+  await user.click(screen.getAllByRole('button', { name: '질문 취소' })[0] as HTMLElement)
 
   expect(await screen.findByText('취소한 질문')).toBeTruthy()
   expect(screen.getByText('대기 중 · 1번째')).toBeTruthy()
+})
+
+// --- 재시도·건너뛰기 (#21) ---
+
+type User = ReturnType<typeof userEvent.setup>
+
+async function acceptQuestion(user: User, content: string) {
+  await user.type(screen.getByLabelText('스트리밍 목업 질문'), content)
+  await user.click(screen.getByRole('button', { name: '질문 접수' }))
+}
+
+/** 질문 하나의 카드. 같은 질문의 처음 답변과 재시도가 한 카드에 모인다. */
+function cardOf(content: string) {
+  const card = screen.getByText(content).closest('article')
+  if (!card) throw new Error(`${content} 카드가 없습니다`)
+  return within(card)
+}
+
+async function failFirstQuestion(user: User, content: string) {
+  await acceptQuestion(user, content)
+  await user.click(await screen.findByRole('button', { name: '실행 시작' }))
+  await user.click(screen.getByRole('button', { name: '실패로 끝내기' }))
+}
+
+test('실패하면 재시도·건너뛰기가 보이고, 새 시도 간격이 지나기 전에는 재시도가 이유와 함께 막힌다', async () => {
+  const user = userEvent.setup()
+  render(<MockStreamingPanel reconnectDelayMs={() => 0} />)
+  await waitFor(() => expect(screen.getByText('구독: 연결됨')).toBeTruthy())
+
+  await failFirstQuestion(user, '실패할 질문')
+
+  const card = cardOf('실패할 질문')
+  expect((card.getByRole('button', { name: '재시도' }) as HTMLButtonElement).disabled).toBe(true)
+  expect(card.getByText(/초 뒤에 보낼 수 있습니다/)).toBeTruthy()
+  expect(card.getByRole('button', { name: '건너뛰기' })).toBeTruthy()
+
+  await user.click(screen.getByRole('button', { name: '10초 보내기 (목업 시계)' }))
+
+  expect((card.getByRole('button', { name: '재시도' }) as HTMLButtonElement).disabled).toBe(false)
+  expect(card.queryByText(/초 뒤에 보낼 수 있습니다/)).toBeNull()
+})
+
+test('재시도하면 원래 작업은 안내만 보이고, 재시도가 성공하면 확정 답변이 보이며 버튼은 없다', async () => {
+  const user = userEvent.setup()
+  render(<MockStreamingPanel reconnectDelayMs={() => 0} />)
+  await waitFor(() => expect(screen.getByText('구독: 연결됨')).toBeTruthy())
+
+  await failFirstQuestion(user, '다시 시도할 질문')
+  await user.click(screen.getByRole('button', { name: '10초 보내기 (목업 시계)' }))
+  await user.click(cardOf('다시 시도할 질문').getByRole('button', { name: '재시도' }))
+
+  const card = cardOf('다시 시도할 질문')
+  expect(await card.findByText('재시도 대기 중 · 취소하면 건너뛸 수 있습니다')).toBeTruthy()
+  expect(card.queryByRole('button', { name: '재시도' })).toBeNull()
+  expect(card.queryByRole('button', { name: '건너뛰기' })).toBeNull()
+  expect(card.getByRole('button', { name: '재시도 취소' })).toBeTruthy()
+
+  await user.click(card.getByRole('button', { name: '실행 시작' }))
+  expect(await card.findByText('재시도 중')).toBeTruthy()
+
+  await user.click(card.getByRole('button', { name: '답변 저장' }))
+
+  expect(await card.findByText('답변 완료 · 저장됨')).toBeTruthy()
+  expect(card.queryByText('재시도 중')).toBeNull()
+  expect(card.queryByRole('button', { name: '재시도' })).toBeNull()
+  expect(card.queryByRole('button', { name: '건너뛰기' })).toBeNull()
+})
+
+test('재시도를 취소하면 원래 실패 작업의 재시도·건너뛰기가 다시 보인다', async () => {
+  const user = userEvent.setup()
+  render(<MockStreamingPanel reconnectDelayMs={() => 0} />)
+  await waitFor(() => expect(screen.getByText('구독: 연결됨')).toBeTruthy())
+
+  await failFirstQuestion(user, '취소 확인 질문')
+  await user.click(screen.getByRole('button', { name: '10초 보내기 (목업 시계)' }))
+  await user.click(cardOf('취소 확인 질문').getByRole('button', { name: '재시도' }))
+  await user.click(await cardOf('취소 확인 질문').findByRole('button', { name: '재시도 취소' }))
+
+  const card = cardOf('취소 확인 질문')
+  expect(await card.findByText('재시도 · 취소한 질문')).toBeTruthy()
+  expect(card.getByRole('button', { name: '재시도' })).toBeTruthy()
+  expect(card.getByRole('button', { name: '건너뛰기' })).toBeTruthy()
+})
+
+test('앞 질문이 실패하면 뒤 질문은 정지하고, 건너뛰면 대기로 돌아오며 재시도만 남는다', async () => {
+  const user = userEvent.setup()
+  render(<MockStreamingPanel reconnectDelayMs={() => 0} />)
+  await waitFor(() => expect(screen.getByText('구독: 연결됨')).toBeTruthy())
+
+  await failFirstQuestion(user, '앞 질문')
+  await acceptQuestion(user, '뒤 질문')
+
+  expect(await cardOf('뒤 질문').findByText('앞 질문 실패로 대기 중')).toBeTruthy()
+
+  await user.click(cardOf('앞 질문').getByRole('button', { name: '건너뛰기' }))
+
+  expect(await cardOf('뒤 질문').findByText('대기 중 · 1번째')).toBeTruthy()
+  expect(cardOf('앞 질문').getByRole('button', { name: '재시도' })).toBeTruthy()
+  expect(cardOf('앞 질문').queryByRole('button', { name: '건너뛰기' })).toBeNull()
+})
+
+test('뒤 질문이 실행을 시작하면 앞 질문의 재시도 버튼이 사라진다', async () => {
+  const user = userEvent.setup()
+  render(<MockStreamingPanel reconnectDelayMs={() => 0} />)
+  await waitFor(() => expect(screen.getByText('구독: 연결됨')).toBeTruthy())
+
+  await failFirstQuestion(user, '앞 질문')
+  await acceptQuestion(user, '뒤 질문')
+  await user.click(cardOf('앞 질문').getByRole('button', { name: '건너뛰기' }))
+
+  await user.click(await cardOf('뒤 질문').findByRole('button', { name: '실행 시작' }))
+
+  await waitFor(() => expect(cardOf('앞 질문').queryByRole('button', { name: '재시도' })).toBeNull())
+})
+
+test('연결이 끊긴 사이 바뀐 버튼은 다시 연결했을 때 저장된 상태로 받는다', async () => {
+  const user = userEvent.setup()
+  render(<MockStreamingPanel reconnectDelayMs={() => 400} />)
+  await waitFor(() => expect(screen.getByText('구독: 연결됨')).toBeTruthy())
+
+  await failFirstQuestion(user, '끊긴 사이 질문')
+  expect(cardOf('끊긴 사이 질문').getByRole('button', { name: '건너뛰기' })).toBeTruthy()
+
+  await user.click(screen.getByRole('button', { name: '연결 끊기 (탭 닫기 흉내)' }))
+  await user.click(cardOf('끊긴 사이 질문').getByRole('button', { name: '건너뛰기' }))
+
+  await waitFor(() => expect(cardOf('끊긴 사이 질문').queryByRole('button', { name: '건너뛰기' })).toBeNull(), {
+    timeout: 3000,
+  })
+  expect(cardOf('끊긴 사이 질문').getByRole('button', { name: '재시도' })).toBeTruthy()
+})
+
+test('대기 중인 질문에는 만료까지 남은 시간이 보이고, 시간을 보내면 줄어든다', async () => {
+  const user = userEvent.setup()
+  render(<MockStreamingPanel reconnectDelayMs={() => 0} />)
+  await waitFor(() => expect(screen.getByText('구독: 연결됨')).toBeTruthy())
+
+  await acceptQuestion(user, '만료 확인 질문')
+  expect(await cardOf('만료 확인 질문').findByText(/^만료까지 \d분 \d+초$/)).toBeTruthy()
+
+  const before = cardOf('만료 확인 질문').getByText(/^만료까지/).textContent
+  await user.click(screen.getByRole('button', { name: '10초 보내기 (목업 시계)' }))
+
+  expect(cardOf('만료 확인 질문').getByText(/^만료까지/).textContent).not.toBe(before)
+})
+
+test('서버가 이미 상태를 바꿔 거절하면 오류를 보여 주고, 구독을 놓쳤어도 최신 상태로 맞춘다', async () => {
+  const user = userEvent.setup()
+  // 끊긴 구독이 다시 연결되기 전에 확인하도록 재연결을 아주 늦춘다.
+  render(<MockStreamingPanel reconnectDelayMs={() => 60_000} />)
+  await waitFor(() => expect(screen.getByText('구독: 연결됨')).toBeTruthy())
+
+  await failFirstQuestion(user, '뒤처진 화면 질문')
+  await user.click(screen.getByRole('button', { name: '연결 끊기 (탭 닫기 흉내)' }))
+
+  // 처음 누른 건너뛰기는 서버가 받아들이지만, 구독이 끊겨 화면은 버튼을 그대로 둔다.
+  await user.click(cardOf('뒤처진 화면 질문').getByRole('button', { name: '건너뛰기' }))
+  expect(cardOf('뒤처진 화면 질문').getByRole('button', { name: '건너뛰기' })).toBeTruthy()
+
+  // 뒤처진 화면에서 다시 누르면 서버가 거절한다. 그 작업을 다시 읽어 버튼이 바로 맞춰진다.
+  await user.click(cardOf('뒤처진 화면 질문').getByRole('button', { name: '건너뛰기' }))
+
+  expect((await cardOf('뒤처진 화면 질문').findByRole('alert')).textContent).toBe('지금은 건너뛸 수 없습니다.')
+  await waitFor(() => expect(cardOf('뒤처진 화면 질문').queryByRole('button', { name: '건너뛰기' })).toBeNull())
+  expect(cardOf('뒤처진 화면 질문').getByRole('button', { name: '재시도' })).toBeTruthy()
 })
