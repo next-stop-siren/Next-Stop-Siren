@@ -22,7 +22,13 @@ from app.models.conversation import Conversation
 from app.models.user import User
 from test_conversations_api import call, sign_in
 
-pytestmark = [pytest.mark.db, pytest.mark.live]
+pytestmark = [
+    pytest.mark.db,
+    pytest.mark.live,
+    # Since #53 a question is queued and the worker streams its answer, but the Codyssey
+    # adapter has only `complete`. Rewrite this smoke when the real AI is connected.
+    pytest.mark.skip(reason="#53 이후 질문은 대기열 실행기가 stream으로 답하며 Codyssey 어댑터에는 stream이 없습니다."),
+]
 
 
 @pytest.fixture

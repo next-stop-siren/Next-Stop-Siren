@@ -29,12 +29,17 @@ ApiErrorCode = Literal[
     "not_found",
     "rate_limited",
     "request_key_conflict",
-    "conversation_busy",
     "retry_not_allowed",
     "retry_not_latest",
-    "provider_failed",
-    "provider_timeout",
+    "queue_full",
+    "retry_queue_full",
+    "job_not_cancelable",
+    "skip_not_allowed",
+    "quota_exceeded",
+    "attempt_too_soon",
 ]
+# 다시 요청할 수 있을 때까지의 초를 `Retry-After`로 반드시 알리는 회원 채팅 거부.
+_CHAT_WAITS: frozenset[ApiErrorCode] = frozenset({"quota_exceeded", "attempt_too_soon"})
 
 _API_ERRORS: dict[ApiErrorCode, tuple[int, str]] = {
     "local_email_exists": (409, "이미 가입된 이메일입니다."),
@@ -45,11 +50,14 @@ _API_ERRORS: dict[ApiErrorCode, tuple[int, str]] = {
     "not_found": (404, "찾을 수 없습니다."),
     "rate_limited": (429, "로그인 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요."),
     "request_key_conflict": (409, "같은 요청 키로 다른 질문을 보낼 수 없습니다."),
-    "conversation_busy": (409, "이전 질문의 답변을 기다리고 있습니다."),
     "retry_not_allowed": (409, "이 답변은 다시 시도할 수 없습니다. 대화 기록을 확인해 주세요."),
     "retry_not_latest": (409, "가장 최근 질문만 다시 시도할 수 있습니다. 새 질문으로 보내 주세요."),
-    "provider_failed": (502, "답변을 만들지 못했습니다. 대화 기록을 확인해 주세요."),
-    "provider_timeout": (504, "답변 시간이 초과되었습니다. 대화 기록을 확인해 주세요."),
+    "queue_full": (409, "대기 중인 질문이 많습니다. 답변을 받은 뒤 다시 보내 주세요."),
+    "retry_queue_full": (409, "다른 재시도가 대기 중입니다."),
+    "job_not_cancelable": (409, "이미 실행 중이거나 끝난 질문은 취소할 수 없습니다."),
+    "skip_not_allowed": (409, "지금은 건너뛸 수 없습니다. 대기 중인 재시도가 있으면 먼저 취소해 주세요."),
+    "quota_exceeded": (429, "질문 한도를 모두 사용했습니다. 초기화 뒤에 다시 시도해 주세요."),
+    "attempt_too_soon": (429, "잠시 후 다시 보내 주세요."),
 }
 _VALIDATION_MESSAGES = {
     "missing": "필수 값입니다.",
@@ -70,6 +78,8 @@ _PUBLIC_FIELDS = {
     "request_key",
     "retry_key",
     "return_to",
+    "job_id",
+    "since",
 }
 
 
@@ -90,8 +100,11 @@ class ApiError(Exception):
         elif code == "refresh_race":
             if type(retry_after) is not int or retry_after != 1:
                 raise ValueError("refresh 경합에는 1초 대기 시간이 필요합니다.")
+        elif code in _CHAT_WAITS:
+            if type(retry_after) is not int or retry_after < 1:
+                raise ValueError("채팅 한도·간격 거부에는 양의 정수 대기 시간이 필요합니다.")
         elif retry_after is not None:
-            raise ValueError("대기 시간은 로그인 제한 또는 refresh 경합 오류에만 지정할 수 있습니다.")
+            raise ValueError("대기 시간은 로그인 제한, refresh 경합, 채팅 한도·간격 오류에만 지정할 수 있습니다.")
         if clear_cookies and code != "unauthenticated":
             raise ValueError("인증 쿠키 만료는 폐기 커밋 후 인증 실패에만 지정할 수 있습니다.")
         self.code = code
@@ -115,24 +128,12 @@ def request_key_conflict() -> ApiError:
     return ApiError("request_key_conflict")
 
 
-def conversation_busy() -> ApiError:
-    return ApiError("conversation_busy")
-
-
 def retry_not_allowed() -> ApiError:
     return ApiError("retry_not_allowed")
 
 
 def retry_not_latest() -> ApiError:
     return ApiError("retry_not_latest")
-
-
-def provider_failed() -> ApiError:
-    return ApiError("provider_failed")
-
-
-def provider_timeout() -> ApiError:
-    return ApiError("provider_timeout")
 
 
 def loggable(exc: Exception) -> str:

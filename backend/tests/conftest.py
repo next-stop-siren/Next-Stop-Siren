@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 import base64
+import os
 from typing import Any
 from uuid import uuid4
 
@@ -20,6 +21,9 @@ from app.models.user import User
 from app.security.settings import AuthSettings, GoogleSettings
 from auth_helpers import load_auth_cases
 from db_guard import guarded_live_url
+
+# An app started by a test runs no chat job worker unless the test turns it on.
+os.environ["CHAT_WORKER"] = "off"
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

@@ -17,10 +17,11 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.schema import CreateSchema, DropSchema
 
 from app.db import create_db_engine
+from app.models.chat_job import ChatJob, ChatQueueMember, ConversationHold
 from app.models.conversation import Conversation, Message
 from app.models.quota import ChatQuota, QuotaReservation
 from app.models.user import User
-from app.services import chat, quota
+from app.services import chat_queue, quota
 from app.services.quota import DAILY_LIMIT, KST, SIX_HOUR_LIMIT, QuotaRejected, periods_at
 from db_guard import guarded_live_url
 
@@ -164,7 +165,8 @@ def committed_quota_sessions():
     engine = create_db_engine(guarded_live_url())
     schema = f"quota_test_{uuid4().hex}"
     scoped = engine.execution_options(schema_translate_map={None: schema})
-    tables = [table.__table__ for table in (User, ChatQuota, QuotaReservation, Conversation, Message)]
+    models = (User, ChatQuota, QuotaReservation, Conversation, Message, ChatQueueMember, ChatJob, ConversationHold)
+    tables = [table.__table__ for table in models]
     created = False
     try:
         with engine.begin() as connection:
@@ -269,7 +271,8 @@ def test_concurrent_refunds_of_one_reservation_resolve_it_once(committed_quota_s
         assert stored.state in ("settled", "refunded") and stored.resolved_at is not None
 
 
-def test_concurrent_questions_in_one_conversation_leave_one_pending_answer(committed_quota_sessions):
+def test_concurrent_questions_admit_one_job_with_one_reservation_and_store_nothing_else(committed_quota_sessions):
+    """Queue admission and quota reservation commit together (#53): a refused one leaves no question or job."""
     sessions = committed_quota_sessions
     with sessions() as setup:
         user_id = add_user(setup)
@@ -281,14 +284,22 @@ def test_concurrent_questions_in_one_conversation_leave_one_pending_answer(commi
 
     def ask(index: int):
         with sessions() as session:
-            return chat.begin_question(
-                session, user_id, conversation_id, f"질문 {index}", f"q-race-{index}", trace_id=f"trace-{index}"
+            admission = chat_queue.admit_question(
+                session, quota.MemberQuota(), user_id, conversation_id, f"질문 {index}", f"q-race-{index}"
             )
+            session.commit()
+            return admission.job.id
 
     results = run_together(WORKERS, ask)
 
-    assert sum(isinstance(result, chat.Started) for result in results) == 1
-    assert sum(isinstance(result, chat.ConversationBusy) for result in results) == WORKERS - 1
+    admitted = [result for result in results if isinstance(result, int)]
+    refused = [result for result in results if isinstance(result, QuotaRejected)]
+    assert len(admitted) == 1 and len(refused) == WORKERS - 1
+    assert {error.reason for error in refused} == {"attempt_too_soon"}
     with sessions() as reader:
-        pending = select(func.count()).where(Message.role == "assistant", Message.status == "pending")
-        assert reader.scalar(pending.select_from(Message)) == 1
+        job = reader.get(ChatJob, admitted[0])
+        reservation = reader.get(QuotaReservation, job.reservation_id)
+        assert (job.state, reservation.state) == ("queued", "reserved")
+        assert reader.scalar(select(func.count()).select_from(QuotaReservation)) == 1
+        assert reader.scalar(select(func.count()).select_from(ChatJob)) == 1
+        assert reader.scalar(select(func.count()).select_from(Message)) == 1

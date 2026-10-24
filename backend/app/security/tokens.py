@@ -114,7 +114,12 @@ def issue_refresh_token(
 
 def verify_access_token(token: str, settings: AuthSettings) -> int:
     """기존 Bearer 인증 계약대로 검증된 사용자 ID만 반환한다."""
-    return _verify_token(token, settings, "access").user_id
+    return verify_access(token, settings).user_id
+
+
+def verify_access(token: str, settings: AuthSettings) -> VerifiedToken:
+    """access를 검증하고 만료 시각까지 반환한다. 오래 열린 연결이 만료에 끊을 때 쓴다."""
+    return _verify_token(token, settings, "access")
 
 
 def verify_refresh_token(token: str, settings: AuthSettings) -> VerifiedToken:

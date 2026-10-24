@@ -1,32 +1,23 @@
-"""Create, list and read the signed-in user's own conversations, send questions to them and retry answers."""
+"""Create, list and read the signed-in user's own conversations, and queue questions, retries and skips.
 
-from collections.abc import AsyncIterator, Callable, Sequence
-from contextlib import AbstractContextManager
+A question or retry is admitted to the member's chat queue together with its quota
+reservation and answered `202` without waiting for the answer (#53). The answer
+arrives through `GET /api/chat/events` and is read again from `GET /api/chat/jobs/{id}`.
+"""
+
+import logging
+from collections.abc import Sequence
 from typing import Annotated, Protocol
 
-import anyio
 from fastapi import APIRouter, Depends, Path, Query, Request, Response
-from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.auth import current_user_id
-from app.api.errors import (
-    DATABASE_UNAVAILABLE,
-    ApiError,
-    api_error_body,
-    conversation_busy,
-    database_unavailable_body,
-    not_found,
-    provider_failed,
-    provider_timeout,
-    request_key_conflict,
-    retry_not_allowed,
-    retry_not_latest,
-)
+from app.api.chat import LEDGER, after_commit, current_limits, quota_refusal
+from app.api.chat_payloads import job_out, message_out
+from app.api.errors import ApiError, ApiErrorCode, not_found
 from app.api.schemas import (
-    AnswerDelta,
+    Accepted,
     ConversationCreated,
     ConversationOut,
     ConversationPage,
@@ -35,15 +26,18 @@ from app.api.schemas import (
     ErrorBody,
     MessageOut,
     MessagePage,
-    QuestionAnswer,
     QuestionIn,
     RetryIn,
+    Skipped,
 )
-from app.db import get_session, get_session_factory
-from app.integrations.provider import AnswerProvider, get_provider
+from app.db import get_session
+from app.models.chat_job import ACTIVE_STATES
 from app.observability import request_trace_id
+from app.repositories import chat_jobs as job_repository
 from app.repositories import conversations as repository
-from app.services import chat
+from app.services import chat, chat_queue, chat_views, quota
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/conversations",
@@ -53,20 +47,30 @@ router = APIRouter(
 # The user ID comes first so that an unauthenticated request never opens a session.
 UserId = Annotated[int, Depends(current_user_id)]
 DbSession = Annotated[Session, Depends(get_session)]
-# Opens the session of a streamed answer's last transaction, after the request's own has closed.
-SessionFactory = Annotated[Callable[[], AbstractContextManager[Session]], Depends(get_session_factory)]
-Provider = Annotated[AnswerProvider, Depends(get_provider)]
-
-# The HTTP answer to each refusal of the chat service.
-CHAT_ERRORS: dict[type[chat.ChatError], Callable[[], ApiError]] = {
-    chat.ConversationNotFound: not_found,
-    chat.RequestKeyConflict: request_key_conflict,
-    chat.ConversationBusy: conversation_busy,
-    chat.QuestionNotFound: not_found,
-    chat.RetryNotAllowed: retry_not_allowed,
-    chat.NotLatestQuestion: retry_not_latest,
-}
 Limit = Annotated[int, Query(ge=1, le=100)]
+
+# The HTTP error code of each refusal of the chat queue.
+QUEUE_ERRORS: dict[type[Exception], ApiErrorCode] = {
+    chat.RequestKeyConflict: "request_key_conflict",
+    chat.RetryNotAllowed: "retry_not_allowed",
+    chat.NotLatestQuestion: "retry_not_latest",
+    chat_queue.QueueFull: "queue_full",
+    chat_queue.RetryQueueFull: "retry_queue_full",
+    chat_queue.SkipNotAllowed: "skip_not_allowed",
+}
+
+
+def refusal(error: Exception) -> ApiError:
+    """A missing or another member's conversation or question is the same 404."""
+    if isinstance(error, (chat.ConversationNotFound, chat.QuestionNotFound)):
+        return not_found()
+    if isinstance(error, quota.QuotaRejected):
+        return quota_refusal(error)
+    return ApiError(QUEUE_ERRORS[type(error)])
+
+
+# Every refusal the queue and the quota raise before anything new is stored.
+REFUSALS = (chat.ChatError, chat_queue.QueueError, quota.QuotaRejected)
 
 
 class HasId(Protocol):
@@ -113,186 +117,111 @@ def list_messages(
     return MessagePage(items=items, next_cursor=next_cursor(rows, limit))
 
 
-@router.post(
-    "/{conversation_id}/messages",
-    status_code=201,
-    responses={
-        200: {"model": QuestionAnswer, "description": "The request key was already stored and its answer has ended."},
-        202: {"model": QuestionAnswer, "description": "The request key was already stored and its answer is pending."},
-        404: {"model": ErrorBody},
-        409: {"model": ErrorBody},
-        502: {"model": ErrorBody},
-        504: {"model": ErrorBody},
-    },
-)
+def accepted(session: Session, user_id: int, admission: chat_queue.Admission, response: Response) -> Accepted:
+    """`202` while the job has not ended, `200` for a stored one that has; read after the commit."""
+    job = admission.job
+    if job is None:
+        # A question or retry the synchronous API stored before the queue: it has its answer but no job.
+        answer = admission.answer or job_repository.latest_answer(session, admission.question.id)
+        response.status_code = 202 if answer is None or answer.status == "pending" else 200
+        return Accepted(
+            question=MessageOut.model_validate(admission.question),
+            answer=message_out(answer),
+            job=None,
+            limits=current_limits(session, user_id),
+        )
+    (found,) = chat_views.items(session, user_id, [job])
+    response.status_code = 202 if admission.created or job.state in ACTIVE_STATES else 200
+    return Accepted(
+        question=MessageOut.model_validate(found.question),
+        answer=message_out(found.answer),
+        job=job_out(found.view),
+        limits=current_limits(session, user_id),
+    )
+
+
+ADMISSION_RESPONSES: dict[int | str, dict[str, object]] = {
+    200: {"model": Accepted, "description": "The key was already admitted and its job has ended."},
+    202: {"model": Accepted, "description": "Admitted, or the key was already admitted and its job has not ended."},
+    404: {"model": ErrorBody},
+    409: {"model": ErrorBody},
+    429: {"model": ErrorBody, "description": "`quota_exceeded` or `attempt_too_soon`, with `Retry-After`."},
+}
+
+
+@router.post("/{conversation_id}/messages", status_code=202, responses=ADMISSION_RESPONSES)
 def send_question(
     conversation_id: Annotated[DecimalId, Path()],
     body: QuestionIn,
     user_id: UserId,
     session: DbSession,
-    provider: Provider,
     request: Request,
     response: Response,
-) -> QuestionAnswer:
-    # The request's trace ID: the service logs under it, and the error handlers return it
-    # in a 502, 504 or database 503, so the response leads to its log entries.
+) -> Accepted:
+    """Queue a question with its quota reservation; the same key and body return the stored job instead."""
     trace_id = request_trace_id(request)
     try:
-        exchange = chat.send_question(
-            session, provider, user_id, conversation_id, body.content, body.request_key, trace_id=trace_id
-        )
-    except chat.ChatError as error:
-        raise CHAT_ERRORS[type(error)]() from None
-    return exchange_response(exchange, response)
+        admission = chat_queue.admit_question(session, LEDGER, user_id, conversation_id, body.content, body.request_key)
+    except REFUSALS as error:
+        raise refusal(error) from None
+    session.commit()
+    if admission.created and admission.job is not None:
+        logger.info("Question queued, trace_id=%s, job_id=%s", trace_id, admission.job.id)
+    result = accepted(session, user_id, admission, response)
+    if admission.created and admission.job is not None:
+        after_commit(request, session, user_id, [admission.job.id])
+    return result
 
 
-@router.post(
-    "/{conversation_id}/messages/{message_id}/retry",
-    status_code=201,
-    responses={
-        200: {"model": QuestionAnswer, "description": "The retry key was already used and its attempt has ended."},
-        202: {"model": QuestionAnswer, "description": "The retry key was already used and its attempt is pending."},
-        404: {"model": ErrorBody},
-        409: {"model": ErrorBody},
-        502: {"model": ErrorBody},
-        504: {"model": ErrorBody},
-    },
-)
+@router.post("/{conversation_id}/messages/{message_id}/retry", status_code=202, responses=ADMISSION_RESPONSES)
 def retry_answer(
     conversation_id: Annotated[DecimalId, Path()],
     message_id: Annotated[DecimalId, Path()],
     body: RetryIn,
     user_id: UserId,
     session: DbSession,
-    provider: Provider,
     request: Request,
     response: Response,
-) -> QuestionAnswer:
-    """Answer the question `message_id` again as a new attempt."""
+) -> Accepted:
+    """Queue a new attempt of the question `message_id`; the same retry key returns that attempt instead."""
     trace_id = request_trace_id(request)
     try:
-        exchange = chat.retry_answer(
-            session, provider, user_id, conversation_id, message_id, body.retry_key, trace_id=trace_id
-        )
-    except chat.ChatError as error:
-        raise CHAT_ERRORS[type(error)]() from None
-    return exchange_response(exchange, response)
-
-
-def exchange_response(exchange: chat.Exchange, response: Response) -> QuestionAnswer:
-    """201 for a new answer that completed, 200/202 for a stored one, and the provider error for a new failure."""
-    status = exchange.answer.status
-    if not exchange.created:
-        response.status_code = 202 if status == "pending" else 200
-    elif status == "failed":
-        raise provider_failed()
-    elif status == "interrupted":
-        raise provider_timeout()
-    return QuestionAnswer(
-        question=MessageOut.model_validate(exchange.question), answer=MessageOut.model_validate(exchange.answer)
-    )
-
-
-def sse(event: str, data: BaseModel) -> str:
-    """One server-sent event; the JSON is a single line because JSON escapes line breaks."""
-    return f"event: {event}\ndata: {data.model_dump_json()}\n\n"
-
-
-def abandon(events: chat.AnswerStream, trace_id: str) -> None:
-    """End a stream nobody reads any more; the service stores an unfinished answer as interrupted.
-
-    If that cannot be stored, the answer stays pending and the next send recovers it.
-    """
-    try:
-        events.close()
-    except DATABASE_UNAVAILABLE as error:
-        database_unavailable_body(error, trace_id)
-
-
-async def answer_events(
-    opening: str, events: chat.AnswerStream, question: MessageOut, trace_id: str
-) -> AsyncIterator[str]:
-    """The response body: `start`, a `delta` per piece, then `done` or `error`.
-
-    `done` carries the answer as stored, so it is sent only after the commit. The status
-    code has been sent by then, so an ending that the JSON route answers with 502, 504
-    or 503 is an `error` event with the same body. A reader that leaves at any point,
-    `start` included, reaches the `finally`, which closes the stream.
-    """
-    try:
-        yield opening
-        while True:
-            try:
-                # A reader that leaves stops this wait at once instead of after the next item; the
-                # `finally` then closes the stream, which wakes the `next` and keeps it from completing.
-                item = await anyio.to_thread.run_sync(next, events, None, abandon_on_cancel=True)
-            except DATABASE_UNAVAILABLE as error:
-                yield sse("error", database_unavailable_body(error, trace_id))
-                return
-            if item is None:
-                return
-            if isinstance(item, str):
-                yield sse("delta", AnswerDelta(text=item))
-            elif item.status == "completed":
-                yield sse("done", QuestionAnswer(question=question, answer=MessageOut.model_validate(item)))
-            else:
-                ended = provider_failed() if item.status == "failed" else provider_timeout()
-                yield sse("error", api_error_body(ended, trace_id))
-    finally:
-        # A reader that leaves cancels this task; the shield lets the unfinished answer be closed anyway.
-        with anyio.CancelScope(shield=True):
-            await run_in_threadpool(abandon, events, trace_id)
+        admission = chat_queue.admit_retry(session, LEDGER, user_id, conversation_id, message_id, body.retry_key)
+    except REFUSALS as error:
+        raise refusal(error) from None
+    session.commit()
+    if admission.created and admission.job is not None:
+        logger.info("Retry queued, trace_id=%s, job_id=%s", trace_id, admission.job.id)
+    result = accepted(session, user_id, admission, response)
+    if admission.created and admission.job is not None:
+        after_commit(request, session, user_id, [admission.job.id])
+    return result
 
 
 @router.post(
-    "/{conversation_id}/messages/stream",
-    response_model=None,
-    responses={
-        200: {
-            "model": QuestionAnswer,
-            "description": "A new question: `start`, `delta` and `done` or `error` events. "
-            "A request key already stored whose answer has ended: the stored pair as JSON.",
-            "content": {"text/event-stream": {}},
-        },
-        202: {"model": QuestionAnswer, "description": "The request key was already stored and its answer is pending."},
-        404: {"model": ErrorBody},
-        409: {"model": ErrorBody},
-    },
+    "/{conversation_id}/messages/{message_id}/skip",
+    responses={404: {"model": ErrorBody}, 409: {"model": ErrorBody}},
 )
-def stream_question(
+def skip_question(
     conversation_id: Annotated[DecimalId, Path()],
-    body: QuestionIn,
+    message_id: Annotated[DecimalId, Path()],
+    _body: EmptyBody,
     user_id: UserId,
     session: DbSession,
-    open_session: SessionFactory,
-    provider: Provider,
     request: Request,
-) -> Response:
-    """Send a question as `send_question` does, with the answer streamed while it is made.
-
-    Everything refused or already stored is answered as JSON before a stream starts, so
-    a screen that lost its stream sends the same key and body again to read what was stored.
-    """
-    trace_id = request_trace_id(request)
+) -> Skipped:
+    """Leave the failed question as it is and queue the questions paused behind it; uses no quota."""
     try:
-        begun = chat.begin_question(
-            session, user_id, conversation_id, body.content, body.request_key, trace_id=trace_id
-        )
-    except chat.ChatError as error:
-        raise CHAT_ERRORS[type(error)]() from None
-    question = MessageOut.model_validate(begun.question)
-    pair = QuestionAnswer(question=question, answer=MessageOut.model_validate(begun.answer))
-    if isinstance(begun, chat.Exchange):
-        status_code = 202 if begun.answer.status == "pending" else 200
-        return JSONResponse(status_code=status_code, content=pair.model_dump(mode="json"))
-    # Reading the committed rows for `start` may have begun a transaction, as a session
-    # that expires rows on commit reloads them. The request session is not used again,
-    # so close it now: no transaction may stay open while the provider is called.
-    session.close()
-    events = chat.AnswerStream(open_session, provider, begun, trace_id=trace_id)
-    return StreamingResponse(
-        answer_events(sse("start", pair), events, question, trace_id),
-        media_type="text/event-stream",
-        # A proxy must pass each event on as it is written.
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        changes = chat_queue.skip(session, user_id, conversation_id, message_id)
+    except REFUSALS as error:
+        raise refusal(error) from None
+    session.commit()
+    changed = job_repository.owned_jobs(session, user_id, changes.job_ids)
+    resumed = [job for job in changed if job.question_message_id != message_id]
+    body = Skipped(
+        skipped_message_id=str(message_id),
+        resumed_jobs=[job_out(view) for view in chat_views.views(session, user_id, resumed)],
+        limits=current_limits(session, user_id),
     )
+    after_commit(request, session, user_id, changes.job_ids)
+    return body

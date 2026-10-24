@@ -23,8 +23,10 @@ from app.db import create_db_engine
 from app.integrations.provider import ContextMessage
 from app.models.chat_job import ChatJob, ChatQueueMember, ConversationHold
 from app.models.conversation import Conversation, Message
+from app.models.quota import ChatQuota, QuotaReservation
 from app.models.user import User
-from app.services import chat_queue, chat_runner
+from app.repositories import quotas as quota_repository
+from app.services import chat_queue, chat_runner, quota
 from app.services.chat import NotLatestQuestion, RetryNotAllowed
 from app.services.chat_queue import (
     OUTCOME_UNKNOWN,
@@ -57,19 +59,27 @@ class Refused(Exception):
 
 
 class FakeLedger:
+    """Records its calls; a reservation is a real row, which `chat_jobs.reservation_id` must point to (#53)."""
+
     def __init__(self, refuse: bool = False) -> None:
         self.refuse = refuse
         self.calls: list[tuple] = []
-        self._next = 0
         self._lock = threading.Lock()
 
     def reserve(self, session, user_id, *, now):
         if self.refuse:
             raise Refused
+        periods = quota.periods_at(now)
+        row = quota_repository.add_reservation(
+            session,
+            quota_repository.lock_quota(session, user_id),
+            day_start=periods.day_start,
+            six_hour_start=periods.six_hour_start,
+            created_at=now,
+        )
         with self._lock:
-            self._next += 1
-            self.calls.append(("reserve", self._next))
-            return self._next
+            self.calls.append(("reserve", row.id))
+        return row.id
 
     def settle(self, session, reservation_id):
         with self._lock:
@@ -373,7 +383,8 @@ def committed_queue_sessions():
     engine = create_db_engine(guarded_live_url())
     schema = f"queue_test_{uuid4().hex}"
     scoped = engine.execution_options(schema_translate_map={None: schema})
-    tables = [model.__table__ for model in (User, Conversation, Message, ChatQueueMember, ChatJob, ConversationHold)]
+    models = (User, Conversation, Message, ChatQuota, QuotaReservation, ChatQueueMember, ChatJob, ConversationHold)
+    tables = [model.__table__ for model in models]
     created = False
     try:
         with engine.begin() as connection:

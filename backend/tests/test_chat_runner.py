@@ -126,6 +126,54 @@ def test_no_session_is_open_while_the_provider_runs(monkeypatch):
     assert deltas == [(7, "답변")]
 
 
+class Commit(Exception):
+    """The outcome's commit failed."""
+
+
+def test_a_failed_outcome_commit_announces_nothing_and_never_calls_the_provider_again(monkeypatch):
+    """No `completed` event without the stored answer; the job stays running for recovery (#53)."""
+    token = uuid.uuid4()
+    commits = []
+
+    class FailingSessions(Sessions):
+        def commit(self):
+            commits.append(len(commits))
+            if len(commits) == 2:
+                raise Commit
+
+    monkeypatch.setattr(
+        chat_queue, "claim_next", lambda session, ledger, user_id: (Claimed(7, token, 70, CONTEXT), Changes([7]))
+    )
+    monkeypatch.setattr(chat_queue, "finish", lambda *args: Changes([7]))
+    provider = Provider(("답변",))
+    notified = []
+    with pytest.raises(Commit):
+        chat_runner.run_next(FailingSessions(), provider, object(), 101, notify=notified.append)
+    # Only the start was announced, after its own commit.
+    assert notified == [[7]] and provider.calls == 1
+
+
+def test_the_worker_passes_the_member_to_its_callbacks(monkeypatch):
+    calls = []
+
+    def run_next(sessions, provider, ledger, user_id, *, notify, on_delta):
+        notify([7])
+        on_delta(7, "조각")
+        return False
+
+    monkeypatch.setattr(chat_runner, "run_next", run_next)
+    worker = chat_runner.ChatJobWorker(
+        Sessions(),  # type: ignore[arg-type]
+        Provider(),
+        object(),  # type: ignore[arg-type]
+        notify=lambda *args: calls.append(("notify", *args)),
+        on_delta=lambda *args: calls.append(("delta", *args)),
+    )
+    worker._drain(101)
+    worker.stop(timeout=1)
+    assert calls == [("notify", 101, [7]), ("delta", 101, 7, "조각")]
+
+
 def test_nothing_runs_when_the_execution_right_is_taken(monkeypatch):
     provider = Provider(("답변",))
     monkeypatch.setattr(chat_queue, "claim_next", lambda session, ledger, user_id: (None, Changes()))

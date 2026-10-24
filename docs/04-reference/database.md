@@ -116,26 +116,11 @@ ORDER BY m.id;
 
 완성 쌍 필터링은 현재 저장소의 조회 함수와 관련 테스트에 구현되어 있다. 실패·중단·진행 쌍은 문맥에서만 제외하며 이력은 유지한다.
 
-첫 내부 목표는 모의 제공자의 완성 답변 저장·재조회다. 현재 스트리밍은 PR #44로 병합됐다. 회원 한도·대기열 목표는 [회원 채팅 정책](chat-policy.md)에 승인됐으며 후속 구현이다. 제공자 호출은 트랜잭션 밖에서 수행하고 실제 어댑터가 30초 제한을 강제한다. timeout 인자 전달만으로 제한을 보장했다고 판단하지 않는다.
-
-오래된 `pending`의 회복 기준:
-
-- 같은 대화의 다음 메시지 POST에서 같은 키 재전송도 포함하여, 생성 시각부터 60초를 초과했는지 확인한다. 정확히 60초이면 회복 대상이 아니다.
-- 아직 `pending`인 답변만 조건부로 `interrupted`/`outcome_unknown`으로 종결한다. `content`와 `completed_at`은 NULL로 유지하고 `updated_at`을 갱신한다.
-- 회복을 같은 키 재전송의 기존 결과 반환 전에 적용하여 중단된 쌍을 반환한다.
-- 완료·실패·시간 초과 저장도 아직 `pending`인 행에만 조건부로 적용하여, 회복 뒤 늦게 도착한 결과가 종결 상태를 덮어쓰지 못하게 한다.
-- 별도 예약 작업은 없고 GET 조회만으로는 회복하지 않는다.
-
-수동 재시도(S13 / #14, PM 결정 D4):
-
-- 질문의 최신 답변이 `failed` 또는 `interrupted`이고 그 질문이 대화의 가장 최근 질문일 때만, 같은 질문에 `attempt_no`를 1 올린 새 `pending` 답변 행을 `retry_key`와 함께 만든다. 이전 시도 행은 바꾸지 않는다.
-- 같은 질문의 같은 `retry_key`는 한 시도다. 재전송은 새 행이나 제공자 호출 없이 그 시도를 조회한다. `messages_retry_key_uq`·`messages_attempt_uq`·`messages_one_pending_uq`가 중복 시도를 DB에서도 막는다.
-- 대화 행 잠금, 오래된 `pending` 회복, 트랜잭션 밖 제공자 호출, `pending` 행에만 적용하는 결과 저장은 질문 전송과 같다. 따라서 늦게 도착한 이전 시도의 결과는 새 시도나 완료 답변을 덮어쓰지 못한다.
-- 현재 구현은 질문당 시도 횟수를 제한하지 않는다. 승인된 대기열 목표도 수동 시도 횟수를 제한하지 않으며, 새 시도의 한도 예약·10초 간격은 후속 구현이다.
+#53부터 질문은 짧은 트랜잭션에서 질문·작업·예약만 저장하고, 답변 `pending` 행은 작업이 실행을 시작할 때 만든다. 제공자 호출은 트랜잭션 밖에서 수행하고 실행기가 30초 기한을 강제한다. 결과 저장은 `pending`인 행에만 조건부로 적용하므로 늦게 도착한 결과가 종결 상태·새 시도·완료 답변을 덮어쓰지 못한다. 수동 재시도는 같은 질문에 `attempt_no`를 1 올린 새 답변 행을 실행 시작 때 `retry_key`와 함께 만들고 이전 시도 행은 바꾸지 않는다. `messages_retry_key_uq`·`messages_attempt_uq`·`messages_one_pending_uq`가 중복 시도를 DB에서도 막는다. 이전의 60초 `pending` 회복과 D4(가장 최근 생성 질문) 규칙은 대기열의 복구와 “가장 최근 실행된 질문” 규칙으로 바뀌었다. 아래 대기열 절을 본다.
 
 ## 회원 한도 예약·정산 (#15 제안)
 
-[회원 채팅 정책](chat-policy.md)의 한도 값을 `app.services.quota`가 예약·정산한다. **현재 API에는 아직 연결하지 않았다.** 대기열 입장과 같은 트랜잭션으로 묶는 것은 #53이 맡는다. 아래 두 테이블은 검토용 제안이며 기존 5개 테이블은 바꾸지 않는다.
+[회원 채팅 정책](chat-policy.md)의 한도 값을 `app.services.quota`가 예약·정산한다. #53부터 질문·재시도 접수가 대기열 입장과 같은 트랜잭션에서 예약한다(`quota.MemberQuota`). 기존 5개 테이블은 바꾸지 않는다.
 
 | 테이블 | 역할 |
 | --- | --- |
@@ -151,7 +136,7 @@ ORDER BY m.id;
 
 ## 영속 대기열·실행권·복구 (#52 제안)
 
-[회원 채팅 정책](chat-policy.md)의 작업 저장·실행권·복구를 `app.services.chat_queue`·`app.services.chat_runner`가 처리한다. **현재 API에는 아직 연결하지 않았다.** 동기 생성·`409 conversation_busy`·네 메시지 상태는 그대로이며 #53이 연결한다. 아래 세 테이블은 검토용 제안이고 기존 5개 테이블의 컬럼·제약은 바꾸지 않는다.
+[회원 채팅 정책](chat-policy.md)의 작업 저장·실행권·복구를 `app.services.chat_queue`·`app.services.chat_runner`가 처리한다. #53부터 질문·재시도·건너뛰기·취소 API가 이 모듈을 쓰고, 앱이 시작될 때 `ChatJobWorker`가 함께 시작된다(`CHAT_WORKER=off`면 시작하지 않음, 테스트 전용). 동기 생성과 60초 `pending` 회복은 제거했다. 기존 5개 테이블의 컬럼·제약은 바꾸지 않는다.
 
 | 테이블 | 역할 |
 | --- | --- |
@@ -168,12 +153,19 @@ ORDER BY m.id;
 - 실패·중단은 대화 정지를 만들고 그 대화의 `queued` 새 질문을 `paused`로 바꾼다. 정지 중 접수한 새 질문도 `paused`다. 재시도 성공·건너뛰기만 정지를 풀고, 재시도의 실패는 정지를 새 실패 작업으로 옮기며, 취소·만료는 그대로 둔다.
 - 취소는 `queued`·`paused`만, 만료는 접수 5분 뒤의 `queued`·`paused`에 적용한다. 정지나 재접속으로 연장하지 않는다. 시작·취소·만료는 같은 회원 잠금과 조건부 상태 변경으로 하나만 반영된다.
 - 복구: 기한 + 15초(`RECOVERY_GRACE_SECONDS`)가 지난 `running`만 조정한다. 저장된 완료 답변이 있으면 완료·정산, 그 밖에는 답변과 작업을 `interrupted`/`outcome_unknown`으로 종결·환불한다. 제공자를 다시 부르지 않는다. 미만료 대기는 DB에 남아 재시작 뒤 `ChatJobWorker`가 이어서 실행한다.
-- 회원 한도와 10초 간격은 `QuotaLedger` 프로토콜(#15 `app.services.quota`의 `reserve`·`settle`·`refund` 모양)로 호출해 대기열이 한도 모듈을 직접 가져오지 않는다. 실제 `quota` 모듈 연결과 `reservation_id` → `chat_quota_reservations` FK는 #53이 더한다.
-- 같은 회원의 접수는 `chat_queue_members`를 먼저, #15 예약 안에서 `chat_quotas`를 나중에 잠근다. #53도 이 순서를 지킨다.
+- 회원 한도와 10초 간격은 `QuotaLedger` 프로토콜로 호출해 대기열이 한도 모듈을 직접 가져오지 않는다. #53은 `quota.MemberQuota`로 실제 `quota` 모듈을 연결하고 `chat_jobs.reservation_id` → `chat_quota_reservations.id` FK(`chat_jobs_reservation_fk`, `ON DELETE RESTRICT`)를 더했다.
+- 같은 회원의 접수는 `chat_queue_members`를 먼저, #15 예약 안에서 `chat_quotas`를 나중에 잠근다.
+- 허용 동작(`allowed_actions`)은 저장하지 않고 조회할 때 행에서 계산한다. 구독의 `since`는 작업의 `accepted_at`·`started_at`·`finished_at`·`skipped_at`으로 바뀐 대화를 찾으므로 별도 변경 시각 컬럼이 없다.
+- #53 이전 동기 API가 남긴 작업 없는 `pending` 답변은 그 대화의 다음 실행 시작 트랜잭션에서 `interrupted`/`outcome_unknown`으로 닫아 `messages_one_pending_uq`가 실행을 막지 않게 한다.
 
-적용과 되돌림: 새 테이블만 추가하므로 `db-init`·`db-init-test`의 `create_all()`이 누락분을 만든다. 기존 행은 바뀌지 않고, 현재 API가 만든 질문에는 작업 행이 없다. 되돌림은 아래 순서로 세 테이블을 지우며 기존 5개 테이블의 데이터에는 영향이 없다. 공유 DB에는 검토 전에 수동 적용하지 않는다.
+적용과 되돌림: 새 테이블은 `db-init`·`db-init-test`의 `create_all()`이 누락분을 만든다. **`create_all()`은 기존 테이블을 바꾸지 않으므로** #52 때 이미 `chat_jobs`를 만든 개발·테스트 DB에는 아래 FK를 수동으로 더하거나 그 DB를 다시 초기화한다(CI는 빈 DB라 해당 없음). 기존 행은 바뀌지 않고, #53 이전에 만든 질문에는 작업 행이 없다. 되돌림은 아래 순서로 세 테이블을 지우며 기존 5개 테이블의 데이터에는 영향이 없다. 공유 DB에는 검토 전에 수동 적용하지 않는다.
 
 ```sql
+-- #52 테이블이 이미 있는 DB에 #53 FK를 더할 때
+ALTER TABLE chat_jobs ADD CONSTRAINT chat_jobs_reservation_fk
+  FOREIGN KEY (reservation_id) REFERENCES chat_quota_reservations (id) ON DELETE RESTRICT;
+
+-- 되돌림
 DROP TABLE chat_conversation_holds;
 DROP TABLE chat_jobs;
 DROP TABLE chat_queue_members;

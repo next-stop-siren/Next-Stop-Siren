@@ -13,8 +13,8 @@ after recovery, cancel or a new attempt. `chat_conversation_holds` marks the
 conversations whose latest executed question failed; their new questions wait as
 `paused` until a retry succeeds or the failure is skipped.
 
-`reservation_id` is the member quota reservation of #15 and has no foreign key here,
-so this schema does not depend on the quota tables; #53 can add it when both merge.
+`reservation_id` is the member quota reservation of #15; #53 adds its foreign key to
+`chat_quota_reservations` now that the queue and the quota are connected.
 """
 
 from datetime import datetime
@@ -111,7 +111,10 @@ class ChatJob(Base):
     state: Mapped[str] = mapped_column(Text)
     retry_key: Mapped[str | None] = mapped_column(Text)
     # The member quota reservation of #15, resolved exactly once with the job's end.
-    reservation_id: Mapped[int | None] = mapped_column(BigInteger)
+    reservation_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("chat_quota_reservations.id", name="chat_jobs_reservation_fk", ondelete="RESTRICT"),
+    )
     paused_by_message_id: Mapped[int | None] = mapped_column(BigInteger)
     answer_message_id: Mapped[int | None] = mapped_column(BigInteger)
     run_token: Mapped[UUID | None] = mapped_column(Uuid)
