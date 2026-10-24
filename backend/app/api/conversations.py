@@ -121,8 +121,8 @@ def accepted(session: Session, user_id: int, admission: chat_queue.Admission, re
     """`202` while the job has not ended, `200` for a stored one that has; read after the commit."""
     job = admission.job
     if job is None:
-        # A question the synchronous API stored before the queue: it has its answer but no job.
-        answer = job_repository.latest_answer(session, admission.question.id)
+        # A question or retry the synchronous API stored before the queue: it has its answer but no job.
+        answer = admission.answer or job_repository.latest_answer(session, admission.question.id)
         response.status_code = 202 if answer is None or answer.status == "pending" else 200
         return Accepted(
             question=MessageOut.model_validate(admission.question),

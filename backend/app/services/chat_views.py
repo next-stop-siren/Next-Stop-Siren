@@ -127,7 +127,7 @@ def related_ids(session: Session, user_id: int, job_ids: Sequence[int]) -> list[
     jobs = repository.owned_jobs(session, user_id, job_ids)
     conversations = sorted({job.conversation_id for job in jobs})
     ids = [job.id for job in jobs]
-    for job in [*repository.queued_jobs(session, user_id), *repository.failed_latest_jobs(session, conversations)]:
+    for job in [*repository.queued_jobs(session, user_id), *repository.failed_recent_jobs(session, conversations)]:
         if job.id not in ids:
             ids.append(job.id)
     return sorted(ids)
@@ -149,7 +149,8 @@ def snapshot(session: Session, user_id: int, since: datetime | None) -> Snapshot
         for job in repository.ended_since(session, user_id, since):
             jobs.setdefault(job.id, job)
         touched = repository.touched_conversations(session, user_id, since)
-        for job in repository.failed_latest_jobs(session, touched):
+        # Includes an earlier failed attempt whose buttons a retry completed elsewhere took away.
+        for job in repository.failed_recent_jobs(session, touched):
             jobs.setdefault(job.id, job)
     found = items(session, user_id, [jobs[job_id] for job_id in sorted(jobs)])
     return Snapshot(found, limits(session, user_id), server_time)

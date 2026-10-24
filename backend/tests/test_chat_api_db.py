@@ -337,6 +337,85 @@ def test_listing_and_the_since_snapshot_return_stored_results_after_a_reconnect(
     assert page["server_time"].endswith("Z")
 
 
+def test_a_reconnect_gets_the_earlier_failure_without_buttons_after_a_retry_completed_elsewhere(session, seeded):
+    """The failure ended before the disconnect; only the retry ran while this tab was away."""
+    first = int(ask(session, seeded, seeded.a, "a1").json()["job"]["id"])
+    run(session, seeded.user_a, PROVIDER_FAILED)
+    assert job_of(first)["allowed_actions"] == ["retry", "skip"]
+    # The failure ended two minutes ago, beyond the snapshot's 30-second margin.
+    earlier = timedelta(minutes=2)
+    session.execute(
+        update(ChatJob)
+        .where(ChatJob.id == first)
+        .values(
+            accepted_at=ChatJob.accepted_at - earlier,
+            expires_at=ChatJob.expires_at - earlier,
+            started_at=ChatJob.started_at - earlier,
+            deadline_at=ChatJob.deadline_at - earlier,
+            finished_at=ChatJob.finished_at - earlier,
+        )
+    )
+    session.commit()
+    # This tab disconnects here, with the buttons shown.
+    since = job_repository.database_time(session)
+    question_id = session.get(ChatJob, first).question_message_id
+    retried = int(retry(session, seeded, seeded.a, question_id, "r1").json()["job"]["id"])
+    run(session, seeded.user_a, Outcome("completed", text="다른 탭의 답"))
+
+    found = {item.view.job.id: item for item in chat_views.snapshot(session, seeded.user_a, since).items}
+    assert found[retried].view.job.state == "completed" and found[retried].answer.content == "다른 탭의 답"
+    # The earlier failure did not change state, but its buttons are gone, so it comes again.
+    assert first in found and found[first].view.allowed_actions == ()
+
+
+@pytest.mark.parametrize(
+    ("ended", "status_code"),
+    [("completed", 200), ("failed", 200)],
+    ids=["earlier retry succeeded", "earlier retry failed"],
+)
+def test_a_retry_key_the_synchronous_api_used_returns_that_attempt_and_admits_nothing(
+    session, seeded, ended, status_code
+):
+    """Before #53 a retry was only an answer row with its key; resending that key must not retry again."""
+    question = save(
+        session,
+        Message(
+            conversation_id=seeded.a, role="user", status="completed", content="옛 질문", request_key="old",
+            completed_at=func.now(),
+        ),
+    )  # fmt: skip
+    save(
+        session,
+        Message(conversation_id=seeded.a, role="assistant", status="failed", reply_to_message_id=question,
+                attempt_no=1, error_code="provider_failed"),
+    )  # fmt: skip
+    done = (
+        {"content": "옛 재시도 답", "completed_at": func.now()}
+        if ended == "completed"
+        else {"error_code": "provider_failed"}
+    )
+    attempt = save(
+        session,
+        Message(conversation_id=seeded.a, role="assistant", status=ended, reply_to_message_id=question,
+                attempt_no=2, retry_key="old-r1", **done),
+    )  # fmt: skip
+    session.commit()
+
+    again = call("POST", f"/api/conversations/{seeded.a}/messages/{question}/retry", json={"retry_key": "old-r1"})
+    assert again.status_code == status_code
+    body = again.json()
+    assert body["job"] is None and (body["answer"]["id"], body["answer"]["status"]) == (str(attempt), ended)
+    # Nothing was admitted or reserved, so no start can reuse the key.
+    assert session.scalar(select(func.count()).select_from(ChatJob)) == 0
+    assert session.scalar(select(func.count()).select_from(QuotaReservation)) == 0
+    assert chat_queue.claim_next(session, LEDGER, seeded.user_a)[0] is None
+    session.commit()
+    # A new key after a failed attempt is a new retry, as before.
+    if ended == "failed":
+        fresh = call("POST", f"/api/conversations/{seeded.a}/messages/{question}/retry", json={"retry_key": "new"})
+        assert fresh.status_code == 202 and fresh.json()["job"]["kind"] == "retry"
+
+
 def test_a_pending_answer_left_without_a_job_does_not_block_the_next_start(session, seeded):
     """The synchronous API before #53 could leave one; the next start interrupts it."""
     old_question = save(

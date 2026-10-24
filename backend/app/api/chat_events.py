@@ -4,7 +4,9 @@ One `ChatEvents` per app keeps the open subscriptions of this process. A change 
 published only after its transaction commits: the publisher reads the committed rows
 again and sends a `job` event per changed or related job, then a `limits` event. An
 outcome whose commit failed is therefore never announced, and a `completed` event
-always carries the answer as stored.
+always carries the answer as stored. If the committed change cannot be read back to
+announce it, the member's connections are ended instead, so each screen reconnects
+with `since` and its snapshot carries what was stored.
 
 Publishing and opening a subscription take the member's publish lock around their
 reads, so the events of one member reach each subscription in the order they were
@@ -82,6 +84,17 @@ class Subscription:
             # The connection's loop has already closed.
             with self._lock:
                 self._closed = True
+
+    def end(self) -> None:
+        """Deliver `CLOSED` after the frames already queued, from any thread; later frames are dropped."""
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+        try:
+            self._loop.call_soon_threadsafe(self._queue.put_nowait, CLOSED)
+        except RuntimeError:
+            pass
 
     async def get(self) -> str | Closed:
         item = await self._queue.get()
@@ -171,10 +184,21 @@ class ChatEvents:
 
     # Publishing -------------------------------------------------------------
 
+    def _end_member(self, user_id: int) -> None:
+        """End every open connection of the member, so each reconnects with `since` and reads what is stored.
+
+        Used when a committed change could not be announced. Resending would read the
+        same failing database; a reconnect's snapshot carries the stored outcome instead,
+        so no screen stays at "답변 생성 중" for an answer that was already saved.
+        """
+        for subscription in self._current(user_id):
+            subscription.end()
+
     def publish(self, session: Session, user_id: int, job_ids: Sequence[int]) -> None:
         """Send the committed state of the changed jobs, the jobs they affect and the limits; never raises.
 
-        Call it after the commit, on a session whose next reads see that commit.
+        Call it after the commit, on a session whose next reads see that commit. If the
+        reads fail, the member's connections are ended instead of being left without the change.
         """
         if not job_ids or not self.subscribed(user_id):
             return
@@ -188,8 +212,9 @@ class ChatEvents:
                     for frame in frames:
                         subscription.put(frame)
         except Exception:
-            # The change is stored; a subscriber sees it at its next reconnect.
+            # The change is stored; ending the connections makes each reconnect and read it.
             logger.exception("Chat event publish failed, user_id=%s", user_id)
+            self._end_member(user_id)
 
     def notify(self, user_id: int, job_ids: Sequence[int]) -> None:
         """The worker's `notify`: publish on a session of its own."""
@@ -201,6 +226,7 @@ class ChatEvents:
                 session.rollback()
         except Exception:
             logger.exception("Chat event session failed, user_id=%s", user_id)
+            self._end_member(user_id)
 
     def delta(self, user_id: int, job_id: int, text: str) -> None:
         """The worker's `on_delta`: temporary output that is never stored or replayed."""

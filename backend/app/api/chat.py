@@ -14,7 +14,7 @@ from pydantic import AwareDatetime
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
-from app.api.auth import current_user_id
+from app.api.auth import current_access, current_user_id
 from app.api.chat_events import PING_SECONDS, ChatEvents, Closed, Opened
 from app.api.chat_payloads import item_out, job_out, limits_out
 from app.api.errors import ApiError, not_found
@@ -22,6 +22,7 @@ from app.api.schemas import Canceled, DecimalId, EmptyBody, ErrorBody, JobItem, 
 from app.db import get_session, get_session_factory
 from app.repositories import chat_jobs as job_repository
 from app.repositories import conversations as conversation_repository
+from app.security.tokens import VerifiedToken
 from app.services import chat_queue, chat_views, quota
 
 router = APIRouter(
@@ -120,9 +121,17 @@ def read_limits(user_id: UserId, session: DbSession) -> LimitsOut:
 
 
 async def event_stream(
-    events: ChatEvents, opened: Opened, open_session: Callable[[], AbstractContextManager[Session]]
+    events: ChatEvents,
+    opened: Opened,
+    open_session: Callable[[], AbstractContextManager[Session]],
+    access_expires_at: datetime,
 ) -> AsyncIterator[str]:
-    """The snapshot, then the member's events as they come, a ping every 15 seconds and `limits` after a reset."""
+    """The snapshot, then the member's events as they come, a ping every 15 seconds and `limits` after a reset.
+
+    The stream ends when the access token it was opened with expires, so no event
+    reaches a connection whose token is no longer valid; the screen reconnects with a
+    valid one. Ending it never stops a job.
+    """
     subscription = opened.subscription
     next_reset = opened.next_reset
 
@@ -135,10 +144,15 @@ async def event_stream(
 
     try:
         while True:
+            left = (access_expires_at - datetime.now(UTC)).total_seconds()
+            if left <= 0:
+                return
             frame = None
-            with anyio.move_on_after(PING_SECONDS):
+            with anyio.move_on_after(min(PING_SECONDS, left)):
                 frame = await subscription.get()
             if frame is None:
+                if datetime.now(UTC) >= access_expires_at:
+                    return
                 if datetime.now(UTC) >= next_reset:
                     next_reset = await run_in_threadpool(refresh)
                 yield ": ping\n\n"
@@ -162,15 +176,16 @@ async def event_stream(
 )
 async def subscribe(
     request: Request,
-    user_id: UserId,
+    access: Annotated[VerifiedToken, Depends(current_access)],
     open_session: SessionFactory,
     since: Annotated[AwareDatetime | None, Query()] = None,
 ) -> StreamingResponse:
-    """Open the member's subscription; closing it never stops a job.
+    """Open the member's subscription until its access token expires; closing it never stops a job.
 
     `since` is the `server_time` of the last job list or snapshot. The snapshot then
     also carries the jobs that ended, or whose `allowed_actions` changed, after it.
     """
+    user_id = access.user_id
     events = chat_events(request)
     loop = asyncio.get_running_loop()
 
@@ -183,7 +198,7 @@ async def subscribe(
 
     opened = await run_in_threadpool(start)
     return StreamingResponse(
-        event_stream(events, opened, open_session),
+        event_stream(events, opened, open_session, access.expires_at),
         media_type="text/event-stream",
         # A proxy must pass each event on as it is written.
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},

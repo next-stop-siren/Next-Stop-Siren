@@ -17,11 +17,13 @@ import pytest
 from app.api import chat as chat_api
 from app.api import chat_events
 from app.api.chat_events import CLOSED, MAX_PENDING, ChatEvents, Subscription
+from app.api.auth import current_access
 from app.api.errors import ApiError
 from app.api.schemas import MAX_QUESTION_LENGTH
 from app.db import get_session, get_session_factory
 from app.main import app
 from app.repositories import chat_jobs as job_repository
+from app.security.tokens import VerifiedToken
 from app.services import chat, chat_queue, chat_views, quota
 from app.services.quota import QuotaLimits, QuotaRejected, WindowLimit
 from test_conversations_api import call, error_of, message, sign_in
@@ -101,7 +103,10 @@ def api(monkeypatch, auth_user_a):
     session = FakeSession()
     app.dependency_overrides[get_session] = lambda: session
     app.dependency_overrides[get_session_factory] = lambda: lambda: nullcontext(session)
-    sign_in(auth_user_a["principal"]["user_id"])
+    user_id = auth_user_a["principal"]["user_id"]
+    sign_in(user_id)
+    valid = VerifiedToken(user_id=user_id, jti="j", issued_at=T0, expires_at=datetime.now(UTC) + timedelta(hours=1))
+    app.dependency_overrides[current_access] = lambda: valid
     state = SimpleNamespace(session=session, admitted=[], published=[])
 
     def items(_session, _user_id, jobs):
@@ -203,6 +208,19 @@ def test_a_question_stored_before_the_queue_has_no_job(api, monkeypatch):
     response = send()
     assert response.status_code == 200
     assert response.json()["job"] is None and response.json()["answer"]["id"] == "9006"
+
+
+@pytest.mark.parametrize(("status", "status_code"), [("completed", 200), ("failed", 200), ("pending", 202)])
+def test_a_retry_key_used_before_the_queue_returns_its_own_attempt(api, monkeypatch, status, status_code):
+    """Not the question's latest answer: the attempt that this key made, with no job and nothing admitted."""
+    attempt = message(9008, "assistant", status, T0, reply_to_message_id=9005, attempt_no=2, retry_key="r")
+    admit_with(monkeypatch, chat_queue.Admission(QUESTION_ROW, None, created=False, answer=attempt))
+    monkeypatch.setattr(job_repository, "latest_answer", lambda *_args: pytest.fail("the key's own attempt is used"))
+    response = call("POST", RETRY_PATH, json={"retry_key": "r"})
+    assert response.status_code == status_code
+    body = response.json()
+    assert body["job"] is None and (body["answer"]["id"], body["answer"]["status"]) == ("9008", status)
+    assert api.published == []
 
 
 @pytest.mark.parametrize(
@@ -368,14 +386,20 @@ def test_open_queues_the_snapshot_first_and_publishes_reach_only_the_member(monk
         loop.close()
 
 
-def test_publishing_without_subscribers_reads_nothing_and_a_failed_publish_does_not_raise(monkeypatch, caplog):
+def test_publishing_without_subscribers_reads_nothing(monkeypatch):
     events = ChatEvents()
     monkeypatch.setattr(chat_views, "related_ids", lambda *_args: pytest.fail("no subscriber, no read"))
     events.publish(FakeSession(), 101, [7003])
+
+
+def test_a_failed_publish_ends_the_members_connections_so_they_reconnect_for_the_stored_answer(monkeypatch, caplog):
+    """A completed answer is stored but its event cannot be read: no screen may stay at "답변 생성 중"."""
     loop = asyncio.new_event_loop()
     try:
         monkeypatch.setattr(chat_views, "snapshot", lambda *_args: chat_views.Snapshot([], LIMITS, T0))
-        events.open(FakeSession(), 101, loop, None)
+        events = ChatEvents()
+        mine = [events.open(FakeSession(), 101, loop, None).subscription for _ in range(2)]
+        other = events.open(FakeSession(), 202, loop, None).subscription
 
         def broken(*_args):
             raise RuntimeError("db down")
@@ -383,6 +407,31 @@ def test_publishing_without_subscribers_reads_nothing_and_a_failed_publish_does_
         monkeypatch.setattr(chat_views, "related_ids", broken)
         events.publish(FakeSession(), 101, [7003])
         assert "Chat event publish failed, user_id=101" in caplog.text
+        for subscription in mine:
+            first, last = drain(subscription, loop, 2)
+            assert first.startswith("event: snapshot\n") and last is CLOSED
+            # Nothing reaches an ended connection afterwards.
+            subscription.put("event: job\ndata: {}\n\n")
+            assert subscription._queue.empty()
+        assert drain(other, loop, 1)[0].startswith("event: snapshot\n") and other._queue.empty()
+    finally:
+        loop.close()
+
+
+def test_a_worker_notify_whose_session_fails_also_ends_the_connections(monkeypatch, caplog):
+    loop = asyncio.new_event_loop()
+    try:
+        monkeypatch.setattr(chat_views, "snapshot", lambda *_args: chat_views.Snapshot([], LIMITS, T0))
+        events = ChatEvents()
+        subscription = events.open(FakeSession(), 101, loop, None).subscription
+
+        def no_session():
+            raise RuntimeError("pool exhausted")
+
+        events.attach(no_session, SimpleNamespace(wake=lambda: None))  # type: ignore[arg-type]
+        events.notify(101, [7003])
+        assert "Chat event session failed, user_id=101" in caplog.text
+        assert drain(subscription, loop, 2)[1] is CLOSED
     finally:
         loop.close()
 
@@ -397,7 +446,8 @@ def test_the_event_stream_pings_when_idle_ends_on_closed_and_unsubscribes(monkey
         opened = chat_events.Opened(
             events.open(FakeSession(), 101, loop, None).subscription, datetime.now(UTC) + timedelta(hours=1)
         )
-        stream = chat_api.event_stream(events, opened, lambda: None)  # type: ignore[arg-type, return-value]
+        later = datetime.now(UTC) + timedelta(hours=1)
+        stream = chat_api.event_stream(events, opened, lambda: None, later)  # type: ignore[arg-type, return-value]
         first = await stream.__anext__()
         ping = await stream.__anext__()
         opened.subscription.put("event: job\ndata: {}\n\n")
@@ -412,6 +462,60 @@ def test_the_event_stream_pings_when_idle_ends_on_closed_and_unsubscribes(monkey
     first, ping, job_frame, still_subscribed = asyncio.run(run())
     assert first.startswith("event: snapshot\n") and ping == ": ping\n\n"
     assert job_frame == "event: job\ndata: {}\n\n" and still_subscribed is False
+
+
+def test_the_event_stream_ends_when_its_access_token_expires_without_touching_jobs(monkeypatch):
+    """Events after the expiry never reach the old connection; the screen reconnects with a valid token."""
+    monkeypatch.setattr(chat_api, "PING_SECONDS", 15.0)
+    monkeypatch.setattr(chat_queue, "cancel", lambda *_args: pytest.fail("ending a stream cancels nothing"))
+
+    async def run():
+        loop = asyncio.get_running_loop()
+        events = ChatEvents()
+        monkeypatch.setattr(chat_views, "snapshot", lambda *_args: chat_views.Snapshot([], LIMITS, T0))
+        opened = events.open(FakeSession(), 101, loop, None)
+        expires_at = datetime.now(UTC) + timedelta(seconds=0.2)
+        stream = chat_api.event_stream(events, opened, lambda: None, expires_at)  # type: ignore[arg-type]
+        first = await stream.__anext__()
+        started = loop.time()
+        # Nothing arrives: the wait ends at the expiry, well before the 15-second ping.
+        with pytest.raises(StopAsyncIteration):
+            await stream.__anext__()
+        waited = loop.time() - started
+        # A job event published after the expiry finds no subscriber.
+        opened.subscription.put("event: job\ndata: {}\n\n")
+        return first, waited, events.subscribed(101)
+
+    first, waited, still_subscribed = asyncio.run(run())
+    assert first.startswith("event: snapshot\n")
+    assert waited < 5 and still_subscribed is False
+
+
+def test_an_already_expired_access_ends_the_stream_before_any_event(monkeypatch):
+    async def run():
+        loop = asyncio.get_running_loop()
+        events = ChatEvents()
+        monkeypatch.setattr(chat_views, "snapshot", lambda *_args: chat_views.Snapshot([], LIMITS, T0))
+        opened = events.open(FakeSession(), 101, loop, None)
+        expired = datetime.now(UTC) - timedelta(seconds=1)
+        stream = chat_api.event_stream(events, opened, lambda: None, expired)  # type: ignore[arg-type]
+        with pytest.raises(StopAsyncIteration):
+            await stream.__anext__()
+        return events.subscribed(101)
+
+    assert asyncio.run(run()) is False
+
+
+def test_the_subscription_route_closes_at_the_tokens_expiry(api, auth_user_a, monkeypatch):
+    """The route passes the verified access expiry to the stream, so a token near its end gives a short stream."""
+    monkeypatch.setattr(chat_views, "snapshot", lambda *_args: chat_views.Snapshot([], LIMITS, T0))
+    soon = datetime.now(UTC) + timedelta(seconds=0.3)
+    access = VerifiedToken(user_id=auth_user_a["principal"]["user_id"], jti="j", issued_at=T0, expires_at=soon)
+    app.dependency_overrides[current_access] = lambda: access
+    response = call("GET", "/api/chat/events")
+    assert response.status_code == 200
+    assert response.text.startswith("event: snapshot\n")
+    assert ": ping" not in response.text
 
 
 def test_the_ledger_adapter_returns_reservation_ids(monkeypatch):

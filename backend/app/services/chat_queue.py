@@ -105,10 +105,12 @@ class SkipNotAllowed(QueueError):
 @dataclass(frozen=True)
 class Admission:
     question: Message
-    # None only for a question that the current synchronous API stored, which has no job.
+    # None only for a question or retry that the synchronous API before #53 stored, which has no job.
     job: ChatJob | None
     # False when the key was already admitted; nothing was reserved or stored.
     created: bool
+    # The attempt that a retry key of the synchronous API made; None otherwise.
+    answer: Message | None = None
 
 
 @dataclass(frozen=True)
@@ -211,6 +213,12 @@ def admit_retry(
 
     The question's latest answer must be failed or interrupted and no later question
     may have started; a later question that only waits does not prevent it.
+
+    A key is looked up before any of those checks, first among the queue's jobs, then
+    among the attempts that the synchronous API before #53 stored without a job. Either
+    way the stored attempt is returned as it is: a resend is never refused for a state
+    its own attempt caused, and never admitted again, which would also break the
+    attempt's unique retry key when it starts.
     """
     repository.lock_member(session, user_id)
     if not repository.lock_owned_conversation(session, user_id, conversation_id):
@@ -221,6 +229,9 @@ def admit_retry(
     stored = repository.retry_job(session, question.id, retry_key)
     if stored is not None:
         return Admission(question, stored, created=False)
+    earlier = repository.retry_answer(session, question.id, retry_key)
+    if earlier is not None:
+        return Admission(question, None, created=False, answer=earlier)
     latest = repository.latest_answer(session, question.id)
     if latest is None or latest.status not in RETRYABLE_STATUSES or repository.has_active_job(session, question.id):
         raise RetryNotAllowed

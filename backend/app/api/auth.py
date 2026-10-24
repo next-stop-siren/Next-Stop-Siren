@@ -27,7 +27,7 @@ from app.schemas.errors import ErrorResponse
 from app.security.settings import AuthSettings
 from app.security.login_limits import LoginFailureLimiter
 from app.security.session_values import verify_csrf_token
-from app.security.tokens import TokenVerifyError, VerifiedToken, verify_access_token, verify_refresh_token
+from app.security.tokens import TokenVerifyError, VerifiedToken, verify_access, verify_refresh_token
 from app.services.login import (
     InvalidCredentials,
     LoginUnavailable,
@@ -228,11 +228,7 @@ access_bearer = HTTPBearer(
 _COMPACT_JWT = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
 
 
-def current_user_id(
-    request: Request,
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(access_bearer)],
-) -> int:
-    """Bearer access를 검증한 사용자 ID만 전달한다. 쿠키와 입력 본문은 인증에 사용하지 않는다."""
+def _verified_access(request: Request, credentials: HTTPAuthorizationCredentials | None) -> VerifiedToken:
     if (
         len(request.headers.getlist("authorization")) != 1
         or credentials is None
@@ -242,9 +238,25 @@ def current_user_id(
     # 인증 정보가 없거나 잘못된 요청은 DB 세션을 열기 전에 거부한다.
     settings = request_auth_settings(request)
     try:
-        return verify_access_token(credentials.credentials, settings)
+        return verify_access(credentials.credentials, settings)
     except TokenVerifyError:
         raise unauthenticated() from None
+
+
+def current_user_id(
+    request: Request,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(access_bearer)],
+) -> int:
+    """Bearer access를 검증한 사용자 ID만 전달한다. 쿠키와 입력 본문은 인증에 사용하지 않는다."""
+    return _verified_access(request, credentials).user_id
+
+
+def current_access(
+    request: Request,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(access_bearer)],
+) -> VerifiedToken:
+    """`current_user_id`와 같은 검증에 access 만료 시각을 더해 전달한다. 실시간 연결이 만료에 끊을 때 쓴다."""
+    return _verified_access(request, credentials)
 
 
 def authenticated_session() -> Iterator[Session]:

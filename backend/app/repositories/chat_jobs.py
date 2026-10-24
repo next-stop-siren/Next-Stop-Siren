@@ -95,6 +95,18 @@ def retry_job(session: Session, question_id: int, retry_key: str) -> ChatJob | N
     return session.scalars(statement).one_or_none()
 
 
+def retry_answer(session: Session, question_id: int, retry_key: str) -> Message | None:
+    """The answer attempt that this retry key made for the question, with or without a job.
+
+    The synchronous API before #53 stored retries as answer rows only, so a resend of
+    such a key has no job to find. `messages_retry_key_uq` keeps one row per key.
+    """
+    statement = select(Message).where(
+        Message.reply_to_message_id == question_id, Message.role == "assistant", Message.retry_key == retry_key
+    )
+    return session.scalars(statement.execution_options(populate_existing=True)).one_or_none()
+
+
 def has_active_job(session: Session, question_id: int) -> bool:
     statement = select(ChatJob.id).where(ChatJob.question_message_id == question_id, ChatJob.state.in_(ACTIVE_STATES))
     return session.scalar(statement) is not None
@@ -382,11 +394,13 @@ def touched_conversations(session: Session, user_id: int, since: datetime) -> Se
     return session.scalars(statement).all()
 
 
-def failed_latest_jobs(session: Session, conversation_ids: Sequence[int]) -> Sequence[ChatJob]:
-    """Failed or interrupted jobs whose answer is the newest attempt of one of the two last executed questions.
+def failed_recent_jobs(session: Session, conversation_ids: Sequence[int]) -> Sequence[ChatJob]:
+    """Every failed or interrupted attempt of the two last executed questions of each conversation.
 
-    Only these can offer retry or skip, or have just stopped offering them: a new start
-    in a conversation affects its latest executed question and the one before it.
+    These are the jobs whose retry and skip buttons can change: a new start in a
+    conversation affects its latest executed question and the one before it. Earlier
+    attempts are included too, because a retry that completes elsewhere takes the
+    buttons off the attempt before it; the screen must receive that attempt with `[]`.
     """
     if not conversation_ids:
         return []
@@ -399,18 +413,10 @@ def failed_latest_jobs(session: Session, conversation_ids: Sequence[int]) -> Seq
         .limit(2)
         .correlate(ChatJob)
     )
-    newer = aliased(Message)
     statement = (
         select(ChatJob)
         .where(ChatJob.conversation_id.in_(conversation_ids), ChatJob.state.in_(("failed", "interrupted")))
         .where(ChatJob.question_message_id.in_(recent))
-        .where(
-            ~exists().where(
-                newer.reply_to_message_id == ChatJob.question_message_id,
-                newer.role == "assistant",
-                newer.id > ChatJob.answer_message_id,
-            )
-        )
         .order_by(ChatJob.id)
     )
     return session.scalars(statement.execution_options(populate_existing=True)).all()
