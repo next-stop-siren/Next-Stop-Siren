@@ -1,16 +1,14 @@
 # 기술 구성과 실행 경계
 
-[회원 채팅 정책](../04-reference/chat-policy.md)은 미래 구현 기준이다. #52는 영속 작업·실행·복구와 스키마 적용·되돌림을, #15는 예약·정산을, #53은 API 통합을 맡는다. #53이 #15 한도와 #52 대기열을 질문·재시도·건너뛰기·취소·구독 API에 연결했고, 앱 시작 때 대기열 실행기가 함께 뜬다. 이전의 동기 생성·`/messages/stream`은 제거했다. 화면 실제 연동과 운영 준비는 별도다.
-
-현재 백엔드는 로컬 가입·로그인, 쿠키 세션, Google OIDC, 본인 대화·메시지 저장·재조회를 제공한다. 화면의 실제 인증·채팅 연결과 운영 배포는 후속 작업이다. 구현 계약은 [API](../04-reference/api.md), [DB](../04-reference/database.md), [인증](../04-reference/authentication.md)을 따른다.
+PR #57의 한도, PR #59의 영속 대기열, PR #62의 API·실행기·구독 통합이 병합됐다. 동기 생성·`/messages/stream`은 제거됐다. 현재 계약은 [API](../04-reference/api.md), 저장 구조는 [DB](../04-reference/database.md), 정책의 의도와 한계는 [회원 채팅 정책](../04-reference/chat-policy.md)을 따른다.
 
 | 영역 | 현재 저장소 | 남은 연결·검증 |
 | --- | --- | --- |
-| 화면 | React·TypeScript·Vite, 비회원 소개·인증 모달 | 실제 인증·회원 채팅 API 연결 |
-| 서버 | FastAPI 라우터·서비스·저장소, health/ready·인증·대화 API | 화면과의 통합·배포 검증 |
-| 저장 | PostgreSQL, SQLAlchemy 2.0.44 동기 Session, 제품 5개 테이블 | 기존 스키마 변경 절차·운영 백업 |
+| 화면 | React·TypeScript·Vite, 인증 API·기본 HTTP 채팅·대기열 목업 | 실제 MemberChat 대기열·SSE·작업 동작 연결 |
+| 서버 | FastAPI 라우터·서비스·저장소, health/ready·인증·대화·대기열·구독 API | 화면과의 통합·배포 검증 |
+| 저장 | PostgreSQL, SQLAlchemy 2.0.44 동기 Session, 등록 ORM 모델 10개 | 기존 스키마 변경 절차·운영 백업 |
 | 데이터 경계 | 별도 Pydantic 요청·응답과 ORM 모델 | 구현 변경마다 계약·소유권 검사 유지 |
-| 인증 | PyJWT·Authlib·Argon2id, refresh 회전·CSRF·Google callback, 명시한 Google 프런트 Origin으로 복귀 | 화면 세션 완료, 공유 로그인 제한·운영 설정 |
+| 인증 | PyJWT·Authlib·Argon2id, refresh 회전·CSRF·Google callback, 명시한 Google 프런트 Origin으로 복귀 | 실제 Google 실패 복귀·통합 검증, 공유 로그인 제한·운영 설정 |
 | 외부 AI | Codyssey `gpt-5.5` 어댑터·격리 스모크 경로 | 일반 앱은 모의 제공자 유지; 실제 공개 연결은 후속 승인 |
 | 검사·설치 | npm·uv 잠금, pytest·Ruff·mypy·Vitest·Playwright·Biome | 실제 브라우저 가입→채팅 E2E, Windows 실행 |
 

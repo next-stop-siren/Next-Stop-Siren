@@ -1,8 +1,12 @@
-# 공통 API 형식과 첫 모의 응답
+# API 계약
+
+**Rev 1 · 2026-10-25 (KST)** · 코드 기준: [`2d50da5`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/2d50da5976548db7b85c5b0b931b7c43e622fa15)
+
+변경 근거: [PR #50](https://github.com/next-stop-siren/Next-Stop-Siren/pull/50) · [PR #56](https://github.com/next-stop-siren/Next-Stop-Siren/pull/56) · [PR #57](https://github.com/next-stop-siren/Next-Stop-Siren/pull/57) · [PR #59](https://github.com/next-stop-siren/Next-Stop-Siren/pull/59) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62). Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
 
 이 문서는 **현재 구현 계약**이다. #53부터 질문·재시도는 [회원 채팅 정책](chat-policy.md)의 대기열로 접수하고, 결과는 회원 단위 구독과 작업 조회로 받는다([회원 채팅 대기열](#회원-채팅-대기열-53)). 이전의 동기 생성(`201`), `409 conversation_busy`, `502`·`504`, `/messages/stream`, D4 재시도와 60초 `pending` 회복은 더 이상 쓰지 않는다. 네 메시지 상태와 공개 메시지 형식은 그대로다.
 
-현재 백엔드는 health/ready, 로컬·Google 인증, 쿠키 세션, 본인 대화·메시지 API와 대기열·구독 API를 등록한다. 일반 채팅은 모의 답변을 저장·재조회하며 실제 AI 키를 요구하지 않는다. 화면의 대기열·구독 실제 연동은 화면 담당(#20, #21)이 이어서 한다. 실행·Swagger 확인은 [온보딩](../01-start/onboarding.md#3-1-swagger로-가입로그인과-모의-대화-확인)을 따른다. 예시 계정·내용·시각은 가짜다.
+현재 백엔드는 health/ready, 로컬·Google 인증, 쿠키 세션, 본인 대화·메시지 API와 대기열·구독 API를 등록한다. 일반 채팅은 모의 답변을 저장·재조회하며 실제 AI 키를 요구하지 않는다. 인증 화면과 기본 HTTP 채팅은 있지만 실제 MemberChat 대기열·구독 연동은 남았다. #18·#20·#21은 목업 범위로 종료됐으며 실제 연결 후속 이슈는 등록이 필요하다. 실행·Swagger 확인은 [온보딩](../01-start/onboarding.md#3-1-swagger로-가입로그인과-모의-대화-확인)을 따른다. 예시 계정·내용·시각은 가짜다.
 
 ## 공통 규칙
 
@@ -55,7 +59,7 @@
 
 ## 인증 요청·응답
 
-정책과 브라우저 절차는 [인증 구현 기준](authentication.md)을 따른다. 인증 경로는 백엔드에 구현되어 있으며, 화면의 복구·재시도 연결은 별도 작업이다. 예시 계정·토큰·시각은 가짜 테스트 데이터다.
+정책과 브라우저 절차는 [인증 구현 기준](authentication.md)을 따른다. 인증 경로는 백엔드에 구현되어 있으며, 화면의 세션 복구·제한된 refresh 재시도는 PR #50에 구현됐고 실제 통합 검증은 #19에 남아 있다. 예시 계정·토큰·시각은 가짜 테스트 데이터다.
 
 모든 인증 오류도 위의 `error`/`fields`/`trace_id` 형식을 쓴다. 없는 계정과 틀린 비밀번호는 같은 `401 unauthenticated` 문구다. 로컬 가입·로그인 및 refresh·logout `POST`에는 정확히 허용된 `Origin`(요청을 시작한 화면의 출처)이 필요하다. Google의 top-level 시작·callback `GET`은 state·nonce·PKCE로 검증한다.
 
@@ -273,7 +277,7 @@ Google 트랜잭션 쿠키는 시작과 callback을 모두 포함하는 `Path=/a
 
 ## 회원 채팅 대기열 (#53)
 
-질문과 재시도는 **접수만 하고 `202`로 바로 응답**한다. 생성은 서버의 실행기가 회원별 대기열 순서대로 하고, 진행·완료는 회원 단위 구독 `GET /api/chat/events`로 알린다. 응답·이벤트 예시 전문과 시나리오는 [대기열 API 상세](chat-queue-api-draft.md), 승인 정책은 [회원 채팅 정책](chat-policy.md)이다. 아래는 구현된 계약이며 예시와 다르면 이 절이 우선한다.
+질문과 재시도는 **접수만 하고 `202`로 바로 응답**한다. 생성은 서버의 실행기가 회원별 대기열 순서대로 하고, 진행·완료는 회원 단위 구독 `GET /api/chat/events`로 알린다. HTTP 경로·요청·응답·오류·이벤트의 단일 계약은 이 절이다. [채팅 시나리오](chat-queue-api-draft.md)는 이를 사용하는 가짜 예시와 화면 확인 목록이며, [회원 채팅 정책](chat-policy.md)은 수량·기간·정산·대기·재시도 정책과 구현 경계를 정한다.
 
 | 바뀐 점 | #53 이전 | 지금 |
 | --- | --- | --- |
@@ -298,16 +302,85 @@ Google 트랜잭션 쿠키는 시작과 callback을 모두 포함하는 `Path=/a
 | `paused` | 같은 대화의 앞 질문 실패로 대기 | 예약 | `["cancel"]` |
 | `running` | 생성 중 또는 저장 여부 확인 중; 회원당 1개 | 예약 유지 | `[]` |
 | `completed` | 답변 저장 확인 | 1회 차감 | `[]` |
-| `failed` | 제공자 실패(`provider_failed`) | 환불 | 아래 규칙 |
-| `interrupted` | 30초 초과·재시작 등, 저장 없음 확인(`outcome_unknown`) | 환불 | 아래 규칙 |
-| `canceled` | 실행 전 취소 | 환불 | `[]` |
-| `expired` | 실행 전 5분 경과 | 환불 | `[]` |
+| `failed` | 제공자 실패(`provider_failed`) | 예약 해제 | 아래 규칙 |
+| `interrupted` | 30초 초과·재시작 등, 저장 없음 확인(`outcome_unknown`) | 예약 해제 | 아래 규칙 |
+| `canceled` | 실행 전 취소 | 예약 해제 | `[]` |
+| `expired` | 실행 전 5분 경과 | 예약 해제 | `[]` |
 
 `failed`·`interrupted` 작업은 답변이 그 질문의 **최신 시도**이고, 그 질문의 다른 시도가 대기·실행 중이 아니며, 같은 대화의 뒤 질문이 실행을 시작하지 않았을 때 `retry`를 허용한다. 그 대화가 이 작업 때문에 정지 중이면 `skip`도 허용한다(`["retry", "skip"]`). 건너뛴 뒤에는 `["retry"]`, 뒤 질문이 시작되면 `[]`다. 화면은 버튼을 `allowed_actions`로만 정하고, 한도·간격은 `limits`로 비활성화한다.
+
+```json
+{
+  "id": "7003",
+  "kind": "question",
+  "conversation_id": "501",
+  "question_message_id": "9005",
+  "answer_message_id": null,
+  "state": "paused",
+  "position": null,
+  "paused_by_message_id": "9003",
+  "error_code": null,
+  "accepted_at": "2026-10-20T03:00:40Z",
+  "started_at": null,
+  "finished_at": null,
+  "expires_at": "2026-10-20T03:05:40Z",
+  "allowed_actions": ["cancel"]
+}
+```
+
+```mermaid
+stateDiagram-v2
+  [*] --> queued: 접수
+  [*] --> paused: 같은 대화 앞 질문이 실패 중
+  queued --> paused: 앞 질문 실패
+  paused --> queued: 앞 질문 재시도 성공 또는 건너뛰기
+  queued --> running: 차례가 됨
+  queued --> canceled: 실행 전 취소
+  paused --> canceled: 실행 전 취소
+  queued --> expired: 접수 후 5분
+  paused --> expired: 접수 후 5분
+  running --> completed: 답변 저장 확인
+  running --> failed: 제공자 실패
+  running --> interrupted: 30초 초과·재시작 뒤 저장 없음 확인
+  completed --> [*]
+  failed --> [*]
+  interrupted --> [*]
+  canceled --> [*]
+  expired --> [*]
+```
 
 ### 한도 — `limits`
 
 `daily`·`six_hour`는 `limit`, `used`(정산), `reserved`(미종결), `remaining`(= `limit` − `used` − `reserved`), `resets_at`(KST 00:00 / 00·06·12·18시를 UTC로)이다. `queue`는 `running`, `questions_waiting`(`queued`·`paused` 새 질문), `questions_max: 3`, `retries_waiting`(`queued` 재시도), `retries_max: 1`이다. `next_attempt_at`은 직전 접수 + 10초이며 지금 접수할 수 있으면 `null`이다.
+
+```json
+{
+  "daily": {
+    "limit": 400,
+    "used": 12,
+    "reserved": 2,
+    "remaining": 386,
+    "resets_at": "2026-10-20T15:00:00Z"
+  },
+  "six_hour": {
+    "limit": 100,
+    "used": 5,
+    "reserved": 2,
+    "remaining": 93,
+    "resets_at": "2026-10-20T09:00:00Z"
+  },
+  "queue": {
+    "running": 1,
+    "questions_waiting": 1,
+    "questions_max": 3,
+    "retries_waiting": 0,
+    "retries_max": 1
+  },
+  "next_attempt_at": "2026-10-20T03:00:50Z"
+}
+```
+
+수량·초기화·정산·대기·FIFO·재시도 정책은 [회원 채팅 정책](chat-policy.md)을 따른다. 위 객체는 그 정책을 화면에 전달하는 응답 형식이다. 새 질문 대기와 재시도 대기는 별도 필드로 표현하고 실행 중 작업을 포함하지 않는다.
 
 ### 질문 접수 — `POST /api/conversations/501/messages`
 
@@ -344,7 +417,7 @@ Google 트랜잭션 쿠키는 시작과 callback을 모두 포함하는 `Path=/a
 
 ### 실행 전 취소 — `POST /api/chat/jobs/7003/cancel`
 
-본문은 `{}`다. `queued`·`paused`만 취소하고 예약을 환불한다. `200`, `{job, limits}`다. 이미 `canceled`면 같은 결과를 `200`으로 돌려준다. `running`과 다른 종결 상태는 `409 job_not_cancelable`이다. 실행 시작·만료와 겹치면 먼저 반영된 하나만 결과가 된다. 실행 중 취소는 없다.
+본문은 `{}`다. `queued`·`paused`만 취소하고 예약을 해제한다. `200`, `{job, limits}`다. 이미 `canceled`면 같은 결과를 `200`으로 돌려준다. `running`과 다른 종결 상태는 `409 job_not_cancelable`이다. 실행 시작·만료와 겹치면 먼저 반영된 하나만 결과가 된다. 실행 중 취소는 없다.
 
 ### 한도 조회 — `GET /api/chat/limits`
 
@@ -352,14 +425,14 @@ Google 트랜잭션 쿠키는 시작과 callback을 모두 포함하는 `Path=/a
 
 ### 구독 — `GET /api/chat/events?since=2026-10-20T03:00:52Z`
 
-회원 단위 SSE(`text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`)다. `Authorization` 헤더가 필요하므로 화면은 `fetch` 스트림으로 읽는다. `since`는 시간대가 있는 ISO 시각이어야 하며 없으면 `422`다.
+회원 단위 SSE(`text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`)다. `Authorization` 헤더가 필요하므로 화면은 `fetch` 스트림으로 읽는다. `since`는 생략할 수 있다. 제공한 값에 시간대가 없거나 ISO 시각이 아니면 `422`다.
 
 | 이벤트 | 보내는 시점 | `data` |
 | --- | --- | --- |
 | `snapshot` | 연결 직후 1회, 다른 이벤트보다 먼저 | `{items: [{job, question, answer}...], limits, server_time}` |
 | `job` | 작업 상태·순번·`allowed_actions`가 바뀐 변경이 **커밋된 뒤** | `{job, question, answer}` |
 | `delta` | 실행 중 답변 조각 | `{job_id, text}` |
-| `limits` | 예약·정산·환불 뒤, 한도 기간이 초기화된 뒤 | `limits` |
+| `limits` | 예약·정산·예약 해제 뒤, 한도 기간이 초기화된 뒤 | `limits` |
 
 - `snapshot.items`: 종결 전 작업 전체. `since`가 있으면 그 시각(서버가 30초 여유를 둠) 이후 끝난 작업과, 같은 대화의 변경으로 버튼이 바뀌었을 수 있는 실패 작업도 넣는다. 이 실패 작업은 `since` 시점에 그 대화에서 마지막으로 실행된 질문과 그 뒤 질문들의 것이라서, 끊긴 동안 질문이 몇 개 실행됐든 빠지지 않는다. 같은 작업이 겹쳐 오면 `job.id`로 덮어쓴다.
 - 한 변경이 다른 작업의 버튼·순번을 바꾸면 그 작업들의 `job` 이벤트도 보낸다. 한 회원의 이벤트는 읽은 순서대로 도착한다.
@@ -375,9 +448,9 @@ Google 트랜잭션 쿠키는 시작과 callback을 모두 포함하는 `Path=/a
 | 보장 | 동작 |
 | --- | --- |
 | 원자적 입장 | 질문·작업·두 기간 예약을 한 트랜잭션으로 저장. 회원 행 → 대화 → 한도 행 순으로 잠가 동시 탭·기기에서도 대기 3개·재시도 1개·10초 간격을 넘지 않는다. |
-| 실행 시 문맥 | 실행 시작 때 그 질문 이전의 `completed` 질문+답변 쌍을 순서대로 읽고 현재 질문을 한 번 붙인다. 실패·중단·진행 중 답변과 `delta`는 넣지 않는다. |
+| 실행 시 문맥 | 실행 시작 때 이전 완료 질문·답변만 읽고 현재 질문을 한 번 붙인다. 실패·중단·진행·`delta`는 제외한다. **쌍 순서는 아래 알려진 차이를 확인한다.** |
 | 저장 뒤 완료 알림 | 답변 저장과 정산이 커밋된 뒤에만 `completed` 이벤트를 보낸다. 커밋이 실패하면 알리지 않고 작업은 `running`으로 남아 복구가 종결한다. |
-| 한 번만 정산 | 작업마다 차감 또는 환불은 정확히 한 번이다. 결과 불명 동안 예약을 유지한다. 초기화를 넘긴 환불은 새 기간 잔량을 늘리지 않는다. |
+| 한 번만 정산 | 작업마다 차감 또는 예약 해제는 정확히 한 번이다. 결과 불명 동안 예약을 유지한다. 초기화를 넘긴 예약 해제는 새 기간 잔량을 늘리지 않는다. |
 | 자동 재시도 없음 | 실패·중단 뒤나 재시작 복구에서 제공자를 다시 부르지 않는다. 기한 + 15초가 지난 `running`은 저장된 완료 답변이 있으면 완료, 아니면 `interrupted`로 종결한다. |
 | 늦은 결과 무시 | 결과는 시작 때 발급한 실행 토큰이 일치하는 `running` 작업에만 저장한다. 종결 상태·새 시도·완료 답변은 덮어쓰지 않는다. |
 | 재시작 | 서버가 다시 뜨면 실행기가 만료 전 대기 작업을 이어서 실행한다. #53 이전 동기 API가 남긴 작업 없는 `pending` 답변은 그 대화의 다음 실행 시작 때 `interrupted`로 닫는다. |
@@ -396,13 +469,11 @@ Google 트랜잭션 쿠키는 시작과 callback을 모두 포함하는 `Path=/a
 
 `Retry-After`는 1 이상의 정수 초(올림)이며 CORS `Access-Control-Expose-Headers`에 포함된다.
 
-## 의존 관계와 인수 확인
+## 알려진 구현 차이와 인수 확인
 
-다음은 작업 ID의 의존 관계이며 현재 미구현 목록이 아니다. 기존 소스·테스트와 실제 이슈 상태를 함께 확인한다.
+완료 쌍을 `Q1 → A1 → Q2 → A2`로 구성하는 것이 정책이다. 현재 `app.repositories.chat_jobs.context_before()`는 메시지 ID로 정렬한다. Q1·Q2가 답변보다 먼저 접수되면 `Q1 → Q2 → A1 → A2`가 될 수 있어 **정책과 구현에 차이가 있다**. 완료 쌍 필터링의 존재를 순서 보장 완료로 표시하지 않는다. 이 문서는 결함을 수정하지 않는다.
 
-1. PM이 이 형식과 미정 항목을 공유한다. #2 인증 담당은 재사용 가능한 pytest 인증 fixture와 401 검사를 만든다. #9 뒤 #8 채팅 담당은 사용자 `101`·`202`의 분리된 이력을 조회 함수와 pytest로 검증한다.
-2. #10 채팅 담당은 #8의 소유권 조회 함수를 API에 연결하고, #11에서 짧은 트랜잭션에 질문+`pending` 답변을 만든 뒤 트랜잭션 밖에서 모의 제공자를 호출한다. 완료 결과만 저장한다.
-3. #18 화면 담당은 이 형식으로 목록·전송·새로고침 재조회를 연결한다. 실제 인증 통합은 위 인증 기준에 따라 별도로 검증한다.
+아래는 구현 변경과 실제 화면 통합 때 유지할 인수 목록이다. 체크박스는 이 문서 작업에서 테스트를 재실행했다는 표시가 아니다.
 
 - [ ] 두 사용자에게 대화·메시지가 섞이지 않고, 비인증 401과 타인 대화 404가 구분된다.
 - [ ] `bigint` ID를 문자열로 유지하고 목록 페이지에 누락·중복이 없다.
@@ -411,6 +482,12 @@ Google 트랜잭션 쿠키는 시작과 callback을 모두 포함하는 `Path=/a
 - [ ] 제공자 호출 중 DB 트랜잭션·잠금을 열어 두지 않고 30초 기한을 실행기가 강제한다. 기한 + 15초가 지난 `running`은 복구가 종결하고 늦은 결과가 덮어쓰지 못한다.
 - [ ] 접수와 두 기간 예약이 함께 저장되거나 함께 거부되고, 같은 키는 한도 0·10초 전에도 기존 작업을 돌려준다.
 - [ ] 실패는 같은 대화의 뒤 질문만 정지하고, 재시도 성공이나 건너뛰기만 재개한다. 뒤 질문이 시작되면 앞 질문 재시도는 `409 retry_not_latest`다.
-- [ ] `completed` 이벤트는 저장·정산 커밋 뒤에만 오고, 작업마다 차감 또는 환불은 한 번이다. 연결 끊김·로그아웃은 작업을 멈추지 않고 재연결 `snapshot`이 저장 결과를 준다.
+- [ ] `completed` 이벤트는 저장·정산 커밋 뒤에만 오고, 작업마다 차감 또는 예약 해제는 한 번이다. 연결 끊김·로그아웃은 작업을 멈추지 않고 재연결 `snapshot`이 저장 결과를 준다.
 
-백엔드 라우트·ORM 모델·인증/채팅 검사는 존재하지만 실제 화면 가입→채팅 E2E나 운영 준비 완료를 뜻하지 않는다. 실제 GPT 어댑터·격리 시험 경계는 [S11 기준](ai.md)을 따른다. 대기열 실행기는 제공자의 `stream`을 쓰는데 실제 Codyssey 어댑터에는 아직 `complete`만 있으므로, 공개 서비스는 모의 제공자를 유지하고 실제 AI 연결은 별도 작업에서 `stream`을 더해 검증한다. 화면의 대기열·구독 실제 연동(#20, #21)과 독립 검증(#54)이 뒤따른다.
+백엔드 라우트·ORM 모델·인증/채팅 검사는 존재하지만 실제 화면 가입→채팅 E2E나 운영 준비 완료를 뜻하지 않는다. 실제 GPT 어댑터·격리 시험 경계는 [S11 기준](ai.md)을 따른다. 대기열 실행기는 제공자의 `stream`을 쓰는데 실제 Codyssey 어댑터에는 아직 `complete`만 있으므로, 공개 서비스는 모의 제공자를 유지하고 실제 AI 연결은 별도 작업에서 `stream`을 더해 검증한다. 실제 MemberChat 연결 후속 이슈 등록과 #19·#54 통합 검증이 남았다. 기존 #20·#21의 목업 완료 이력은 유지한다.
+
+## 변경 이력
+
+| Rev | 일자 (KST) | 변경과 근거 |
+| --- | --- | --- |
+| 1 | 2026-10-25 | PR #62 이후 단일 API 계약, 구독 복구, 실제 화면 미연동과 문맥 순서 차이를 정리했다. 기준 코드는 위 고정 SHA이며 근거 PR은 문서 상단에 있다. |

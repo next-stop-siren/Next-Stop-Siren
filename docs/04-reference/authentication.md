@@ -1,10 +1,14 @@
 # 인증 구현 기준
 
+**Rev 1 · 2026-10-25 (KST)** · 코드 기준: [`2d50da5`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/2d50da5976548db7b85c5b0b931b7c43e622fa15)
+
+변경 근거: [PR #47](https://github.com/next-stop-siren/Next-Stop-Siren/pull/47) · [PR #48](https://github.com/next-stop-siren/Next-Stop-Siren/pull/48) · [PR #50](https://github.com/next-stop-siren/Next-Stop-Siren/pull/50) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62). Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
+
 [회원 채팅 목표](chat-policy.md)의 접수·조회·구독·실행 전 취소·재시도·건너뛰기도 검증된 회원과 대화 소유권으로 제한한다. #19는 이 경계와 비공개 화면·구독 격리를 확인한다.
 
 로그아웃 시 화면의 대화·임시 출력·구독을 제거하되 서버 작업은 취소하지 않는다. 기존 access·refresh 유효성과 잔여 access 규칙은 유지한다.
 
-이 문서는 승인된 D1 A·B·C 정책의 팀 구현 기준이다. 앱 JWT는 PyJWT, Google OAuth/OIDC는 Authlib, 비밀번호 해시는 `argon2-cffi`를 선택했다. 세 라이브러리는 현재 잠금 의존성에 포함된다. [기술 구성](../01-start/stack.md)에 현재 상태를 정리했다. 경로별 요청·응답은 [공통 API 형식](api.md), 저장 제약은 [DB 설계](database.md)를 따른다. 로컬·Google 인증, Bearer 현재 사용자, CSRF·refresh·logout 경로와 관련 검사가 구현되어 있다. 화면 연결과 실제 브라우저 통합·운영 검증은 별도다. 운영 Origin·키·Google 자격 증명과 공유 로그인 제한 방식은 배포 전에 정한다.
+이 문서는 승인된 D1 A·B·C 정책의 팀 구현 기준이다. 앱 JWT는 PyJWT, Google OAuth/OIDC는 Authlib, 비밀번호 해시는 `argon2-cffi`를 선택했다. 세 라이브러리는 현재 잠금 의존성에 포함된다. [기술 구성](../01-start/stack.md)에 현재 상태를 정리했다. 경로별 요청·응답은 [공통 API 형식](api.md), 저장 제약은 [DB 설계](database.md)를 따른다. 로컬·Google 인증, Bearer 현재 사용자, CSRF·refresh·logout 경로와 관련 검사가 구현되어 있다. 화면 인증 API·세션 복구는 PR #50에서 연결됐다. 실제 브라우저 통합·운영 검증과 Google 실패 리다이렉트는 별도다. 운영 Origin·키·Google 자격 증명과 공유 로그인 제한 방식은 배포 전에 정한다.
 
 여기서 **확인된 사용자 정보(principal)**는 서버가 로그인 자격을 검사해 얻은 사용자 ID다. **계보(lineage)**는 한 번의 로그인에서 시작해 refresh 토큰을 교체하며 이어진 세션들의 연결이다.
 
@@ -50,7 +54,7 @@
 1. 화면은 서버의 `/api/auth/google/start`로 top-level 이동한다. 서버는 요청과 callback을 연결하는 `state`, ID 토큰을 해당 로그인에 묶는 `nonce`, code 교환을 보호하는 PKCE(S256)를 만든다. 서버는 state·nonce·PKCE verifier를 암호화·무결성 보호된 짧은 수명의 앱 호스트 전용 트랜잭션 쿠키에 담아 설정한다. 그런 다음 브라우저를 Google로 이동시킨다.
 2. `/api/auth/google/callback`은 일회용 code를 교환하고 state·nonce·verifier, JWKS 서명·허용 알고리즘·`iss`·client `aud`·`exp`·`iat`·`nonce`·`email_verified=true`·필수 이메일을 검증한다. 검증된 `(issuer, subject)`로만 사용자를 찾는다.
 3. 성공 시 서버는 refresh·CSRF 쿠키를 발급하고 아래 설정에 따라 복귀한다. callback URL은 API `:8000`이며 host-only 쿠키는 같은 호스트의 포트 사이에서 유지된다.
-4. 화면은 `/api/auth/csrf` → `/api/auth/refresh`로 access를 받아 메모리에 둬야 한다. 이 화면 세션 완료 연결은 아직 미구현이다([#17](https://github.com/next-stop-siren/Next-Stop-Siren/issues/17), [#19](https://github.com/next-stop-siren/Next-Stop-Siren/issues/19)). redirect URL·쿠키에 access를 넣지 않는다.
+4. 화면은 `/api/auth/csrf` → `/api/auth/refresh`로 access를 받아 메모리에 둬야 한다. 화면 세션 복구는 PR #50에 구현됐다. Google 실패의 실제 리다이렉트는 제외됐으며 #19의 인증·소유권 통합 검증은 열려 있다. redirect URL·쿠키에 access를 넣지 않는다.
 
 | `GOOGLE_FRONTEND_ORIGIN` | callback 성공 후 복귀 |
 | --- | --- |
@@ -66,7 +70,7 @@ Origin은 API와 scheme·hostname이 같고 `AUTH_ALLOWED_ORIGINS`에 정확히 
 
 | 항목 | 구현 기준 |
 | --- | --- |
-| 비밀번호 해시 | Argon2id, 메모리 64 MiB·반복 3·병렬성 1·salt 16바이트·해시 32바이트. 승인된 Python 라이브러리는 `argon2-cffi`; 호환 버전은 구현 때 선택·검증한다. |
+| 비밀번호 해시 | Argon2id, 메모리 64 MiB·반복 3·병렬성 1·salt 16바이트·해시 32바이트. 승인된 Python 라이브러리는 `argon2-cffi`; 현재 잠금 버전은 25.1.0이다. |
 | Access JWT | 15분, 메모리 전용. URL·저장소·쿠키 금지. |
 | Refresh JWT | 최초 로그인부터 절대 14일. 회전 후임은 루트 `expires_at`을 상속하고 새 `jti`를 가진다. 남은 시간이 없으면 재로그인한다. |
 | JWT 검증 | 종류별 서로 다른 256비트 이상 HS256 키, 승인 `kid`만 허용. `iss`, 앱 전용 `aud`, 십진 문자열 `sub`, `iat`·`nbf`·`exp`·`jti`·`token_type`을 검증한다. access/refresh 교차 사용 금지. |
@@ -90,6 +94,8 @@ Origin은 API와 scheme·hostname이 같고 `AUTH_ALLOWED_ORIGINS`에 정확히 
 
 **서로 맞지 않는 쿠키와 헤더.** 새 refresh 쿠키에 낡은 메모리 CSRF 헤더가 붙으면 403이다. 이를 재사용의 증거로 삼지 않는다. 순환·4096 초과·사용자 불일치 등 손상된 계보는 토큰 발급 없이 503과 운영 경보로 처리하고, 폐기 성공을 주장하지 않는다.
 
+로그인 실패 제한은 현재 프로세스 메모리 안의 카운터다. 공유 카운터·신뢰할 프록시의 주소 경계와 가입 해시 전 입장 제한은 운영 검토가 남았다. 아래 요구사항을 전체 배포 완료 주장으로 해석하지 않는다.
+
 ## 구현·출시 확인
 
 - [ ] 해시 파라미터와 입력 경계, 로컬 이메일 중복, 같은 이메일의 분리된 Google 계정을 검증한다.
@@ -100,3 +106,9 @@ Origin은 API와 scheme·hostname이 같고 `AUTH_ALLOWED_ORIGINS`에 정확히 
 - [ ] 다중 인스턴스 로그인 실패 제한의 공유 원자 카운터 또는 프록시 방식을 결정한다. 그 전에는 다중 인스턴스 실제 로그인을 열지 않는다.
 
 보존·삭제 기간, 백업·운영 로그와 계정 삭제는 별도 개인정보 결정이다. 이 문서는 구현·배포 검증을 대신하지 않는다.
+
+## 변경 이력
+
+| Rev | 일자 (KST) | 변경과 근거 |
+| --- | --- | --- |
+| 1 | 2026-10-25 | 인증·세션 구현과 화면 연결, Google 실패·운영 검증의 경계를 갱신했다. 기준 코드는 위 고정 SHA이며 근거 PR은 문서 상단에 있다. |

@@ -226,7 +226,7 @@ PowerShell 명령은 Windows에서 실제 실행하지 않았다.
 
 목적지는 서버 설정과 허용된 `return_to`(현재 `/`만)로 결정하며 요청 헤더·쿼리의 임의 URL은 사용하지 않는다. 설정 항목이 없으면 예전처럼 `Location: /`가 되어 API `:8000`에 남는다. 그 최종 페이지의 404와 callback 성공을 구분한다.
 
-쿠키는 host-only이므로 같은 `127.0.0.1`의 포트가 달라도 API 요청에 사용할 수 있다. `Path=/api/auth`, HttpOnly·SameSite·Secure 정책은 그대로이며 JavaScript가 쿠키를 직접 읽지 않는다. 화면에서 credentials를 포함한 `/api/auth/csrf` → `/api/auth/refresh`로 access를 받아 메모리에 두는 연결은 아직 후속 작업이다([#17](https://github.com/next-stop-siren/Next-Stop-Siren/issues/17), [#19](https://github.com/next-stop-siren/Next-Stop-Siren/issues/19)). URL이나 브라우저 저장소에 토큰을 넣지 않는다.
+쿠키는 host-only이므로 같은 `127.0.0.1`의 포트가 달라도 API 요청에 사용할 수 있다. `Path=/api/auth`, HttpOnly·SameSite·Secure 정책은 그대로이며 JavaScript가 쿠키를 직접 읽지 않는다. 화면은 credentials를 포함한 `/api/auth/csrf` → `/api/auth/refresh`로 access를 메모리에 복구한다(PR #50). 실제 인증·소유권 통합 검증은 #19에 남아 있다. URL이나 브라우저 저장소에 토큰을 넣지 않는다.
 
 ### 2-3. 개발 DB의 누락 테이블 생성
 
@@ -251,7 +251,7 @@ curl -f http://127.0.0.1:5173/api/ready    # {"status":"ready"}
 curl -f http://127.0.0.1:8000/api/ready    # {"status":"ready"}
 ```
 
-모두 HTTP 200이어야 한다. `health`는 API 프로세스 응답, `ready`는 DB의 `SELECT 1` 성공만 뜻한다. 인증 키·Google 설정·5개 테이블의 존재와 스키마 호환성을 확인하지 않으므로 아래 실제 API 절차도 필요하다. 현재 화면은 비회원 소개와 인증 모달이며 API 인증·회원 채팅 연결은 아직 없다. 아래 실제 API 확인까지 마친 뒤 첫 터미널에서 `Ctrl+C`로 `dev`가 시작한 프로세스를 종료한다.
+모두 HTTP 200이어야 한다. `health`는 API 프로세스 응답, `ready`는 DB의 `SELECT 1` 성공만 뜻한다. 인증 키·Google 설정·10개 등록 모델에 해당하는 테이블의 존재와 스키마 호환성을 확인하지 않으므로 아래 실제 API 절차도 필요하다. 현재 화면에는 인증 API와 기본 HTTP 채팅 경로가 있지만, PR #62의 `202` 접수·작업·구독 계약을 MemberChat에 연결하는 작업은 남아 있다. 아래 실제 API 확인까지 마친 뒤 첫 터미널에서 `Ctrl+C`로 `dev`가 시작한 프로세스를 종료한다.
 
 인증 개발은 `http://127.0.0.1`을 기준으로 한다. `.env`의 `AUTH_API_ORIGIN`은 `http://127.0.0.1:8000`, `AUTH_ALLOWED_ORIGINS`는 `http://127.0.0.1:5173,http://127.0.0.1:8000`으로 설정한다. 화면은 5173, Swagger UI는 8000의 `/docs`에서 제공하므로 두 실제 Origin을 모두 허용하고 `localhost`는 제외한다. Origin에는 `/docs` 경로를 포함하지 않는다. `.env` 변경은 실행 중인 앱 설정에 적용되지 않으므로 직접 관리하는 API 개발 프로세스를 재시작한다. Google 로그인 callback은 `http://127.0.0.1:8000/api/auth/google/callback`을 등록한다.
 
@@ -269,7 +269,7 @@ curl -f http://127.0.0.1:8000/api/ready    # {"status":"ready"}
 | 4 대화 생성 | `POST /api/conversations`, 본문 `{}` | `201`, `conversation.id` 기록 |
 | 5 대화 확인 | `GET /api/conversations` | 자신의 대화가 목록에 표시 |
 | 6 질문 | `POST /api/conversations/{conversation_id}/messages`, 아래 질문 본문 | `202`, 질문과 `job`(`queued`), `answer: null`; `job.id` 기록 |
-| 7 답변 확인 | `GET /api/chat/jobs/{job_id}` (1~2초 뒤) | `job.state: completed`, 답변 `모의 답변입니다.` |
+| 7 답변 확인 | `GET /api/chat/jobs/{job_id}` | `queued`·`running`이면 잠시 뒤 같은 작업을 다시 조회한다. `completed`일 때 저장된 `answer.content`를 확인한다. `failed`·`interrupted` 등 다른 종결 상태이면 오류와 허용 동작을 확인한다. |
 | 8 저장 확인 | `GET /api/conversations/{conversation_id}/messages` | 같은 질문·답변 ID와 내용 재조회 |
 
 질문은 접수 뒤 서버의 대기열 실행기가 답한다. 새 질문을 직전 접수 뒤 10초 안에 또 보내면 `429 attempt_too_soon`이며 `Retry-After` 초만큼 기다린다.
@@ -286,7 +286,7 @@ curl -f http://127.0.0.1:8000/api/ready    # {"status":"ready"}
 {"content":"교통법 안내 예시를 보여 주세요.","request_key":"local-demo-question-1"}
 ```
 
-ID는 숫자로 변환하지 않고 문자열로 유지한다. Swagger 페이지를 새로고침한 뒤 필요하면 로그인·Authorize를 다시 하고 **같은 대화 ID**로 조회한다. 같은 본문·키 재전송은 기존 쌍을 `200`으로 반환하며 새 답변을 만들지 않는다. 없는 대화·타인 대화는 동일한 `404`다.
+ID는 숫자로 변환하지 않고 문자열로 유지한다. Swagger 페이지를 새로고침한 뒤 필요하면 로그인·Authorize를 다시 하고 **같은 대화 ID**로 조회한다. 같은 본문·키 재전송은 새 생성 없이 기존 작업과 결과를 반환한다. 종결 전이면 `202`, 종결 뒤면 `200`이다. 접수 응답의 `job.id`로 `GET /api/chat/jobs/{id}`를 조회해 저장된 답변을 확인한다. 없는 대화·타인 대화는 동일한 `404`다.
 
 일반 API는 `MockProvider`를 사용하므로 Google·Codyssey 키나 실제 AI 호출이 필요 없다. 실제 2인 소유권·브라우저 통합 검사는 [품질 기준](../03-development/quality.md)에 따라 별도 수행한다.
 
@@ -303,7 +303,7 @@ ID는 숫자로 변환하지 않고 문자열로 유지한다. Swagger 페이지
 
 access는 15분 유효하고 보호 API는 쿠키만으로 인증되지 않는다. logout도 이미 발급된 access를 즉시 무효화하지 않으므로 남은 유효 시간 안에는 통과할 수 있다.
 
-프런트엔드 `:5173`의 로그인 모달·Google 버튼·채팅 화면에 위 절차가 연결됐다는 뜻은 아니다. Google은 [선택 설정](#2-2-google-로그인용-env-설정)을 준비한 뒤 브라우저 주소창 이동으로 시작한다. `GOOGLE_FRONTEND_ORIGIN`을 설정하면 callback 성공 후 `:5173`으로 이동하며, 없으면 기존 `:8000` 상대 경로를 유지한다. 화면의 CSRF·refresh 완료와 로그인 상태 연결은 아직 미구현이다([#17](https://github.com/next-stop-siren/Next-Stop-Siren/issues/17), [#19](https://github.com/next-stop-siren/Next-Stop-Siren/issues/19)).
+프런트엔드 `:5173`에는 로그인 모달·Google 시작·세션 복구와 기본 HTTP 채팅 경로가 있다. 이 Swagger 절차만으로 실제 화면 대기열·SSE 통합을 검증한 것은 아니다. Google은 [선택 설정](#2-2-google-로그인용-env-설정)을 준비한 뒤 브라우저 주소창 이동으로 시작한다. `GOOGLE_FRONTEND_ORIGIN`을 설정하면 callback 성공 후 `:5173`으로 이동하며, 없으면 기존 `:8000` 상대 경로를 유지한다. 화면의 CSRF·refresh와 로그인 상태 연결은 PR #50에서 구현됐다. 실제 Google 실패 리다이렉트는 그 PR의 제외 범위이며 #19의 통합 검증과 구분한다.
 
 ### 4. 테스트와 품질 검사
 
