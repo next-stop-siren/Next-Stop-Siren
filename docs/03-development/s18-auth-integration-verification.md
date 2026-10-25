@@ -2,6 +2,8 @@
 
 [이슈 #19](https://github.com/next-stop-siren/Next-Stop-Siren/issues/19)의 인증·소유권 검증 결과다. 기준 계약은 [API](../04-reference/api.md#회원-채팅-대기열-53)와 [인증](../04-reference/authentication.md)을 따른다. 전체 대기열 결함 검증은 #54 범위다.
 
+**최종 판정: 백엔드 인증·소유권·logout 검증은 통과했으며, #19 전체 완료는 보류한다.** 실제 회원 화면의 SSE 미연동으로 임시 출력·구독 정리를 확인하지 못했다. 화면 연동 후 해당 항목을 재검증해야 한다. 제품 API·DB·토큰 계약은 변경하지 않았고, 브랜치 변경은 백엔드 검사 3개 파일과 이 문서뿐이다.
+
 ## 완료 기준과 현재 결과
 
 | 이슈 요구사항 | 확인 결과 | 남은 검증 |
@@ -13,7 +15,7 @@
 
 ## 실행한 검사
 
-2026-10-25 KST, macOS arm64·Python 3.13.15, 제품 소스 `2d50da5`에서 실행했다. 추가 검사 파일은 `backend/tests/test_auth_chat_boundaries_db.py`, `backend/tests/test_auth_chat_events_db.py`, `backend/tests/test_auth_chat_logout_db.py`이며 제품 코드는 변경하지 않았다.
+2026-10-25 KST, macOS arm64·Python 3.13.15, 제품 소스 `2d50da5`에서 실행했다. 최종 검사 소스는 `24f418e`에 포함되어 있다. 추가 검사 파일은 `backend/tests/test_auth_chat_boundaries_db.py`, `backend/tests/test_auth_chat_events_db.py`, `backend/tests/test_auth_chat_logout_db.py`이며 제품 코드는 변경하지 않았다.
 
 전용 테스트 DB 설정은 [온보딩](../01-start/onboarding.md#4-테스트와-품질-검사)을 따른다. `TEST_DATABASE_URL`과 프로젝트 uv 경로를 설정한 환경에서 `backend` 디렉터리 기준으로 실행했다.
 
@@ -25,7 +27,7 @@
 - 신규 파일의 Ruff lint·format과 `git diff --check` 통과.
 - Starlette TestClient의 `BlockingPortal` 사용에 관한 DeprecationWarning 1건.
 
-위 검사에서 인증 발급은 실제 FastAPI 라우트를 TestClient로 호출하고, SSE는 임시 localhost 서버에 실제 HTTP 연결 두 개를 열었다. 보호된 PostgreSQL 임시 스키마의 저장 결과를 독립 세션으로 확인했다. 인증 principal·앱 JWT 서명 검증은 대체하지 않았다. Google 외부 HTTP만 대체하고 RSA·OIDC 검증과 callback→CSRF→refresh는 실제 코드를 사용했다. 실제 Google 계정 로그인은 미실행이다.
+위 검사에서 인증 발급은 실제 FastAPI 라우트를 TestClient로 호출하고, SSE는 임시 localhost 서버에 실제 HTTP 연결 두 개를 열었다. 보호된 PostgreSQL 임시 스키마의 저장 결과를 독립 세션으로 확인했다. 인증 principal·앱 JWT 서명 검증은 대체하지 않았다. Google 외부 HTTP만 대체하고 RSA·OIDC 검증과 callback→CSRF→refresh는 실제 코드를 사용했다. 실제 Google 로그인은 사용자가 별도 수동 테스트에서 정상 동작을 확인했다. 자동 검사 결과와 구분해 기록한다.
 
 인증 경계 검사는 실행기를 끄고 queue 서비스로 상태를 준비했다. SSE 임시 출력·완료 검사는 실제 실행기와 제어 가능한 가짜 제공자를 사용했고, 취소·건너뛰기는 실행기를 끄고 확인했다. 만료 거부는 JWT 검증 시계를 앞당겨, 구독 종료는 HTTP로 발급한 access의 수명만 3초로 줄여 재현했다. 접수 간격은 테스트 DB 시각을 조정했다. 기존 `test_auth_chat_db.py`에서는 기본 mock 제공자와 실행기를 사용했다.
 
@@ -46,10 +48,12 @@ S18_BROWSER=1 .venv/bin/python -m pytest tests/test_auth_chat_browser_db.py -q -
 
 ## 남은 검증과 담당 인계
 
-- 사용자 수동 확인: B의 목록에는 `대화 4` 한 개만 있고 A의 대화는 보이지 않았다. 숫자는 회원별 대화 개수가 아닌 DB 대화 ID를 표시한 것으로 정상 동작이다.
+- 사용자 수동 확인: B의 목록에는 B의 대화만 있고 A의 대화는 보이지 않았다. 숫자는 회원별 대화 개수가 아닌 DB 대화 ID를 표시한 것으로 정상 동작이다.
 - 화면 미연동: 왼쪽 사이드바의 대화 기록은 고정 문구이며 새 대화 버튼에도 동작이 없다. 가운데 `내 대화`만 실제 API 목록과 연결되어 있다. 화면 담당에게 인계한다.
 - 가입 화면 계약 불일치: 이름을 필수 입력받지만 실제 가입 요청·저장에는 사용하지 않는다. 현재 이메일·비밀번호 가입 계약에 맞춰 이름 입력란을 제거하도록 화면 담당에게 인계한다.
-- 사용자 수동 재현: 같은 대화에 질문 3개를 보내고 직접 아래로 스크롤하면 입력창이 메시지 사이에 나타나고 이후 질문·답변이 입력창 아래로 이어진다(첨부 화면). 기대 동작은 입력창과 메시지가 겹치지 않고 모든 메시지를 읽을 수 있는 것이다. 자동 스크롤 미구현과 별도의 화면 레이아웃 결함으로 `gittul-123`에게 인계한다. 저장된 메시지 전체 개수와 CSS 원인은 추가 확인이 필요하며 인증·소유권 결함으로 분류하지 않는다.
+- 사용자 수동 재현: 같은 대화에 질문 3개를 보내고 직접 아래로 스크롤하면 입력창이 메시지 사이에 나타나고 이후 질문·답변이 입력창 아래로 이어진다. 기대 동작은 입력창과 메시지가 겹치지 않고 모든 메시지를 읽을 수 있는 것이다. 자동 스크롤 미구현과 별도의 화면 레이아웃 결함으로 `gittul-123`에게 인계한다. 저장된 메시지 전체 개수와 CSS 원인은 추가 확인이 필요하며 인증·소유권 결함으로 분류하지 않는다.
 - 인증 담당 `yejoo0310`: 인증·소유권·logout HTTP·DB 결과와 현재 화면 검증 결과를 #54에 인계한다.
 - 화면 담당 `gittul-123`: 실제 대기열·SSE·한도 화면을 연결하고 전송 응답 타입에 `answer: null`·`job`·`limits` 계약을 반영한다. 연결 후 A의 임시 출력 중 logout→B login과 늦은 SSE 전달 시 이전 상태가 나타나지 않는지 검증한다.
 - 실행한 검사에서 인증·소유권·logout 결함은 발견하지 못했다. 화면의 SSE 연동 후 임시 출력·구독 정리를 재검증해야 한다. 후속 결과에 재현 절차·기대/실제 결과·담당을 남겨 #54에 인계한다.
+
+[#54](https://github.com/next-stop-siren/Next-Stop-Siren/issues/54)에는 위 실행 명령·62개 통과 결과·경합 재현 방법과 사용자 수동 발견 사항을 전달한다. FIFO·전체 대기열 용량·KST 정산 경계·서버 장애 주입 전체를 검증했다는 의미는 아니다. #54의 실제 통합 완료에는 #19를 포함한 직접 선행의 검증·병합 결과가 필요하다. 관련 PR 검토에서도 백엔드 통과와 화면 미검증을 구분하며, 이 결과만으로 #19를 완료 처리하지 않는다.
