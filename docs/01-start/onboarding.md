@@ -236,7 +236,7 @@ PowerShell 명령은 Windows에서 실제 실행하지 않았다.
 ./local.sh db-init
 ```
 
-Windows는 `.\local.ps1 db-init`이다. 현재 등록된 `users`, `auth_identities`, `refresh_sessions`, `conversations`, `messages`, `chat_quotas`, `chat_quota_reservations` 7개 테이블과 아직 API에 연결하지 않은 #52 대기열 3개 테이블(`chat_queue_members`, `chat_jobs`, `chat_conversation_holds`), 모두 10개를 확인하고 없는 테이블만 만든다. 출력의 개수는 이번에 새로 만든 수가 아니라 등록 모델 수다. `setup`은 이 작업을 대신하지 않는다.
+Windows는 `.\local.ps1 db-init`이다. 현재 등록된 `users`, `auth_identities`, `refresh_sessions`, `conversations`, `messages`, `chat_quotas`, `chat_quota_reservations` 7개 테이블과 #52 대기열 3개 테이블(`chat_queue_members`, `chat_jobs`, `chat_conversation_holds`), 모두 10개를 확인하고 없는 테이블만 만든다. 출력의 개수는 이번에 새로 만든 수가 아니라 등록 모델 수다. `setup`은 이 작업을 대신하지 않는다.
 
 `create_all()`은 기존 테이블의 컬럼·제약을 바꾸지 않으며 데이터도 삭제하지 않는다. 오래된 스키마가 있으면 `db-init` 성공만으로 호환성을 보장할 수 없다. 삭제·재생성으로 해결하지 말고 백업·적용·복구 계획을 먼저 검토한다. 마이그레이션과 운영 준비 상태 검사는 별도 후속 작업이다.
 
@@ -268,8 +268,11 @@ curl -f http://127.0.0.1:8000/api/ready    # {"status":"ready"}
 | 3 인증 | Authorize → AccessBearer에 access 문자열만 입력 → `GET /api/me` | Bearer 접두사 자동 추가, 같은 사용자 정보와 `200` |
 | 4 대화 생성 | `POST /api/conversations`, 본문 `{}` | `201`, `conversation.id` 기록 |
 | 5 대화 확인 | `GET /api/conversations` | 자신의 대화가 목록에 표시 |
-| 6 질문 | `POST /api/conversations/{conversation_id}/messages`, 아래 질문 본문 | `201`, 질문과 `completed` 답변 `모의 답변입니다.` |
-| 7 저장 확인 | `GET /api/conversations/{conversation_id}/messages` | 같은 질문·답변 ID와 내용 재조회 |
+| 6 질문 | `POST /api/conversations/{conversation_id}/messages`, 아래 질문 본문 | `202`, 질문과 `job`(`queued`), `answer: null`; `job.id` 기록 |
+| 7 답변 확인 | `GET /api/chat/jobs/{job_id}` (1~2초 뒤) | `job.state: completed`, 답변 `모의 답변입니다.` |
+| 8 저장 확인 | `GET /api/conversations/{conversation_id}/messages` | 같은 질문·답변 ID와 내용 재조회 |
+
+질문은 접수 뒤 서버의 대기열 실행기가 답한다. 새 질문을 직전 접수 뒤 10초 안에 또 보내면 `429 attempt_too_soon`이며 `Retry-After` 초만큼 기다린다.
 
 가입·로그인 본문 예시다. 아직 쓰지 않은 가짜 이메일로 바꾼다. 비밀번호는 12~128자·UTF-8 1024바이트 이하다.
 

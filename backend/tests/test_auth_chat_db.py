@@ -2,8 +2,10 @@
 
 Only the DB session factory is bound to the existing isolated-schema fixture.
 Authentication, principal verification and the public MockProvider are unchanged.
+The app's chat job worker runs, so a queued question is answered as in service (#53).
 """
 
+import time
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -12,7 +14,9 @@ import pytest
 from sqlalchemy import func, select
 
 from app.main import create_app
+from app.models.chat_job import ChatJob, ChatQueueMember, ConversationHold
 from app.models.conversation import Conversation, Message
+from app.models.quota import ChatQuota, QuotaReservation
 
 pytestmark = pytest.mark.db
 ORIGIN = {"Origin": "http://127.0.0.1:5173"}
@@ -20,9 +24,11 @@ BASE_URL = "http://127.0.0.1:8000"
 
 
 @pytest.fixture
-def chat_database(committed_signup_sessions, auth_settings):
+def chat_database(committed_signup_sessions, auth_settings, monkeypatch):
     factory = committed_signup_sessions
-    Conversation.metadata.create_all(factory.kw["bind"], tables=[Conversation.__table__, Message.__table__])
+    models = (Conversation, Message, ChatQuota, QuotaReservation, ChatQueueMember, ChatJob, ConversationHold)
+    Conversation.metadata.create_all(factory.kw["bind"], tables=[model.__table__ for model in models])
+    monkeypatch.setenv("CHAT_WORKER", "on")
     app = create_app(auth_settings)
     with patch("app.db._session_factory", factory):
         yield app, factory
@@ -49,10 +55,20 @@ def create_conversation(client, access):
 
 
 def send_mock_question(client, access, conversation_id):
+    """Queue a question, then read its job until the worker has stored the answer."""
     body = {"content": "가짜 교통법 질문입니다.", "request_key": "auth-chat-1"}
     response = client.post(f"/api/conversations/{conversation_id}/messages", json=body, headers=bearer(access))
-    assert response.status_code == 201
-    question, answer = response.json()["question"], response.json()["answer"]
+    assert response.status_code == 202 and response.json()["answer"] is None
+    job_id = response.json()["job"]["id"]
+    deadline = time.monotonic() + 15
+    while True:
+        found = client.get(f"/api/chat/jobs/{job_id}", headers=bearer(access))
+        assert found.status_code == 200
+        if found.json()["job"]["state"] == "completed" or time.monotonic() > deadline:
+            break
+        time.sleep(0.1)
+    assert found.json()["job"]["state"] == "completed"
+    question, answer = found.json()["question"], found.json()["answer"]
     assert (question["role"], question["status"], question["content"], question["request_key"]) == (
         "user",
         "completed",

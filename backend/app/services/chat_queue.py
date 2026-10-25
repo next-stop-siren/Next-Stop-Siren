@@ -1,8 +1,8 @@
 """Persistent member chat queue: admission, the execution right, outcomes and recovery (#52).
 
 The approved target is docs/04-reference/chat-policy.md; job states, error codes and
-the order of the admission checks follow docs/04-reference/chat-queue-api-draft.md.
-The current API does not call this module yet; #53 connects it.
+the order of the admission checks follow docs/04-reference/api.md. The conversation
+and chat APIs call this module with the #15 quota as the ledger (#53).
 
 Every function here runs in one short transaction that the caller commits, and the
 first lock it takes is the member's queue row. Admissions, starts, finishes, cancels,
@@ -105,10 +105,12 @@ class SkipNotAllowed(QueueError):
 @dataclass(frozen=True)
 class Admission:
     question: Message
-    # None only for a question that the current synchronous API stored, which has no job.
+    # None only for a question or retry that the synchronous API before #53 stored, which has no job.
     job: ChatJob | None
     # False when the key was already admitted; nothing was reserved or stored.
     created: bool
+    # The attempt that a retry key of the synchronous API made; None otherwise.
+    answer: Message | None = None
 
 
 @dataclass(frozen=True)
@@ -211,6 +213,12 @@ def admit_retry(
 
     The question's latest answer must be failed or interrupted and no later question
     may have started; a later question that only waits does not prevent it.
+
+    A key is looked up before any of those checks, first among the queue's jobs, then
+    among the attempts that the synchronous API before #53 stored without a job. Either
+    way the stored attempt is returned as it is: a resend is never refused for a state
+    its own attempt caused, and never admitted again, which would also break the
+    attempt's unique retry key when it starts.
     """
     repository.lock_member(session, user_id)
     if not repository.lock_owned_conversation(session, user_id, conversation_id):
@@ -221,6 +229,9 @@ def admit_retry(
     stored = repository.retry_job(session, question.id, retry_key)
     if stored is not None:
         return Admission(question, stored, created=False)
+    earlier = repository.retry_answer(session, question.id, retry_key)
+    if earlier is not None:
+        return Admission(question, None, created=False, answer=earlier)
     latest = repository.latest_answer(session, question.id)
     if latest is None or latest.status not in RETRYABLE_STATUSES or repository.has_active_job(session, question.id):
         raise RetryNotAllowed
@@ -274,7 +285,7 @@ def _expire_due(session: Session, ledger: QuotaLedger, user_id: int, now: dateti
 def _conclude(session: Session, ledger: QuotaLedger, job: ChatJob, answer: Message, now: datetime) -> Changes:
     """End a running job with the outcome its answer stored, resolve the quota once and update the hold."""
     changes = Changes()
-    # The answer may already have been closed by the current API's stale-pending recovery.
+    # `finish_answer` keeps an answer that is no longer pending as it was stored.
     job.state = answer.status if answer.status in ("completed", "failed", "interrupted") else "interrupted"
     job.finished_at = now
     session.flush()
@@ -348,6 +359,9 @@ def claim_next(
     job = repository.next_runnable(session, user_id, now)
     if job is None:
         return None, changes
+    orphans = repository.close_orphan_pending(session, job.conversation_id)
+    if orphans:
+        logger.warning("Pending answer without a job interrupted, job_id=%s, count=%s", job.id, len(orphans))
     latest = repository.latest_answer(session, job.question_message_id)
     attempt_no = 1 if latest is None or latest.attempt_no is None else latest.attempt_no + 1
     answer = repository.add_answer(session, job.conversation_id, job.question_message_id, attempt_no, job.retry_key)
@@ -428,6 +442,8 @@ def skip(
     repository.lock_member(session, user_id)
     if not repository.lock_owned_conversation(session, user_id, conversation_id):
         raise ConversationNotFound
+    if repository.find_question_by_id(session, conversation_id, question_id) is None:
+        raise QuestionNotFound
     now = _now(session, now)
     held = repository.hold(session, conversation_id)
     if held is None or held.question_message_id != question_id or repository.has_active_job(session, question_id):
