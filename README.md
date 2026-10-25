@@ -13,7 +13,7 @@ Next-Stop-Siren은 교통법 질문을 위한 챗봇 프로젝트다. 일반 앱
 | 저장 | 인증·대화 5개, 한도 2개, 대기열 3개로 총 10개 ORM 모델 등록 | 기존 DB의 명시적 스키마 변경과 운영 데이터 백업·복원 검증 |
 | AI·배포 | 무료 모의 제공자, 실제 AI의 격리 `complete` 어댑터와 개발·테스트 DB Compose | 실제 어댑터의 `stream` 연결, 운영 설정·배포·전체 브라우저 검증 |
 
-#18·#20·#21은 목업 범위로 종료됐다. 실제 화면 통합의 후속 이슈는 **등록 필요**하며, 닫힌 이슈를 실제 연결 완료로 해석하지 않는다. #19·#54는 열려 있다. 문서 대조는 앱 실행·실제 Google 실패 리다이렉트·AI 호출·운영 검증을 대신하지 않는다.
+#18·#20·#21은 목업 범위로 종료됐다. 실제 회원 채팅 연결은 [#65](https://github.com/next-stop-siren/Next-Stop-Siren/issues/65)에서 진행한다. [2차 마일스톤](https://github.com/next-stop-siren/Next-Stop-Siren/milestone/2)에 구현·운영 작업 12개를 등록했으며, #19·#54의 최종 통합검증은 관련 기능과 자체검사 뒤에 진행한다. Owner `xifoxy-ru`가 #73·#76을 맡고 #74·#75의 운영 역할을 함께 담당한다. 실제 진행 방법은 [담당별 우선순서와 병렬 진행](docs/02-team/development-flow.md#담당별-우선순서와-병렬-진행)을 따른다. #76의 독립 확인은 다른 팀원이 수행한다. 문서 대조는 앱 실행·실제 Google 실패 리다이렉트·AI 호출·운영 검증을 대신하지 않는다.
 
 제품 범위는 [서비스 범위](docs/01-start/service-scope.md), 실행은 [온보딩](docs/01-start/onboarding.md), 담당별 다음 작업은 [팀 인계](docs/02-team/team-handoff.md), 검사 경계는 [품질 지침](docs/03-development/quality.md)을 따른다.
 
