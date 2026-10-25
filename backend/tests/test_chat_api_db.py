@@ -368,6 +368,42 @@ def test_a_reconnect_gets_the_earlier_failure_without_buttons_after_a_retry_comp
     assert first in found and found[first].view.allowed_actions == ()
 
 
+def test_a_reconnect_gets_the_earlier_failure_without_buttons_after_two_more_questions_ran_elsewhere(session, seeded):
+    """The retry and two more questions ran while this tab was away; the failure is not among the last two."""
+    first = int(ask(session, seeded, seeded.a, "a1").json()["job"]["id"])
+    run(session, seeded.user_a, PROVIDER_FAILED)
+    assert job_of(first)["allowed_actions"] == ["retry", "skip"]
+    # The failure and its answer are from two minutes ago, beyond the snapshot's 30-second margin.
+    earlier = timedelta(minutes=2)
+    session.execute(
+        update(ChatJob)
+        .where(ChatJob.id == first)
+        .values(
+            accepted_at=ChatJob.accepted_at - earlier,
+            expires_at=ChatJob.expires_at - earlier,
+            started_at=ChatJob.started_at - earlier,
+            deadline_at=ChatJob.deadline_at - earlier,
+            finished_at=ChatJob.finished_at - earlier,
+        )
+    )
+    answer_id = session.get(ChatJob, first).answer_message_id
+    session.execute(update(Message).where(Message.id == answer_id).values(created_at=Message.created_at - earlier))
+    session.commit()
+    # This tab disconnects here, with the buttons shown.
+    since = job_repository.database_time(session)
+    question_id = session.get(ChatJob, first).question_message_id
+    retried = int(retry(session, seeded, seeded.a, question_id, "r1").json()["job"]["id"])
+    run(session, seeded.user_a, Outcome("completed", text="다른 탭의 답"))
+    later = []
+    for key in ("a2", "a3"):
+        later.append(int(ask(session, seeded, seeded.a, key).json()["job"]["id"]))
+        run(session, seeded.user_a, Outcome("completed", text=f"답 {key}"))
+
+    found = {item.view.job.id: item for item in chat_views.snapshot(session, seeded.user_a, since).items}
+    assert all(found[job_id].view.job.state == "completed" for job_id in [retried, *later])
+    assert first in found and found[first].view.allowed_actions == ()
+
+
 @pytest.mark.parametrize(
     ("ended", "status_code"),
     [("completed", 200), ("failed", 200)],

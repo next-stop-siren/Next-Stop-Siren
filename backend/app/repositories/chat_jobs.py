@@ -397,10 +397,11 @@ def touched_conversations(session: Session, user_id: int, since: datetime) -> Se
 def failed_recent_jobs(session: Session, conversation_ids: Sequence[int]) -> Sequence[ChatJob]:
     """Every failed or interrupted attempt of the two last executed questions of each conversation.
 
-    These are the jobs whose retry and skip buttons can change: a new start in a
-    conversation affects its latest executed question and the one before it. Earlier
-    attempts are included too, because a retry that completes elsewhere takes the
-    buttons off the attempt before it; the screen must receive that attempt with `[]`.
+    These are the jobs whose retry and skip buttons one change can change: a new start
+    in a conversation affects its latest executed question and the one before it.
+    Earlier attempts are included too, because a retry that completes takes the buttons
+    off the attempt before it; the screen must receive that attempt with `[]`.
+    A reconnect covers several changes at once and uses `failed_jobs_since` instead.
     """
     if not conversation_ids:
         return []
@@ -417,6 +418,38 @@ def failed_recent_jobs(session: Session, conversation_ids: Sequence[int]) -> Seq
         select(ChatJob)
         .where(ChatJob.conversation_id.in_(conversation_ids), ChatJob.state.in_(("failed", "interrupted")))
         .where(ChatJob.question_message_id.in_(recent))
+        .order_by(ChatJob.id)
+    )
+    return session.scalars(statement.execution_options(populate_existing=True)).all()
+
+
+def failed_jobs_since(session: Session, conversation_ids: Sequence[int], since: datetime) -> Sequence[ChatJob]:
+    """Every failed or interrupted attempt whose buttons may have changed at or after `since`.
+
+    Only a conversation's latest started question at `since` can still have had buttons
+    then, and questions start in ID order, so that question and every later one are
+    returned with all their attempts. Questions that started while the screen was away
+    can be more than two, so the two-question limit of `failed_recent_jobs` would miss
+    the earlier failure a retry took the buttons off. With no answer before `since`,
+    every attempt of the conversation is returned.
+    """
+    if not conversation_ids:
+        return []
+    answer = aliased(Message)
+    latest_before = (
+        select(func.coalesce(func.max(answer.reply_to_message_id), 0))
+        .where(
+            answer.conversation_id == ChatJob.conversation_id,
+            answer.role == "assistant",
+            answer.created_at < since,
+        )
+        .correlate(ChatJob)
+        .scalar_subquery()
+    )
+    statement = (
+        select(ChatJob)
+        .where(ChatJob.conversation_id.in_(conversation_ids), ChatJob.state.in_(("failed", "interrupted")))
+        .where(ChatJob.question_message_id >= latest_before)
         .order_by(ChatJob.id)
     )
     return session.scalars(statement.execution_options(populate_existing=True)).all()

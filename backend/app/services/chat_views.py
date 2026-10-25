@@ -149,8 +149,9 @@ def snapshot(session: Session, user_id: int, since: datetime | None) -> Snapshot
         for job in repository.ended_since(session, user_id, since):
             jobs.setdefault(job.id, job)
         touched = repository.touched_conversations(session, user_id, since)
-        # Includes an earlier failed attempt whose buttons a retry completed elsewhere took away.
-        for job in repository.failed_recent_jobs(session, touched):
+        # Includes an earlier failed attempt whose buttons a retry completed elsewhere took away,
+        # however many questions ran after it while the screen was away.
+        for job in repository.failed_jobs_since(session, touched, since):
             jobs.setdefault(job.id, job)
     found = items(session, user_id, [jobs[job_id] for job_id in sorted(jobs)])
     return Snapshot(found, limits(session, user_id), server_time)
