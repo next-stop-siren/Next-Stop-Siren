@@ -1,53 +1,30 @@
 # 처음 맡을 작업
 
-먼저 [회원 채팅 정책](../04-reference/chat-policy.md)을 읽고 공유 인터페이스를 합의한다. #52 기반과 #15 한도는 서로 순환 의존 없이 진행하고 #53에서 통합한다. 화면의 실제 연동과 #19 인증 경계 확인 뒤 #54가 독립 검증한다.
+## 현재 인계 (2026-10-25)
 
-mock 준비와 실제 완료를 구분하고 [공정진행도](development-flow.md#승인된-대기열-목표-작업의-직접-선행)의 직접 선행을 따른다. #17에 대기열·과금을 추가하지 않으며 PR #50의 Google 실패 실제 리다이렉트 제외를 유지한다.
+PR #57·#59·#62로 한도·영속 기반·대기열 API가 병합됐다. PR #50의 인증 화면, PR #58의 기본 HTTP 채팅과 목업, PR #60·#61의 구독·재시도 목업을 구분한다. #18·#20·#21은 닫혔지만 실제 MemberChat 대기열·SSE 통합 완료가 아니다. #53은 PR #62 병합 후 종료됐고 #19·#54가 열려 있다.
 
-백엔드 인증·본인 대화·모의 답변 저장·재조회와 제품 ORM 모델은 구현되어 있습니다. 화면은 비회원 소개·인증 모달이며 실제 로그인·채팅 API 연결은 남았습니다. 아래 첫 이슈와 순서는 담당·의존 관계의 안내이며 현재 미완료 목록이 아닙니다. 기존 코드·테스트를 확인하고 최신 이슈·PR의 남은 범위를 따르세요.
+- `gittul-123`: 계약을 바탕으로 실제 MemberChat의 접수·작업·구독·재시도·건너뛰기·취소·서버 시각 연결을 준비한다. **후속 이슈 등록 필요**이며 이 문서는 새 작업을 배정하지 않는다.
+- `yejoo0310`: #19의 인증·소유권·회원 전환 검사를 먼저 진행한다. #54의 시나리오·결함 주입 준비는 가능하며 최종 통합 완료에는 실제 화면 연결과 두 구현 담당자의 자체검사가 필요하다.
+- `davekim-dev`: #53 종료 뒤 현재 열린 배정 이슈는 없다. 실제 연결 지원과 QA에서 확인한 서버 결함 수정은 다음 작업 후보이며 새로 배정된 작업은 아니다.
 
-전체 직접 선행·후속 이슈는 [공정진행도](development-flow.md)에, 각 담당자의 작업과 외부 인계는 아래 담당 공정에 있습니다. 실제 진행·차단·검토 상태는 연결된 GitHub 이슈와 PR에서 확인하세요.
-
-| 담당 | 첫 이슈 | 담당 공정 | 이번에 남길 결과 |
-| --- | --- | --- | --- |
-| `yejoo0310` | [#2](https://github.com/next-stop-siren/Next-Stop-Siren/issues/2) | [인증](auth-flow.md) | 후속 검사에서 불러 쓸 인증 pytest 값과 401 예시 |
-| `davekim-dev` | [#9](https://github.com/next-stop-siren/Next-Stop-Siren/issues/9) → [#8](https://github.com/next-stop-siren/Next-Stop-Siren/issues/8) | [채팅·데이터·AI](chat-flow.md) | 대화 ORM 모델 뒤 소유권 조회 함수·자동 검사 |
-| `gittul-123` | [#16](https://github.com/next-stop-siren/Next-Stop-Siren/issues/16) | [화면](frontend-flow.md) | 비회원 소개와 사람이 작성한 고정 예시 화면 |
+실제 AI 연결과 배포는 미완료다. 문맥 쌍 순서의 알려진 차이는 [API](../04-reference/api.md#알려진-구현-차이와-인수-확인)를 확인한다. 현재 동작의 단일 기준은 [API 계약](../04-reference/api.md)이다.
 
 ## 함께 읽을 기준
 
-1. [실행 체크리스트](../01-start/onboarding.md)로 로컬 앱을 준비하고 현재 동작을 확인합니다. 과거 macOS 검증과 현재 소스 대조를 구분하며 Windows 실제 실행은 **NOT RUN**입니다.
-2. [서비스 범위](../01-start/service-scope.md)에서 비회원·회원 경계와 첫 내부 목표를 확인합니다. [API 요청·응답](../04-reference/api.md), [DB 설계](../04-reference/database.md), [인증 구현 기준](../04-reference/authentication.md)은 현재 백엔드 계약과 후속 구현의 공통 기준입니다. 10개 테이블(인증·대화 5개, #15 한도 2개, #52 대기열 3개)은 등록되어 있지만 로컬 DB에는 `db-init`이 필요합니다.
-3. 이슈에 적힌 범위대로 변경하고, [협업 흐름](../03-development/workflow.md)에 따라 PR에 결과와 검사 기록을 남깁니다. PM `xifoxy-ru`가 공통 API·DB·보안 형식과 미정 결정을 정리하고 PR을 검토합니다. 각 담당자는 자기 구현과 검사를 맡습니다.
+1. [온보딩](../01-start/onboarding.md)으로 로컬 환경을 준비한다. 모델 10개의 등록과 기존 DB의 스키마 변경은 별개다. Windows 실제 실행은 아직 NOT RUN이다.
+2. [API Rev 1](../04-reference/api.md)에서 접수·조회·구독·오류 계약을 읽는다. [정책](../04-reference/chat-policy.md)은 의도와 알려진 구현 차이를 설명한다. [시나리오](../04-reference/chat-queue-api-draft.md)의 가짜 데이터로 화면·서버 경계를 준비한다.
+3. [인증](../04-reference/authentication.md), [DB](../04-reference/database.md), [AI](../04-reference/ai.md)의 실제 구현과 남은 검증을 확인한다. 실제 Google 실패 리다이렉트는 PR #50에서 제외됐고 실제 AI·배포는 완료되지 않았다.
+4. [협업 흐름](../03-development/workflow.md)의 문서 Rev·커밋 고정 참조와 [품질 지침](../03-development/quality.md)의 검사 경계를 따른다. 기존 이슈의 완료 이력은 소급 수정하지 않는다.
 
-여기서 **fixture**는 pytest 검사에서 불러 쓰는 가짜 입력·예상 결과입니다. **ORM 모델**은 Python 클래스와 DB 테이블의 연결 정의이며, **DB 세션**은 한 작업의 DB 읽기·쓰기를 묶는 객체입니다. **확인된 사용자 정보(principal)**는 서버가 로그인 자격을 검사해 얻은 사용자 ID입니다. 화면에서 보낸 `user_id`만으로 소유권을 판단하지 않습니다.
+## 담당별 인수와 완료 선행
 
-## `yejoo0310`: #2 이후 인증 인계
+| 담당 | 지금 준비할 수 있는 것 | 최종 완료에 필요한 것 |
+| --- | --- | --- |
+| 인증·검증 `yejoo0310` | #19의 HTTP 인증·본인/타인 자원·세션 경계, #54의 경합·장애 시나리오 | 실제 MemberChat 연결 후 회원 전환·로그아웃·구독 격리를 포함한 브라우저 통합 |
+| 화면 `gittul-123` | 승인 계약과 기존 목업을 대조하고 실제 연결 범위 정리 | 후속 이슈 등록·승인 후 `202`·작업·SSE·한도·허용 동작을 실제 API로 검증 |
+| 채팅·데이터 `davekim-dev` | 구현된 API·실행기·스키마 적용 정보 인계와 연결 지원 | QA에서 확인된 결함별 후속 범위 확정 및 관련 자체검사 |
 
-1. [#2](https://github.com/next-stop-siren/Next-Stop-Siren/issues/2)와 [API 인증 형식](../04-reference/api.md#인증-요청응답)을 읽고 가짜 사용자·가입/로그인 입력·공개 응답을 pytest fixture로 만듭니다.
-2. 검사에서 fixture를 실제로 불러 401과 확인된 사용자 ID 전달을 확인합니다. fixture만 검사하는 단계와 실제 Bearer·쿠키 세션 검사를 구분합니다. 현재 토큰·인증 테스트도 함께 확인합니다.
-3. 후속 인증 검사에서 재사용할 import 위치와 실행 결과를 PR에 남깁니다.
+과거 S01–S20과 대기열의 직접 선행 기록은 [공정진행도](development-flow.md), 담당별 기록은 [인증 공정](auth-flow.md)·[채팅 공정](chat-flow.md)·[화면 공정](frontend-flow.md)에 보존한다. 그 표는 현재 미완료 목록이나 새 배정이 아니다. 서버의 한도·실행기 구현 검사를 실제 화면 통합·운영 검증으로 표시하지 않는다.
 
-완료 확인 예: 가짜 사용자 `101`의 성공 응답과 인증 없는 요청의 `401`을 각각 재현할 수 있고, 실제 비밀값이 없습니다.
-
-## `davekim-dev`: #9 모델 → #8 조회 함수 인계
-
-1. PM의 [공통 ORM 준비](../01-start/stack.md#개발과-초기-db)와 [#3](https://github.com/next-stop-siren/Next-Stop-Siren/issues/3)의 검증·병합 뒤 [#9](https://github.com/next-stop-siren/Next-Stop-Siren/issues/9)에서 대화·메시지 ORM 모델과 DB 제약 검사를 만듭니다. #9가 검증·병합되면 #8을 시작합니다.
-2. [#8](https://github.com/next-stop-siren/Next-Stop-Siren/issues/8)에서는 확인된 사용자 ID로 소유자를 제한하는 ORM 조회 함수와 pytest 검사를 만듭니다. 두 사용자의 이력, 완료 답변 순서, 실패·중단 답변의 문맥 제외를 확인합니다.
-3. [PR #25](https://github.com/next-stop-siren/Next-Stop-Siren/pull/25)의 가짜 데이터와 [PR #26](https://github.com/next-stop-siren/Next-Stop-Siren/pull/26)의 제약 예시는 검토 자료로 재사용하고 ORM 검사 결과를 PR에 남깁니다.
-
-완료 확인 예: 사용자 `202`로 사용자 `101`의 대화를 조회하면 행이 나오지 않고, 완료된 답변만 다음 문맥에 포함됩니다.
-
-## `gittul-123`: #16 이후 화면 인계
-
-1. [#16](https://github.com/next-stop-siren/Next-Stop-Siren/issues/16), [서비스 범위](../01-start/service-scope.md), [화면 지침](../03-development/frontend.md)을 읽고 소개와 사람이 작성한 고정 예시를 구현합니다.
-2. `useState`로 화면 상태를 표현하고 비회원에게 실제 질문 전송이나 개인 대화 기록 진입을 제공하지 않습니다. 고정 예시가 AI·DB 요청을 만들지 않게 합니다.
-3. 화면 상태, 키보드 접근과 좁은 화면 확인, 비회원 접근 검사 결과를 PR에 남깁니다.
-
-완료 확인 예: 로그인하지 않은 화면에서 예시는 볼 수 있지만 실제 전송·기록으로 들어갈 수 없고, 예시를 표시해도 AI·DB 호출이 없습니다.
-
-## 다음 작업으로 넘어가기 전
-
-PM 공통 ORM 준비와 #2 뒤 #3 인증 모델, #3 뒤 #9 대화 모델, #9 뒤 #8 조회 함수, #8 뒤 #10 API 순서입니다. #16 뒤 #17 로그인 화면에는 #5·#6·#7 결과도 필요합니다. 채팅과 화면의 첫 내부 목표는 **유료 AI 없이 모의 완성 답변을 저장하고 새로고침 뒤 다시 조회하는 것**입니다.
-
-현재 #11 구현은 답변 기한 30초, 다음 POST에서 60초를 초과한 pending 회복 기준을 적용합니다. S11 / #12 시작 전에는 승인된 [GPT 연결 기준](../04-reference/ai.md)을 반드시 읽습니다. 완성 쌍 문맥 필터링과 GPT 어댑터는 구현·테스트되어 있고, 일반 앱 제공자는 계속 mock입니다. 스트리밍과 현재 D4는 구현됐고 대기열·회원 한도·목표 재시도는 [회원 채팅 정책](../04-reference/chat-policy.md)에 승인됐습니다. 배포 Origin·키·Google 설정과 데이터 보존 기간은 별도 결정을 확인합니다. 결정되지 않은 값을 임의로 채우거나 기능이 이미 준비됐다고 표시하지 않습니다. Google callback URL은 API `:8000`이며 `GOOGLE_FRONTEND_ORIGIN`을 명시하면 성공 후 `:5173`으로 복귀합니다. 기존 `.env`의 수동 추가·API 재시작이 필요하고, 설정 없이는 상대 경로를 유지합니다. 화면의 CSRF·refresh와 로그인 상태 완료 연결은 아직 미구현입니다([#17](https://github.com/next-stop-siren/Next-Stop-Siren/issues/17), [#19](https://github.com/next-stop-siren/Next-Stop-Siren/issues/19)). 스트리밍 PR #44와 재시도 PR #51은 현재 main에 병합됐습니다. 진행 상태는 이슈와 PR에서 확인합니다.
+작업 인계에는 변경 동작, 기준 문서의 commit+Rev, 요청·응답, 필요한 설정, 실행한 검사와 미실행 사유를 남긴다. fixture는 가짜 입력·예상 결과이며 principal은 서버가 인증한 사용자 ID다. 화면이 보낸 사용자 ID로 소유권을 판단하지 않는다.
