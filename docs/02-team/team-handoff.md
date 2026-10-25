@@ -1,14 +1,17 @@
 # 처음 맡을 작업
 
-## 현재 인계 (2026-10-25)
+## 2차 작업과 현재 인계 (2026-10-25)
 
-PR #57·#59·#62로 한도·영속 기반·대기열 API가 병합됐다. PR #50의 인증 화면, PR #58의 기본 HTTP 채팅과 목업, PR #60·#61의 구독·재시도 목업을 구분한다. #18·#20·#21은 닫혔지만 실제 MemberChat 대기열·SSE 통합 완료가 아니다. #53은 PR #62 병합 후 종료됐고 #19·#54가 열려 있다.
+[2차 마일스톤](https://github.com/next-stop-siren/Next-Stop-Siren/milestone/2)에 새 구현·운영 작업 12개와 기존 #19·#54 최종검증을 연결했다. 등록 상태는 대기이며 개발을 시작했다는 뜻은 아니다. 기존 S01–S20 번호와 닫힌 목업의 완료 이력은 유지한다.
 
-- `gittul-123`: 계약을 바탕으로 실제 MemberChat의 접수·작업·구독·재시도·건너뛰기·취소·서버 시각 연결을 준비한다. **후속 이슈 등록 필요**이며 이 문서는 새 작업을 배정하지 않는다.
-- `yejoo0310`: #19의 인증·소유권·회원 전환 검사를 먼저 진행한다. #54의 시나리오·결함 주입 준비는 가능하며 최종 통합 완료에는 실제 화면 연결과 두 구현 담당자의 자체검사가 필요하다.
-- `davekim-dev`: #53 종료 뒤 현재 열린 배정 이슈는 없다. 실제 연결 지원과 QA에서 확인한 서버 결함 수정은 다음 작업 후보이며 새로 배정된 작업은 아니다.
+- `gittul-123`: [#65](https://github.com/next-stop-siren/Next-Stop-Siren/issues/65) 실제 회원 채팅 연결, [#67](https://github.com/next-stop-siren/Next-Stop-Siren/issues/67) 인증 모달, [#69](https://github.com/next-stop-siren/Next-Stop-Siren/issues/69) Google 실패 화면을 맡는다.
+- `davekim-dev`: [#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66) 문맥 쌍 순서, [#70](https://github.com/next-stop-siren/Next-Stop-Siren/issues/70) 민감 로그 차단을 먼저 준비할 수 있다. [#68](https://github.com/next-stop-siren/Next-Stop-Siren/issues/68) 실제 AI·긴 대화, [#72](https://github.com/next-stop-siren/Next-Stop-Siren/issues/72) 서비스 준비 확인, [#75](https://github.com/next-stop-siren/Next-Stop-Siren/issues/75) 데이터·복구 작업도 맡는다. #70의 전체 추적은 [#65](https://github.com/next-stop-siren/Next-Stop-Siren/issues/65)·[#68](https://github.com/next-stop-siren/Next-Stop-Siren/issues/68) 기능 연결 뒤 완성한다.
+- `yejoo0310`: [#69](https://github.com/next-stop-siren/Next-Stop-Siren/issues/69) Google 실패 서버, [#71](https://github.com/next-stop-siren/Next-Stop-Siren/issues/71) 가입 요청·해시 제한, [#74](https://github.com/next-stop-siren/Next-Stop-Siren/issues/74) 프록시 뒤 로그인 제한을 맡는다. 본인 인증 변경은 다른 담당자가 독립 확인한다.
+- [#73](https://github.com/next-stop-siren/Next-Stop-Siren/issues/73) EC2 구성과 [#76](https://github.com/next-stop-siren/Next-Stop-Siren/issues/76) 운영 부하·장애·알림의 운영 담당은 미배정이다. [#74](https://github.com/next-stop-siren/Next-Stop-Siren/issues/74)·#75의 운영 협업 역할도 별도 지정해야 한다.
 
-실제 AI 연결과 배포는 미완료다. 문맥 쌍 순서의 알려진 차이는 [API](../04-reference/api.md#알려진-구현-차이와-인수-확인)를 확인한다. 현재 동작의 단일 기준은 [API 계약](../04-reference/api.md)이다.
+#19·#54는 관련 기능 구현과 담당 자체검사가 끝난 뒤 최종 통합검증을 진행한다. [PR #63](https://github.com/next-stop-siren/Next-Stop-Siren/pull/63)에 일부 결과가 제출돼 있으며 검토된 결과를 해당 범위에서 재사용한다. 실제 화면 격리와 전체 대기열 검증은 남아 있다. 운영·선택 리팩터링 전체를 기능 QA 선행으로 묶지 않는다.
+
+PR #62의 서버 대기열과 PR #64의 Rev 1 문서는 완료된 기반이다. #18·#20·#21 닫힘은 목업 완료이며 실제 화면 연결은 #65에서 진행한다. 실제 AI·배포는 완료되지 않았다. 세부 동작과 고정 commit·Rev 참조는 각 이슈를 따른다.
 
 ## 함께 읽을 기준
 
@@ -17,13 +20,11 @@ PR #57·#59·#62로 한도·영속 기반·대기열 API가 병합됐다. PR #50
 3. [인증](../04-reference/authentication.md), [DB](../04-reference/database.md), [AI](../04-reference/ai.md)의 실제 구현과 남은 검증을 확인한다. 실제 Google 실패 리다이렉트는 PR #50에서 제외됐고 실제 AI·배포는 완료되지 않았다.
 4. [협업 흐름](../03-development/workflow.md)의 문서 Rev·커밋 고정 참조와 [품질 지침](../03-development/quality.md)의 검사 경계를 따른다. 기존 이슈의 완료 이력은 소급 수정하지 않는다.
 
-## 담당별 인수와 완료 선행
+## 담당별 작업과 완료 선행
 
-| 담당 | 지금 준비할 수 있는 것 | 최종 완료에 필요한 것 |
-| --- | --- | --- |
-| 인증·검증 `yejoo0310` | #19의 HTTP 인증·본인/타인 자원·세션 경계, #54의 경합·장애 시나리오 | 실제 MemberChat 연결 후 회원 전환·로그아웃·구독 격리를 포함한 브라우저 통합 |
-| 화면 `gittul-123` | 승인 계약과 기존 목업을 대조하고 실제 연결 범위 정리 | 후속 이슈 등록·승인 후 `202`·작업·SSE·한도·허용 동작을 실제 API로 검증 |
-| 채팅·데이터 `davekim-dev` | 구현된 API·실행기·스키마 적용 정보 인계와 연결 지원 | QA에서 확인된 결함별 후속 범위 확정 및 관련 자체검사 |
+현재 새 작업·담당·직접 선행은 [2차 공정 표](development-flow.md#2차-직접-선행)가 기준이다. 각 구현 담당자가 자체검사를 남기고 관련 결과를 #19·#54에 인계한다. 인증 담당 자신의 변경은 다른 담당자가 독립 확인한다. 기존 PR #63 자료는 검토된 범위에서 재사용한다.
+
+#70은 민감 로그 차단부터 진행하고 전체 추적은 기능 연결 뒤 완성한다. #66 문맥 순서는 #68의 입력 길이·토큰 한도 결정을 기다리지 않는다. 운영 담당·제한 수치·백업 보존·복구 시간·알림 책임은 미정 항목을 결정한 뒤 진행한다. 운영 담당이 없는 작업을 PM 구현으로 대신하지 않는다.
 
 과거 S01–S20과 대기열의 직접 선행 기록은 [공정진행도](development-flow.md), 담당별 기록은 [인증 공정](auth-flow.md)·[채팅 공정](chat-flow.md)·[화면 공정](frontend-flow.md)에 보존한다. 그 표는 현재 미완료 목록이나 새 배정이 아니다. 서버의 한도·실행기 구현 검사를 실제 화면 통합·운영 검증으로 표시하지 않는다.
 
