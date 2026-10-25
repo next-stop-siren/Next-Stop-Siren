@@ -2,12 +2,14 @@
 
 ## 2차 작업과 현재 인계 (2026-10-25)
 
+담당별 권장 순서와 서로 병렬로 가능한 일은 [전체 공정 안내](development-flow.md#담당별-우선순서와-병렬-진행)를 따른다. 같은 사람이 맡은 작업을 모두 동시에 진행하라는 뜻은 아니다.
+
 [2차 마일스톤](https://github.com/next-stop-siren/Next-Stop-Siren/milestone/2)에 새 구현·운영 작업 12개와 기존 #19·#54 최종검증을 연결했다. 등록 상태는 대기이며 개발을 시작했다는 뜻은 아니다. 기존 S01–S20 번호와 닫힌 목업의 완료 이력은 유지한다.
 
 - `gittul-123`: [#65](https://github.com/next-stop-siren/Next-Stop-Siren/issues/65) 실제 회원 채팅 연결, [#67](https://github.com/next-stop-siren/Next-Stop-Siren/issues/67) 인증 모달, [#69](https://github.com/next-stop-siren/Next-Stop-Siren/issues/69) Google 실패 화면을 맡는다.
 - `davekim-dev`: [#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66) 문맥 쌍 순서, [#70](https://github.com/next-stop-siren/Next-Stop-Siren/issues/70) 민감 로그 차단을 먼저 준비할 수 있다. [#68](https://github.com/next-stop-siren/Next-Stop-Siren/issues/68) 실제 AI·긴 대화, [#72](https://github.com/next-stop-siren/Next-Stop-Siren/issues/72) 서비스 준비 확인, [#75](https://github.com/next-stop-siren/Next-Stop-Siren/issues/75) 데이터·복구 작업도 맡는다. #70의 전체 추적은 [#65](https://github.com/next-stop-siren/Next-Stop-Siren/issues/65)·[#68](https://github.com/next-stop-siren/Next-Stop-Siren/issues/68) 기능 연결 뒤 완성한다.
 - `yejoo0310`: [#69](https://github.com/next-stop-siren/Next-Stop-Siren/issues/69) Google 실패 서버, [#71](https://github.com/next-stop-siren/Next-Stop-Siren/issues/71) 가입 요청·해시 제한, [#74](https://github.com/next-stop-siren/Next-Stop-Siren/issues/74) 프록시 뒤 로그인 제한을 맡는다. 본인 인증 변경은 다른 담당자가 독립 확인한다.
-- [#73](https://github.com/next-stop-siren/Next-Stop-Siren/issues/73) EC2 구성과 [#76](https://github.com/next-stop-siren/Next-Stop-Siren/issues/76) 운영 부하·장애·알림의 운영 담당은 미배정이다. [#74](https://github.com/next-stop-siren/Next-Stop-Siren/issues/74)·#75의 운영 협업 역할도 별도 지정해야 한다.
+- Owner `xifoxy-ru`가 [#73](https://github.com/next-stop-siren/Next-Stop-Siren/issues/73) 운영 구성과 [#76](https://github.com/next-stop-siren/Next-Stop-Siren/issues/76) 측정·장애·검증 자료 준비를 맡는다. [#74](https://github.com/next-stop-siren/Next-Stop-Siren/issues/74)는 `yejoo0310`, [#75](https://github.com/next-stop-siren/Next-Stop-Siren/issues/75)는 `davekim-dev`와 운영 역할을 나눠 협업한다. #76의 실제 독립 확인은 구현자가 아닌 팀원이 수행하고 확인자·결과를 남긴다.
 
 #19·#54는 관련 기능 구현과 담당 자체검사가 끝난 뒤 최종 통합검증을 진행한다. [PR #63](https://github.com/next-stop-siren/Next-Stop-Siren/pull/63)에 일부 결과가 제출돼 있으며 검토된 결과를 해당 범위에서 재사용한다. 실제 화면 격리와 전체 대기열 검증은 남아 있다. 운영·선택 리팩터링 전체를 기능 QA 선행으로 묶지 않는다.
 
@@ -24,7 +26,7 @@ PR #62의 서버 대기열과 PR #64의 Rev 1 문서는 완료된 기반이다. 
 
 현재 새 작업·담당·직접 선행은 [2차 공정 표](development-flow.md#2차-직접-선행)가 기준이다. 각 구현 담당자가 자체검사를 남기고 관련 결과를 #19·#54에 인계한다. 인증 담당 자신의 변경은 다른 담당자가 독립 확인한다. 기존 PR #63 자료는 검토된 범위에서 재사용한다.
 
-#70은 민감 로그 차단부터 진행하고 전체 추적은 기능 연결 뒤 완성한다. #66 문맥 순서는 #68의 입력 길이·토큰 한도 결정을 기다리지 않는다. 운영 담당·제한 수치·백업 보존·복구 시간·알림 책임은 미정 항목을 결정한 뒤 진행한다. 운영 담당이 없는 작업을 PM 구현으로 대신하지 않는다.
+#70은 민감 로그 차단부터 진행하고 전체 추적은 기능 연결 뒤 완성한다. #66 문맥 순서는 #68의 입력 길이·토큰 한도 결정을 기다리지 않는다. 운영 구현·검증 자료 준비는 Owner가 맡고, 제한 수치·백업 보존·복구 시간·알림 책임 등 남은 설정은 각 작업에서 결정한다. 실제 독립 확인은 구현하지 않은 팀원이 수행한다.
 
 과거 S01–S20과 대기열의 직접 선행 기록은 [공정진행도](development-flow.md), 담당별 기록은 [인증 공정](auth-flow.md)·[채팅 공정](chat-flow.md)·[화면 공정](frontend-flow.md)에 보존한다. 그 표는 현재 미완료 목록이나 새 배정이 아니다. 서버의 한도·실행기 구현 검사를 실제 화면 통합·운영 검증으로 표시하지 않는다.
 

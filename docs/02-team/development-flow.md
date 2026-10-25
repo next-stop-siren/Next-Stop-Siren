@@ -7,11 +7,49 @@
 - `gittul-123`: [#65](https://github.com/next-stop-siren/Next-Stop-Siren/issues/65) 실제 회원 채팅 연결, [#67](https://github.com/next-stop-siren/Next-Stop-Siren/issues/67) 인증 모달, [#69](https://github.com/next-stop-siren/Next-Stop-Siren/issues/69) Google 실패 화면을 맡는다.
 - `davekim-dev`: [#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66) 문맥 쌍 순서, [#70](https://github.com/next-stop-siren/Next-Stop-Siren/issues/70) 민감 로그 차단을 먼저 준비할 수 있다. [#68](https://github.com/next-stop-siren/Next-Stop-Siren/issues/68) 실제 AI·긴 대화, [#72](https://github.com/next-stop-siren/Next-Stop-Siren/issues/72) 서비스 준비 확인, [#75](https://github.com/next-stop-siren/Next-Stop-Siren/issues/75) 데이터·복구 작업도 맡는다. #70의 전체 추적은 [#65](https://github.com/next-stop-siren/Next-Stop-Siren/issues/65)·[#68](https://github.com/next-stop-siren/Next-Stop-Siren/issues/68) 기능 연결 뒤 완성한다.
 - `yejoo0310`: [#69](https://github.com/next-stop-siren/Next-Stop-Siren/issues/69) Google 실패 서버, [#71](https://github.com/next-stop-siren/Next-Stop-Siren/issues/71) 가입 요청·해시 제한, [#74](https://github.com/next-stop-siren/Next-Stop-Siren/issues/74) 프록시 뒤 로그인 제한을 맡는다. 본인 인증 변경은 다른 담당자가 독립 확인한다.
-- [#73](https://github.com/next-stop-siren/Next-Stop-Siren/issues/73) EC2 구성과 [#76](https://github.com/next-stop-siren/Next-Stop-Siren/issues/76) 운영 부하·장애·알림의 운영 담당은 미배정이다. [#74](https://github.com/next-stop-siren/Next-Stop-Siren/issues/74)·#75의 운영 협업 역할도 별도 지정해야 한다.
+- Owner `xifoxy-ru`가 [#73](https://github.com/next-stop-siren/Next-Stop-Siren/issues/73) 운영 구성과 [#76](https://github.com/next-stop-siren/Next-Stop-Siren/issues/76) 측정·장애·검증 자료 준비를 맡는다. [#74](https://github.com/next-stop-siren/Next-Stop-Siren/issues/74)는 `yejoo0310`, [#75](https://github.com/next-stop-siren/Next-Stop-Siren/issues/75)는 `davekim-dev`와 운영 역할을 나눠 협업한다. #76의 실제 독립 확인은 구현자가 아닌 팀원이 수행하고 확인자·결과를 남긴다.
 
 #19·#54는 관련 기능 구현과 담당 자체검사가 끝난 뒤 최종 통합검증을 진행한다. [PR #63](https://github.com/next-stop-siren/Next-Stop-Siren/pull/63)에 일부 결과가 제출돼 있으며 검토된 결과를 해당 범위에서 재사용한다. 실제 화면 격리와 전체 대기열 검증은 남아 있다. 운영·선택 리팩터링 전체를 기능 QA 선행으로 묶지 않는다.
 
 PR #62의 서버 대기열과 PR #64의 Rev 1 문서는 완료된 기반이다. #18·#20·#21 닫힘은 목업 완료이며 실제 화면 연결은 #65에서 진행한다. 실제 AI·배포는 완료되지 않았다. 세부 동작과 고정 commit·Rev 참조는 각 이슈를 따른다.
+
+## 담당별 우선순서와 병렬 진행
+
+이 표는 같은 담당자가 작업을 고르는 권장 순서다. 아래의 **직접 선행 표는 그대로**이며 우선순서 때문에 새 선행 관계를 추가하지 않는다. 결정이나 검토를 기다리면 준비 가능한 다음 작업으로 옮길 수 있다. 다른 담당자끼리는 병렬로 진행하되 한 사람이 여러 작업을 동시에 끝내야 한다는 뜻은 아니다.
+
+| 담당 | 권장 순서와 기다리는 지점 |
+| --- | --- |
+| `gittul-123` | [#65](https://github.com/next-stop-siren/Next-Stop-Siren/issues/65) 회원 채팅 → [#67](https://github.com/next-stop-siren/Next-Stop-Siren/issues/67) 모달 → [#69](https://github.com/next-stop-siren/Next-Stop-Siren/issues/69) 실패 화면. #65가 결정을 기다리면 모달 등 준비 가능한 일을 먼저 할 수 있다. |
+| `davekim-dev` | [#70](https://github.com/next-stop-siren/Next-Stop-Siren/issues/70) **민감 로그 차단 단계** → [#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66) 문맥 → [#68](https://github.com/next-stop-siren/Next-Stop-Siren/issues/68) AI 연결. 값 결정을 기다릴 때 [#72](https://github.com/next-stop-siren/Next-Stop-Siren/issues/72) 준비 상태를 확인한다. #75는 Owner 환경과 협업하고, [#70](https://github.com/next-stop-siren/Next-Stop-Siren/issues/70) **전체 추적**은 [#65](https://github.com/next-stop-siren/Next-Stop-Siren/issues/65)·[#68](https://github.com/next-stop-siren/Next-Stop-Siren/issues/68) 연결 뒤 완성한다. |
+| `yejoo0310` | [#71](https://github.com/next-stop-siren/Next-Stop-Siren/issues/71) 가입 제한 → [#69](https://github.com/next-stop-siren/Next-Stop-Siren/issues/69) 실패 서버 → [#74](https://github.com/next-stop-siren/Next-Stop-Siren/issues/74) 프록시 협업. [#74](https://github.com/next-stop-siren/Next-Stop-Siren/issues/74) 실제 확인은 Owner의 [#73](https://github.com/next-stop-siren/Next-Stop-Siren/issues/73) 프록시·실행 프로세스 구성 결과를 사용한다. |
+| Owner `xifoxy-ru` | [#73](https://github.com/next-stop-siren/Next-Stop-Siren/issues/73) 운영 구성 → [#74](https://github.com/next-stop-siren/Next-Stop-Siren/issues/74) 프록시 확인·[#75](https://github.com/next-stop-siren/Next-Stop-Siren/issues/75) 백업과 복구를 각 담당자와 진행 → [#76](https://github.com/next-stop-siren/Next-Stop-Siren/issues/76) 측정·장애·검증 자료 준비. #76의 실제 독립 확인은 구현하지 않은 팀원이 수행한다. |
+
+아래는 **현재 열린 작업의 진행·인계 요약**이다. 각 박스 안의 전체 작업이 끝나야 다음 박스를 시작한다는 뜻이 아니다. 화살표에 적힌 해당 작업 결과만 기다리며, 정확한 직접 선행은 다음 절의 표를 따른다.
+
+```mermaid
+flowchart LR
+  subgraph PAR["서로 병렬로 시작 가능한 준비 · 각 담당은 위 우선순서대로"]
+    F["gittul: #65 실제 화면"]
+    B["dave: #70 민감 로그부터, 다음 #66·#68"]
+    A["yejoo: #71 가입·#69 서버"]
+    O["Owner: #73 운영 구성"]
+  end
+  F -->|"#65·#67·#69 화면과 자체검사"| Q19["#19 인증·소유권 통합"]
+  A -->|"#69·#71과 다른 담당자 확인"| Q19
+  Q19 --> Q54["#54 대기열·장애 통합"]
+  B -->|"#66·#68 결과"| Q54
+  F -->|"#65 연결 결과"| TRACE["#70 전체 추적 · #65·#68 뒤"]
+  B -->|"#68 연결 결과"| TRACE
+  O --> OPS["Owner와 #74·#75 담당자 협업"]
+  OPS --> FINAL["Owner #76 측정·검증 준비 → 다른 팀원 독립 확인"]
+  TRACE --> FINAL
+  Q54 --> FINAL
+  B -->|"#72 준비 확인 결과"| FINAL
+```
+
+실제 데이터 사용·외부 로그 수집 전에는 #70의 민감 로그 차단 결과를 확인한다. 전체 처리 단계 추적은 기능 연결이 끝난 뒤 완성하므로 앞의 안전 수정을 막지 않는다. [#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66) 문맥 수정은 #68의 입력 길이·토큰 한도 결정을 기다리지 않는다. [#19](https://github.com/next-stop-siren/Next-Stop-Siren/issues/19)·#54는 관련 기능과 자체검사 뒤 진행하며 운영·선택 리팩터링 전체를 선행으로 묶지 않는다.
+
+아직 정하지 않은 값·운영 설정은 각 이슈에서 결정한다. #76의 독립 확인자 이름은 실제로 맡은 팀원과 확인 결과에 기록하며 Owner의 자체검사로 대신하지 않는다.
 
 ## 2차 직접 선행
 
@@ -27,10 +65,10 @@ PR #62의 서버 대기열과 PR #64의 Rev 1 문서는 완료된 기반이다. 
 | [민감 정보 없는 오류 로그와 작업 단계 추적 보완하기](https://github.com/next-stop-siren/Next-Stop-Siren/issues/70) (#70) | davekim-dev | [#53](https://github.com/next-stop-siren/Next-Stop-Siren/issues/53) |
 | [가입 요청과 비밀번호 해시의 동시 작업 제한하기](https://github.com/next-stop-siren/Next-Stop-Siren/issues/71) (#71) | yejoo0310 | [#4](https://github.com/next-stop-siren/Next-Stop-Siren/issues/4), [#5](https://github.com/next-stop-siren/Next-Stop-Siren/issues/5) |
 | [서비스가 실제 요청을 받을 준비가 됐는지 확인하기](https://github.com/next-stop-siren/Next-Stop-Siren/issues/72) (#72) | davekim-dev | [#53](https://github.com/next-stop-siren/Next-Stop-Siren/issues/53) |
-| [단일 EC2 파일럿 운영 구성 준비하기](https://github.com/next-stop-siren/Next-Stop-Siren/issues/73) (#73) | 운영 미배정 | — |
-| [프록시 뒤에서도 사용자별 로그인 제한이 동작하도록 수정하기](https://github.com/next-stop-siren/Next-Stop-Siren/issues/74) (#74) | yejoo0310 | [#5](https://github.com/next-stop-siren/Next-Stop-Siren/issues/5), [#73](https://github.com/next-stop-siren/Next-Stop-Siren/issues/73) |
-| [데이터를 보존하며 배포하고 장애 시 복구하는 절차 만들기](https://github.com/next-stop-siren/Next-Stop-Siren/issues/75) (#75) | davekim-dev | [#53](https://github.com/next-stop-siren/Next-Stop-Siren/issues/53), [#73](https://github.com/next-stop-siren/Next-Stop-Siren/issues/73) |
-| [운영 환경의 부하·장애·알림 확인하기](https://github.com/next-stop-siren/Next-Stop-Siren/issues/76) (#76) | 운영 미배정 | [#70](https://github.com/next-stop-siren/Next-Stop-Siren/issues/70), [#72](https://github.com/next-stop-siren/Next-Stop-Siren/issues/72), [#74](https://github.com/next-stop-siren/Next-Stop-Siren/issues/74), [#75](https://github.com/next-stop-siren/Next-Stop-Siren/issues/75), [#54](https://github.com/next-stop-siren/Next-Stop-Siren/issues/54) |
+| [단일 EC2 파일럿 운영 구성 준비하기](https://github.com/next-stop-siren/Next-Stop-Siren/issues/73) (#73) | xifoxy-ru | — |
+| [프록시 뒤에서도 사용자별 로그인 제한이 동작하도록 수정하기](https://github.com/next-stop-siren/Next-Stop-Siren/issues/74) (#74) | yejoo0310, xifoxy-ru | [#5](https://github.com/next-stop-siren/Next-Stop-Siren/issues/5), [#73](https://github.com/next-stop-siren/Next-Stop-Siren/issues/73) |
+| [데이터를 보존하며 배포하고 장애 시 복구하는 절차 만들기](https://github.com/next-stop-siren/Next-Stop-Siren/issues/75) (#75) | davekim-dev, xifoxy-ru | [#53](https://github.com/next-stop-siren/Next-Stop-Siren/issues/53), [#73](https://github.com/next-stop-siren/Next-Stop-Siren/issues/73) |
+| [운영 환경의 부하·장애·알림 확인하기](https://github.com/next-stop-siren/Next-Stop-Siren/issues/76) (#76) | xifoxy-ru | [#70](https://github.com/next-stop-siren/Next-Stop-Siren/issues/70), [#72](https://github.com/next-stop-siren/Next-Stop-Siren/issues/72), [#74](https://github.com/next-stop-siren/Next-Stop-Siren/issues/74), [#75](https://github.com/next-stop-siren/Next-Stop-Siren/issues/75), [#54](https://github.com/next-stop-siren/Next-Stop-Siren/issues/54) |
 | [인증·소유권 최종 통합검증](https://github.com/next-stop-siren/Next-Stop-Siren/issues/19) (#19) | yejoo0310 | [#10](https://github.com/next-stop-siren/Next-Stop-Siren/issues/10), [#11](https://github.com/next-stop-siren/Next-Stop-Siren/issues/11), [#17](https://github.com/next-stop-siren/Next-Stop-Siren/issues/17), [#18](https://github.com/next-stop-siren/Next-Stop-Siren/issues/18), [#53](https://github.com/next-stop-siren/Next-Stop-Siren/issues/53), [#65](https://github.com/next-stop-siren/Next-Stop-Siren/issues/65), [#67](https://github.com/next-stop-siren/Next-Stop-Siren/issues/67), [#69](https://github.com/next-stop-siren/Next-Stop-Siren/issues/69), [#71](https://github.com/next-stop-siren/Next-Stop-Siren/issues/71) |
 | [대기열·한도·복구 독립 통합검증](https://github.com/next-stop-siren/Next-Stop-Siren/issues/54) (#54) | yejoo0310 | [#18](https://github.com/next-stop-siren/Next-Stop-Siren/issues/18), [#19](https://github.com/next-stop-siren/Next-Stop-Siren/issues/19), [#20](https://github.com/next-stop-siren/Next-Stop-Siren/issues/20), [#21](https://github.com/next-stop-siren/Next-Stop-Siren/issues/21), [#53](https://github.com/next-stop-siren/Next-Stop-Siren/issues/53), [#65](https://github.com/next-stop-siren/Next-Stop-Siren/issues/65), [#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66), [#68](https://github.com/next-stop-siren/Next-Stop-Siren/issues/68) |
 
