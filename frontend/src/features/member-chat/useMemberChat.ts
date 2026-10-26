@@ -220,6 +220,8 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
   const [, setPendingVersion] = useState(0)
   // 대화 조회가 겹칠 때 가장 나중에 시작한 조회의 결과만 화면에 반영하기 위한 순번이다.
   const loadSeqRef = useRef(0)
+  // 진행 중인 대화 조회. 다른 대화를 열거나 새 대화를 시작하거나 화면을 떠나면 끊는다.
+  const loadAbortRef = useRef<AbortController | null>(null)
   // 사용자가 목록을 읽는 동안 대화를 고르거나 새로 만들었는지 나타낸다. 그렇다면 첫 목록이 선택을 덮어쓰지 않는다.
   const navigatedRef = useRef(false)
   // 전송 중 여부를 동기적으로 막는 가드다. state는 다시 그려져야 바뀌므로, 엔터 연타나 더블클릭이 겹치면
@@ -251,20 +253,38 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
       const mark = eventsRef.current.mark()
       const isCurrent = () => alive() && conversationIdRef.current === id && loadSeqRef.current === seq
 
-      const [items, jobs] = await Promise.all([
-        listAllMessages(token, id),
-        listConversationJobs(token, id, CONVERSATION_JOBS_LIMIT).catch(() => null),
-      ])
+      // 앞서 시작한 대화 조회는 더 쓰지 않으므로 끊는다. 화면을 떠날 때도 함께 끊는다.
+      loadAbortRef.current?.abort()
+      const controller = new AbortController()
+      loadAbortRef.current = controller
+      const lifetime = lifetimeRef.current.signal
+      const stop = () => controller.abort()
+      if (lifetime.aborted) stop()
+      else lifetime.addEventListener('abort', stop, { once: true })
 
-      if (!isCurrent()) return
+      try {
+        const [items, jobs] = await Promise.all([
+          listAllMessages(token, id, controller.signal),
+          listConversationJobs(token, id, CONVERSATION_JOBS_LIMIT, controller.signal).catch(() => null),
+        ])
 
-      setMessages(items)
-      // 재연결 snapshot에는 끝나지 않은 작업만 있으므로, 끝난 작업(재시도·건너뛰기 버튼 포함)은 이 목록으로 되살린다.
-      if (jobs) {
-        eventsRef.current.applyResponse(mark, {
-          envelopes: envelopesFromHistory(jobs.items, items),
-          limits: jobs.limits,
-        })
+        if (!isCurrent()) return
+
+        setMessages(items)
+        // 재연결 snapshot에는 끝나지 않은 작업만 있으므로, 끝난 작업(재시도·건너뛰기 버튼 포함)은 이 목록으로 되살린다.
+        if (jobs) {
+          eventsRef.current.applyResponse(mark, {
+            envelopes: envelopesFromHistory(jobs.items, items),
+            limits: jobs.limits,
+          })
+        }
+      } catch (err) {
+        // 끊겼거나 더 새로운 조회가 시작됐다면 이 실패는 화면에 알리지 않는다.
+        if (!isCurrent()) return
+        throw err
+      } finally {
+        lifetime.removeEventListener('abort', stop)
+        if (loadAbortRef.current === controller) loadAbortRef.current = null
       }
     },
     [alive],
@@ -275,12 +295,14 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
     if (!userId || !token) return
 
     let stale = false
+    // 회원이 바뀌거나 화면을 떠나면 진행 중인 목록 조회를 끊는다.
+    const controller = new AbortController()
 
     async function load(accessToken: string) {
       setLoading(true)
 
       try {
-        const items = await listAllConversations(accessToken)
+        const items = await listAllConversations(accessToken, controller.signal)
         if (stale) return
 
         // 목록을 읽는 동안 새로 만든 대화가 있으면 그대로 두고, 서버 목록에서 아직 없는 것만 뒤에 붙인다.
@@ -307,6 +329,7 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
 
     return () => {
       stale = true
+      controller.abort()
     }
   }, [userId, selectId, loadConversation, setLoadError])
 
@@ -350,6 +373,7 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
     // 다른 대화로 잘못 전송되지 않고, 응답을 잃은 질문의 키도 잃지 않는다.
     navigatedRef.current = true
     loadSeqRef.current += 1
+    loadAbortRef.current?.abort()
     selectId(null)
     setMessages([])
     setError('')

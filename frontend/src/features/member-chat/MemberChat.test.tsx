@@ -395,14 +395,22 @@ test('대화를 읽지 못하면 다시 불러오기를 권하고, 누르면 그
   expect(screen.queryByRole('alert')).toBeNull()
 })
 
-test('대화를 빠르게 바꿔도 늦게 도착한 이전 대화의 이력이 지금 대화를 덮어쓰지 않는다', async () => {
+test('대화를 빠르게 바꾸면 이전 대화의 조회를 끊고, 늦게 도착한 이전 이력이 지금 대화를 덮어쓰지 않는다', async () => {
   const user = userEvent.setup()
   const slow501 = deferred<Response | undefined>()
+  const signals501: (AbortSignal | null | undefined)[] = []
 
-  mockApi((url) => {
+  mockApi((url, init) => {
     if (url === '/api/conversations?limit=20') return json(200, page([conversation('502'), conversation('501')]))
     if (url === '/api/conversations/502/messages?limit=100') return json(200, page([userMessage('1', 'Q-502')]))
-    if (url === '/api/conversations/501/messages?limit=100') return slow501.promise
+    if (url === '/api/conversations/501/messages?limit=100') {
+      signals501.push(init?.signal)
+      return slow501.promise
+    }
+    if (url === '/api/chat/jobs?conversation_id=501&limit=100') {
+      signals501.push(init?.signal)
+      return slow501.promise.then(() => json(200, jobPage([])))
+    }
     return undefined
   })
 
@@ -413,12 +421,17 @@ test('대화를 빠르게 바꿔도 늦게 도착한 이전 대화의 이력이 
   await user.click(conversationButton('502'))
   await screen.findByText('Q-502')
 
+  expect(signals501).toHaveLength(2)
+  expect(signals501.every((signal) => signal?.aborted)).toBe(true)
+
   slow501.resolve(json(200, page([userMessage('2', 'Q-501-LATE')])))
   await settle()
 
   expect(screen.queryByText('Q-501-LATE')).toBeNull()
   expect(screen.getByText('Q-502')).toBeTruthy()
   expect(conversationButton('502').getAttribute('aria-current')).toBe('page')
+  // 끊은 조회는 오류로 알리지 않는다.
+  expect(screen.queryByRole('alert')).toBeNull()
 })
 
 // --- 접수(202)부터 저장된 답변까지 ---
@@ -1198,6 +1211,35 @@ test('회원이 바뀌면 다시 그린 첫 화면부터 이전 회원의 기록
   expect(screen.queryByText('A의 늦은 조각')).toBeNull()
 })
 
+test('회원이 바뀌면 이전 회원의 대화 목록 조회를 끊는다', async () => {
+  const slowListA = deferred<Response | undefined>()
+  let listSignalA: AbortSignal | null | undefined
+
+  mockApi((url, init) => {
+    if (authHeader(init) === 'Bearer token-b') {
+      if (url === '/api/conversations?limit=20') return json(200, page([]))
+      return undefined
+    }
+    if (url === '/api/conversations?limit=20') {
+      listSignalA = init?.signal
+      return slowListA.promise
+    }
+    return undefined
+  })
+
+  const { rerender } = renderChat()
+  await waitFor(() => expect(listSignalA).toBeDefined())
+
+  auth.value = { accessToken: 'token-b', user: { id: 'u2' } }
+  rerender()
+
+  expect(listSignalA?.aborted).toBe(true)
+  await screen.findByText('대화 기록이 아직 없어요.')
+  slowListA.resolve(json(200, page([conversation('501')])))
+  await settle()
+  expect(screen.queryByRole('button', { name: conversationLabel(conversation('501')) })).toBeNull()
+})
+
 test('계정이 바뀐 뒤 새 목록 조회가 실패해도 이전 사용자의 대화와 입력 내용이 남지 않는다', async () => {
   const user = userEvent.setup()
 
@@ -1293,15 +1335,22 @@ test('로그아웃하면 구독을 끊고 화면을 비우지만, 서버 작업�
   expect(postCalls(fetchSpy)).toEqual([])
 })
 
-test('화면을 떠난 뒤 늦게 끝난 조회는 화면을 바꾸거나 새 요청·재연결을 만들지 않는다', async () => {
+test('화면을 떠나면 진행 중인 조회를 끊고, 늦게 끝난 조회는 화면을 바꾸거나 새 요청·재연결을 만들지 않는다', async () => {
   const slowJobs = deferred<Response | undefined>()
   const slowLookup = deferred<Response | undefined>()
+  const signals: Record<string, AbortSignal | null | undefined> = {}
 
-  const fetchSpy = mockApi((url) => {
+  const fetchSpy = mockApi((url, init) => {
     if (url === '/api/conversations?limit=20') return json(200, page([conversation('501')]))
     if (url === '/api/conversations/501/messages?limit=100') return json(200, page([userMessage('9001', '질문')]))
-    if (url === '/api/chat/jobs?conversation_id=501&limit=100') return slowJobs.promise
-    if (url === '/api/chat/jobs/7001') return slowLookup.promise
+    if (url === '/api/chat/jobs?conversation_id=501&limit=100') {
+      signals.jobs = init?.signal
+      return slowJobs.promise
+    }
+    if (url === '/api/chat/jobs/7001') {
+      signals.lookup = init?.signal
+      return slowLookup.promise
+    }
     return undefined
   })
 
@@ -1313,6 +1362,8 @@ test('화면을 떠난 뒤 늦게 끝난 조회는 화면을 바꾸거나 새 �
   await waitFor(() => expect(fetchSpy.mock.calls.some(([input]) => String(input) === '/api/chat/jobs/7001')).toBe(true))
 
   unmount()
+  expect(signals.jobs?.aborted).toBe(true)
+  expect(signals.lookup?.aborted).toBe(true)
   const callsBefore = fetchSpy.mock.calls.length
 
   slowJobs.resolve(json(200, jobPage([])))

@@ -10,7 +10,8 @@ export interface UseChatEventsOptions {
   /** 연결할 때마다 호출해 그 시점의 최신 access 토큰을 쓴다. 토큰이 갱신돼도 연결을 새로 열지 않는다. */
   getAccessToken: () => string | null
   open?: OpenChatEvents
-  resolveJob?: (accessToken: string, jobId: string) => Promise<ChatJobEnvelope | null>
+  /** 회원이 바뀌거나 화면이 사라지면 `signal`이 중단된다. 진행 중인 조회를 끊는 데 쓴다. */
+  resolveJob?: (accessToken: string, jobId: string, signal?: AbortSignal) => Promise<ChatJobEnvelope | null>
   /** 끊긴 뒤 다시 연결하기까지 기다릴 시간. 연결 실패가 이어질수록 늘린다. */
   reconnectDelayMs?: (attempt: number) => number
   /** 연결이 이 시간 이상 이어진 뒤에 끊겨야 재연결 간격을 처음으로 되돌린다. 기본 10초. */
@@ -89,6 +90,8 @@ export function useChatEvents(options: UseChatEventsOptions): ChatEventsView {
 
   const sinceRef = useRef<string | null>(null)
   const epochRef = useRef(0)
+  // 이 회원·이 화면에서 시작한 작업 조회를 한꺼번에 끊는다. 회원이 바뀌거나 화면이 사라지면 중단한다.
+  const lookupsRef = useRef(new AbortController())
   const resolvingRef = useRef(new Set<string>())
   // 작업별 조회 횟수, 다음 조회까지 쉬는 중인 작업, 그 타이머. 사용자가 바뀌면 모두 버린다.
   const attemptsRef = useRef(new Map<string, number>())
@@ -115,6 +118,8 @@ export function useChatEvents(options: UseChatEventsOptions): ChatEventsView {
 
   useEffect(() => {
     epochRef.current += 1
+    lookupsRef.current.abort()
+    lookupsRef.current = new AbortController()
     sinceRef.current = null
     resolvingRef.current.clear()
     attemptsRef.current.clear()
@@ -193,8 +198,9 @@ export function useChatEvents(options: UseChatEventsOptions): ChatEventsView {
     void run()
 
     return () => {
-      // 화면을 떠난 뒤 늦게 끝난 작업 조회가 다시 조회할 타이머를 만들지 않도록 세대를 넘긴다.
+      // 화면을 떠난 뒤 늦게 끝난 작업 조회가 다시 조회할 타이머를 만들지 않도록 세대를 넘기고, 진행 중인 조회는 끊는다.
       epochRef.current += 1
+      lookupsRef.current.abort()
       controller.abort()
       for (const timer of timersRef.current) clearTimeout(timer)
       timersRef.current.clear()
@@ -236,7 +242,7 @@ export function useChatEvents(options: UseChatEventsOptions): ChatEventsView {
       resolvingRef.current.add(jobId)
       const startedAt = ++eventSeqRef.current
 
-      resolveJob(accessToken, jobId)
+      resolveJob(accessToken, jobId, lookupsRef.current.signal)
         .then((envelope) => {
           if (epochRef.current !== epoch || !envelope) return
           // 조회하는 동안 같은 작업의 구독 이벤트나 더 늦게 보낸 요청의 응답이 반영됐다면 그쪽이 더 최신이다.
@@ -270,7 +276,7 @@ export function useChatEvents(options: UseChatEventsOptions): ChatEventsView {
       const startedAt = ++eventSeqRef.current
 
       try {
-        const envelope = await resolveJob(accessToken, jobId)
+        const envelope = await resolveJob(accessToken, jobId, lookupsRef.current.signal)
 
         // 그 사이 사용자가 바뀌었다면 이전 사용자의 응답은 버린다.
         if (!envelope || epochRef.current !== epoch) return

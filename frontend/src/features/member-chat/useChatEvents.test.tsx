@@ -280,7 +280,7 @@ test('재연결 snapshot에 없는 진행 중 작업은 작업 조회로 최종 
   await waitFor(() =>
     expect(selectAnswerView(result.current, '7001')).toEqual({ kind: 'confirmed', content: '조회로 받은 최종 답변' }),
   )
-  expect(resolveJob).toHaveBeenCalledWith('token-1', '7001')
+  expect(resolveJob).toHaveBeenCalledWith('token-1', '7001', expect.any(AbortSignal))
   expect(result.current.unresolved).toEqual([])
 })
 

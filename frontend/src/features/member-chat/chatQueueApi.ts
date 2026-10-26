@@ -12,11 +12,15 @@ import { ChatApiError, requestJson } from './memberChatApi'
  * 화면이 진행 중으로 알던 작업이 재연결 snapshot에 없을 때 최종 결과를 확인하는 데 쓴다.
  * 없는 작업과 타인의 작업은 같은 404라 null을 돌려준다.
  */
-export async function fetchChatJob(accessToken: string, jobId: string): Promise<ChatJobEnvelope | null> {
+export async function fetchChatJob(
+  accessToken: string,
+  jobId: string,
+  signal?: AbortSignal,
+): Promise<ChatJobEnvelope | null> {
   let body: unknown
 
   try {
-    body = await requestJson<unknown>(`/api/chat/jobs/${encodeURIComponent(jobId)}`, accessToken)
+    body = await requestJson<unknown>(`/api/chat/jobs/${encodeURIComponent(jobId)}`, accessToken, { signal })
   } catch (error) {
     if (error instanceof ChatApiError && error.status === 404) return null
     throw error
@@ -35,9 +39,10 @@ export async function listConversationJobs(
   accessToken: string,
   conversationId: string,
   limit = 50,
+  signal?: AbortSignal,
 ): Promise<ChatJobPage> {
   const params = new URLSearchParams({ conversation_id: conversationId, limit: String(limit) })
-  return requestJson(`/api/chat/jobs?${params.toString()}`, accessToken)
+  return requestJson(`/api/chat/jobs?${params.toString()}`, accessToken, { signal })
 }
 
 /** 실행 전(`queued`·`paused`) 작업을 취소한다. 실행 중인 작업은 취소할 수 없다. */

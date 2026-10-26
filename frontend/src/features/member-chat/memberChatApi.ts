@@ -98,6 +98,7 @@ export async function listConversations(
   accessToken: string,
   limit = 20,
   beforeId?: string,
+  signal?: AbortSignal,
 ): Promise<ApiConversationListResponse> {
   const params = new URLSearchParams({ limit: String(limit) })
 
@@ -105,7 +106,7 @@ export async function listConversations(
     params.set('before_id', beforeId)
   }
 
-  return requestJson(`/api/conversations?${params.toString()}`, accessToken)
+  return requestJson(`/api/conversations?${params.toString()}`, accessToken, { signal })
 }
 
 export async function listMessages(
@@ -113,6 +114,7 @@ export async function listMessages(
   conversationId: string,
   limit = 20,
   afterId?: string,
+  signal?: AbortSignal,
 ): Promise<ApiMessageListResponse> {
   const params = new URLSearchParams({ limit: String(limit) })
 
@@ -123,6 +125,7 @@ export async function listMessages(
   return requestJson(
     `/api/conversations/${encodeURIComponent(conversationId)}/messages?${params.toString()}`,
     accessToken,
+    { signal },
   )
 }
 
@@ -131,12 +134,16 @@ export async function listMessages(
 const MESSAGE_PAGE_SIZE = 100
 const MAX_PAGES = 50
 
-export async function listAllMessages(accessToken: string, conversationId: string): Promise<ApiMessage[]> {
+export async function listAllMessages(
+  accessToken: string,
+  conversationId: string,
+  signal?: AbortSignal,
+): Promise<ApiMessage[]> {
   const items: ApiMessage[] = []
   let cursor: string | undefined
 
   for (let page = 0; page < MAX_PAGES; page += 1) {
-    const result = await listMessages(accessToken, conversationId, MESSAGE_PAGE_SIZE, cursor)
+    const result = await listMessages(accessToken, conversationId, MESSAGE_PAGE_SIZE, cursor, signal)
     items.push(...result.items)
 
     if (!result.next_cursor) break
@@ -147,12 +154,12 @@ export async function listAllMessages(accessToken: string, conversationId: strin
 }
 
 // 대화는 생성 ID 내림차순이고 다음 페이지는 before_id로 읽는다.
-export async function listAllConversations(accessToken: string): Promise<ApiConversation[]> {
+export async function listAllConversations(accessToken: string, signal?: AbortSignal): Promise<ApiConversation[]> {
   const items: ApiConversation[] = []
   let cursor: string | undefined
 
   for (let page = 0; page < MAX_PAGES; page += 1) {
-    const result = await listConversations(accessToken, 20, cursor)
+    const result = await listConversations(accessToken, 20, cursor, signal)
     items.push(...result.items)
 
     if (!result.next_cursor) break

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import ChatAnswerView from './ChatAnswerView'
 import ChatJobActions from './ChatJobActions'
 import { selectAnswerView, type AnswerView } from './chatEventsReducer'
@@ -80,6 +80,14 @@ function Thread({ thread, chat }: { thread: ChatThread; chat: MemberChatState })
   )
 }
 
+/** 맨 아래에서 이 거리 안에 있으면 사용자가 최신 내용을 보고 있다고 본다. */
+const FOLLOW_THRESHOLD_PX = 80
+
+/** 본문 스크롤 영역(`main`)을 끝까지 내린다. 입력창이 아래에 붙어 있어 끝부분을 화면 맨 아래에 맞추면 가려진다. */
+function scrollToEnd(scroller: HTMLElement | null | undefined) {
+  if (scroller) scroller.scrollTop = scroller.scrollHeight
+}
+
 type MemberChatProps = {
   chat: MemberChatState
 }
@@ -91,11 +99,31 @@ type MemberChatProps = {
 function MemberChat({ chat }: MemberChatProps) {
   const { events } = chat
   const bottomRef = useRef<HTMLDivElement>(null)
+  // 사용자가 맨 아래 근처에서 최신 내용을 보고 있는지. 위로 올려 읽는 중이면 새 내용이 와도 끌어내리지 않는다.
+  const followRef = useRef(true)
 
-  // 대화를 열거나 질문을 보낸 뒤에는 마지막 질문이 보이도록 맨 아래로 내린다.
   useEffect(() => {
-    if (chat.scrollRequest > 0) bottomRef.current?.scrollIntoView?.({ block: 'end' })
+    const scroller = bottomRef.current?.closest('main')
+    if (!scroller) return
+
+    const update = () => {
+      followRef.current = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= FOLLOW_THRESHOLD_PX
+    }
+    scroller.addEventListener('scroll', update, { passive: true })
+    return () => scroller.removeEventListener('scroll', update)
+  }, [])
+
+  // 대화를 열거나 질문을 보낸 뒤에는 마지막 질문이 보이도록 맨 아래로 내리고, 이후 도착하는 답변을 따라간다.
+  useEffect(() => {
+    if (chat.scrollRequest === 0) return
+    followRef.current = true
+    scrollToEnd(bottomRef.current?.closest('main'))
   }, [chat.scrollRequest])
+
+  // 구독으로 답변·임시 출력이 자라면, 맨 아래에서 보고 있을 때만 따라 내려간다. 그리기 직후에 맞춰 깜빡이지 않게 한다.
+  useLayoutEffect(() => {
+    if (followRef.current) scrollToEnd(bottomRef.current?.closest('main'))
+  }, [chat.threads, events.drafts])
 
   const limits = events.limits
   const composerHint = chat.questionTooLong
