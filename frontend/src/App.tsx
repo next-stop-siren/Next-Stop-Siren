@@ -3,11 +3,11 @@ import AuthModal from './features/auth/AuthModal'
 import { AuthProvider, useAuth } from './features/auth/AuthContext'
 import Sidebar from './features/layout/Sidebar'
 import NonmemberIntro from './features/nonmember/NonmemberIntro'
-import MemberChat from './features/member-chat/MemberChat'
+import MemberWorkspace from './features/member-chat/MemberWorkspace'
 import MemberChatMockPreview from './features/member-chat/MemberChatMockPreview'
 
 function AppShell() {
-  const { status, logout, retryLogout, logoutError } = useAuth()
+  const { status, user, logout, retryLogout, logoutError } = useAuth()
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
   const [isRetryingLogout, setIsRetryingLogout] = useState(false)
 
@@ -71,19 +71,18 @@ function AppShell() {
       )}
 
       <div className="app-layout">
-        <Sidebar
-          isAuthenticated={status === 'authenticated'}
-          onLoginClick={openAuthModal}
-          onLogoutClick={handleLogout}
-        />
+        {status === 'authenticated' ? (
+          // 회원이 바뀌면 새로 마운트해 이전 회원의 대화·임시 출력·구독이 첫 화면부터 남지 않게 한다.
+          <MemberWorkspace key={user?.id ?? ''} onLogoutClick={handleLogout} />
+        ) : (
+          <>
+            <Sidebar isAuthenticated={false} onLoginClick={openAuthModal} onLogoutClick={handleLogout} />
 
-        <main className="main-content">
-          {status === 'guest' ? (
-            <NonmemberIntro onAuthRequired={openAuthModal} />
-          ) : status === 'authenticated' ? (
-            <MemberChat />
-          ) : null}
-        </main>
+            <main className="main-content">
+              {status === 'guest' ? <NonmemberIntro onAuthRequired={openAuthModal} /> : null}
+            </main>
+          </>
+        )}
 
         {isAuthModalOpen && <AuthModal onClose={closeAuthModal} />}
       </div>
