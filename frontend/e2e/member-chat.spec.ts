@@ -59,41 +59,71 @@ test('질문을 접수하면 구독으로 저장된 답변을 받고, 새로고�
   await expect(sidebar.getByRole('button')).toHaveAttribute('aria-current', 'page')
 })
 
-test('서버가 접수한 뒤 응답을 잃어도 입력이 풀리고, 10초 안에 같은 키로 다시 확인해 중복 없이 답변을 받는다', async ({
-  page,
-}) => {
-  await signUp(page, 'chat-lost')
-  await openMemberChat(page)
-
+/** 첫 질문 요청은 서버까지 보내 접수시키고, 응답만 화면에 전달하지 않는다. 이후 요청은 그대로 보낸다. */
+async function dropFirstQuestionResponse(page: Page) {
   const posted: { request_key: string }[] = []
   let dropped = false
   await page.route('**/api/conversations/*/messages', async (route) => {
     if (route.request().method() !== 'POST') return route.fallback()
     posted.push(JSON.parse(route.request().postData() ?? '{}'))
     if (dropped) return route.fallback()
-    // 요청은 서버까지 보내 접수시키고, 응답만 화면에 전달하지 않는다.
     dropped = true
     await route.fetch()
     await route.abort('failed')
   })
+  return posted
+}
+
+test('서버가 접수한 뒤 응답을 잃어도 입력이 풀리고, 구독으로 온 작업으로 복구해 다시 보내지 않는다', async ({
+  page,
+}) => {
+  await signUp(page, 'chat-lost')
+  await openMemberChat(page)
+  const posted = await dropFirstQuestionResponse(page)
 
   await ask(page, '응답을 잃을 질문')
 
   await expect(page.getByRole('alert')).toContainText('질문이 접수됐는지 확인하지 못했습니다')
   await expect(page.getByLabel('질문 입력')).toBeEnabled()
-  // 첫 접수로 10초 간격이 시작됐지만, 같은 질문을 다시 확인하는 일은 막지 않는다.
-  await page.getByRole('button', { name: '다시 확인하기' }).click()
-
+  // 접수된 작업과 답변이 구독으로 오면 보관한 키와 입력 내용을 정리한다.
   await expect(thread(page, '응답을 잃을 질문')).toContainText(ANSWER)
-  await expect(thread(page, '응답을 잃을 질문')).toHaveCount(1)
-  expect(posted).toHaveLength(2)
-  expect(posted[1]?.request_key).toBe(posted[0]?.request_key)
+  await expect(page.getByLabel('질문 입력')).toHaveValue('')
+  await expect(page.getByRole('button', { name: '다시 확인하기' })).toHaveCount(0)
+  expect(posted).toHaveLength(1)
 
   // 새로고침해도 서버에는 질문이 하나뿐이다.
   await page.unroute('**/api/conversations/*/messages')
   await page.reload()
   await expect(thread(page, '응답을 잃을 질문')).toHaveCount(1)
   await expect(page.getByText(/오늘 남은 질문 399\/400/)).toBeVisible()
+})
+
+test('구독도 끊긴 채 응답을 잃으면 10초 안에도 같은 키로 다시 확인해 중복 없이 답변을 받는다', async ({ page }) => {
+  await controlChatEvents(page)
+  await signUp(page, 'chat-lost-offline')
+  await openMemberChat(page)
+  await page.evaluate(() => {
+    const control = window as unknown as { __blockChatEvents: boolean; __cutChatEvents: () => void }
+    control.__blockChatEvents = true
+    control.__cutChatEvents()
+  })
+  const posted = await dropFirstQuestionResponse(page)
+
+  await ask(page, '구독 없이 잃을 질문')
+
+  await expect(page.getByRole('alert')).toContainText('질문이 접수됐는지 확인하지 못했습니다')
+  // 첫 접수로 10초 간격이 시작됐지만, 같은 질문을 다시 확인하는 일은 막지 않는다.
+  await page.getByRole('button', { name: '다시 확인하기' }).click()
+
+  await expect(thread(page, '구독 없이 잃을 질문')).toBeVisible()
+  await expect(thread(page, '구독 없이 잃을 질문')).toHaveCount(1)
+  expect(posted).toHaveLength(2)
+  expect(posted[1]?.request_key).toBe(posted[0]?.request_key)
+
+  await page.evaluate(() => {
+    ;(window as unknown as { __blockChatEvents: boolean }).__blockChatEvents = false
+  })
+  await expect(thread(page, '구독 없이 잃을 질문')).toContainText(ANSWER, { timeout: 20_000 })
 })
 
 /**

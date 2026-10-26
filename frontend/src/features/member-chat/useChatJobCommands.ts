@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useReducer, useRef } from 'react'
 
 export interface ChatJobCommandApi {
   /** 가장 최근 실패 시도를 다시 시도한다. 같은 `retryKey`로 다시 보내면 서버가 기존 결과를 돌려준다. */
@@ -17,6 +17,11 @@ export interface ChatJobCommandOptions {
 
 export interface ChatJobCommands {
   retry: (jobId: string) => Promise<void>
+  /**
+   * 이 작업의 재시도를 보냈지만 접수를 확인하지 못해 키를 보관 중인가. 다시 누르면 같은 키로 확인하는 것이라
+   * 한도 0·10초 간격이어도 버튼을 막지 않는다.
+   */
+  hasUnconfirmedRetry: (jobId: string) => boolean
   skip: (jobId: string) => Promise<void>
   cancel: (jobId: string) => Promise<void>
 }
@@ -45,6 +50,8 @@ export function useChatJobCommands(
 
   const retryKeysRef = useRef(new Map<string, string>())
   const inFlightRef = useRef(new Map<string, Promise<void>>())
+  // 보관한 재시도 키가 바뀌면 버튼의 비활성 여부를 다시 계산하도록 다시 그린다.
+  const [, keysChanged] = useReducer((count: number) => count + 1, 0)
 
   useEffect(() => {
     // 사용자가 바뀌거나 화면이 사라질 때 이전 사용자의 키와 진행 중 표시를 버린다.
@@ -85,11 +92,21 @@ export function useChatJobCommands(
         const key = keys.get(jobId) ?? crypto.randomUUID()
         keys.set(jobId, key)
 
-        await apiRef.current.retry(jobId, key)
+        try {
+          await apiRef.current.retry(jobId, key)
+        } catch (error) {
+          keysChanged()
+          throw error
+        }
 
         // 접수가 확인됐다. 이 시도의 키는 더 쓰지 않는다.
-        if (keys.get(jobId) === key) keys.delete(jobId)
+        if (keys.get(jobId) === key) {
+          keys.delete(jobId)
+          keysChanged()
+        }
       }),
+
+    hasUnconfirmedRetry: (jobId) => retryKeysRef.current.has(jobId),
 
     skip: (jobId) =>
       once('skip', jobId, async () => {

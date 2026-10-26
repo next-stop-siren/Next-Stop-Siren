@@ -122,7 +122,8 @@ function MemberChat({ chat }: MemberChatProps) {
       {limits && (
         <p className={styles.limits}>
           오늘 남은 질문 {limits.daily.remaining}/{limits.daily.limit} · 6시간 남은 질문 {limits.six_hour.remaining}/
-          {limits.six_hour.limit} · 대기 중인 질문 {limits.queue.questions_waiting}/{limits.queue.questions_max}
+          {limits.six_hour.limit} · 새 질문 대기 {limits.queue.questions_waiting}/{limits.queue.questions_max} · 재시도
+          대기 {limits.queue.retries_waiting}/{limits.queue.retries_max} · 실행 중 {limits.queue.running}
         </p>
       )}
 

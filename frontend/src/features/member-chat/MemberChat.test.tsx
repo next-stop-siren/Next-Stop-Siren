@@ -632,6 +632,74 @@ test('응답이 오지 않으면 시간 초과로 입력을 풀고, 한도 0·10
   expect(screen.getByText(/질문 한도를 모두 썼습니다/)).toBeTruthy()
 })
 
+test('응답을 잃은 질문이 실제로 접수돼 구독으로 나타나면 보관한 키와 입력 내용을 정리한다', async () => {
+  const user = userEvent.setup()
+  let firstBody: { content: string; request_key: string } | undefined
+
+  const fetchSpy = mockApi((url, init) => {
+    if (url === '/api/conversations?limit=20') return json(200, page([conversation('501')]))
+    if (url === '/api/conversations/501/messages?limit=100') return json(200, page([]))
+    if (url === '/api/conversations/501/messages' && init?.method === 'POST') {
+      if (!firstBody) {
+        firstBody = JSON.parse(String(init.body))
+        return json(503, { error: { message: '일시적인 오류입니다.' } })
+      }
+      return acceptQuestion('501', init, '7002', '9003')
+    }
+    return undefined
+  })
+
+  const { events } = renderChat()
+  await findConversationButton('501')
+  await waitFor(() => expect(events.connections).toHaveLength(1))
+  events.last.emit(snapshot())
+
+  await user.type(textarea(), '응답을 잃었지만 접수된 질문')
+  await user.click(sendButton())
+  await screen.findByRole('alert')
+  expect(sendButton().textContent).toBe('다시 확인하기')
+
+  // 서버는 접수했고, 그 작업이 구독으로 온다.
+  events.last.emit({
+    type: 'job',
+    data: makeEnvelope({
+      job: { id: '7001', conversation_id: '501', question_message_id: '9001' },
+      question: { content: firstBody?.content, request_key: firstBody?.request_key },
+    }),
+  })
+
+  expect(screen.getByText('응답을 잃었지만 접수된 질문')).toBeTruthy()
+  expect(textarea().value).toBe('')
+
+  // 같은 문장을 다시 쓰면 새 질문이라 새 키를 쓴다.
+  await user.type(textarea(), '응답을 잃었지만 접수된 질문')
+  expect(sendButton().textContent).toBe('질문 보내기')
+  await user.click(sendButton())
+  await waitFor(() => expect(questionPosts(fetchSpy)).toHaveLength(2))
+  const [first, second] = questionPosts(fetchSpy)
+  expect(second?.body.request_key).not.toBe(first?.body.request_key)
+})
+
+test('한도 표시는 새 질문 대기·재시도 대기·실행 중을 따로 보여 준다', async () => {
+  mockApi((url) => {
+    if (url === '/api/conversations?limit=20') return json(200, page([conversation('501')]))
+    if (url === '/api/conversations/501/messages?limit=100') return json(200, page([]))
+    return undefined
+  })
+
+  const { events } = renderChat()
+  await findConversationButton('501')
+  await waitFor(() => expect(events.connections).toHaveLength(1))
+  events.last.emit(
+    snapshot(
+      [],
+      makeLimits({ queue: { running: 1, questions_waiting: 2, questions_max: 3, retries_waiting: 1, retries_max: 1 } }),
+    ),
+  )
+
+  expect(screen.getByText(/새 질문 대기 2\/3 · 재시도 대기 1\/1 · 실행 중 1/)).toBeTruthy()
+})
+
 test('한도·대기 상태에 따라 입력을 막고, 재시도 대기가 가득 찬 것은 새 질문을 막지 않는다', async () => {
   const user = userEvent.setup()
 

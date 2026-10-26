@@ -358,6 +358,28 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
   const nowMs = Date.now() + clockOffsetMs
   const [, setTick] = useState(0)
 
+  // 응답을 잃은 질문이 실제로는 접수돼 구독·이력에 나타나면 보관한 키와 입력 내용을 정리한다.
+  // 그대로 두면 사용자가 문장을 고쳐 새 키로 같은 질문을 한 번 더 보낼 수 있다.
+  useEffect(() => {
+    let changed = false
+
+    for (const [id, request] of pendingRequestsRef.current) {
+      const isAccepted = (message: ApiMessage) => message.role === 'user' && message.request_key === request.requestKey
+      const accepted =
+        Object.values(events.jobs).some(
+          (envelope) => envelope.job.conversation_id === id && isAccepted(envelope.question),
+        ) ||
+        (conversationIdRef.current === id && messages.some(isAccepted))
+      if (!accepted) continue
+
+      pendingRequestsRef.current.delete(id)
+      changed = true
+      if (conversationIdRef.current === id) setQuestion((current) => (current === request.content ? '' : current))
+    }
+
+    if (changed) setPendingVersion((count) => count + 1)
+  }, [events.jobs, messages])
+
   const threads = useMemo(
     () => buildThreads(conversationId, messages, events.jobs),
     [conversationId, messages, events.jobs],
