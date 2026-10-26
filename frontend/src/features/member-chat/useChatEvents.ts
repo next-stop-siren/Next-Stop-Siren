@@ -29,7 +29,8 @@ export interface ChatEventsView extends ChatEventsState {
   mark: () => ChatEventsMark
   /**
    * 질문 접수·재시도·취소처럼 HTTP 응답으로 받은 작업과 한도를 반영한다. 구독 이벤트를 기다리지 않고 바로 보이게 하려는 것이다.
-   * 요청을 보낸 뒤 같은 작업(또는 한도)의 구독 이벤트가 먼저 왔다면 그쪽이 최신이라 응답 값은 버린다. 회원이 바뀌었으면 모두 버린다.
+   * 요청을 보낸 뒤 같은 작업(또는 한도)의 구독 이벤트나 더 늦게 보낸 요청의 응답이 먼저 반영됐다면 그쪽이 최신이라
+   * 응답 값은 버린다. 반영한 응답은 그보다 먼저 시작한 조회의 늦은 결과에 덮어쓰이지 않는다. 회원이 바뀌었으면 모두 버린다.
    */
   applyResponse: (mark: ChatEventsMark, update: { envelopes?: ChatJobEnvelope[]; limits?: ChatLimits | null }) => void
 }
@@ -94,13 +95,23 @@ export function useChatEvents(options: UseChatEventsOptions): ChatEventsView {
   const cooldownRef = useRef(new Set<string>())
   const timersRef = useRef(new Set<ReturnType<typeof setTimeout>>())
   const lastServerTimeRef = useRef<string | null>(null)
-  // 구독 이벤트를 받을 때마다 올라가는 번호와, 작업별로 마지막 이벤트를 받은 번호.
-  // 작업 조회를 시작한 뒤 같은 작업의 이벤트가 먼저 오면, 늦게 온 조회 결과는 오래된 상태라 버린다.
+  // 구독 이벤트가 도착할 때와 HTTP 조회·요청을 시작할 때마다 올라가는 번호와, 작업별로 마지막으로 반영한 값의 번호.
+  // 값은 그 작업에 마지막으로 반영한 것보다 늦게 시작한 것만 반영한다. 조회를 시작한 뒤 같은 작업의 이벤트나
+  // 더 늦게 보낸 요청의 응답이 먼저 반영됐다면, 늦게 도착한 조회 결과는 오래된 상태라 버린다.
   const eventSeqRef = useRef(0)
   const lastEventSeqRef = useRef(new Map<string, number>())
-  // 한도를 마지막으로 바꾼 이벤트(snapshot·limits)의 번호. 늦게 온 HTTP 응답의 한도가 이보다 오래됐으면 버린다.
+  // 한도에 마지막으로 반영한 값의 번호. 같은 규칙으로 늦게 온 오래된 한도를 버린다.
   const lastLimitsSeqRef = useRef(0)
   const [resolveTick, bumpResolveTick] = useReducer((count: number) => count + 1, 0)
+
+  /** HTTP로 읽은 작업이 `startedAt`보다 늦게 반영된 값이 없을 때만 반영하고, 그 번호를 기록한다. */
+  const applyFetched = useCallback((envelope: ChatJobEnvelope, startedAt: number) => {
+    const id = envelope.job.id
+    if ((lastEventSeqRef.current.get(id) ?? 0) >= startedAt) return
+
+    lastEventSeqRef.current.set(id, startedAt)
+    dispatch({ type: 'event', event: { type: 'job', data: envelope } })
+  }, [])
 
   useEffect(() => {
     epochRef.current += 1
@@ -223,15 +234,13 @@ export function useChatEvents(options: UseChatEventsOptions): ChatEventsView {
 
       attemptsRef.current.set(jobId, attempts + 1)
       resolvingRef.current.add(jobId)
-      const startedAt = eventSeqRef.current
+      const startedAt = ++eventSeqRef.current
 
       resolveJob(accessToken, jobId)
         .then((envelope) => {
           if (epochRef.current !== epoch || !envelope) return
-          // 조회하는 동안 같은 작업의 구독 이벤트가 왔다면 그쪽이 더 최신이다.
-          if ((lastEventSeqRef.current.get(jobId) ?? 0) > startedAt) return
-
-          dispatch({ type: 'event', event: { type: 'job', data: envelope } })
+          // 조회하는 동안 같은 작업의 구독 이벤트나 더 늦게 보낸 요청의 응답이 반영됐다면 그쪽이 더 최신이다.
+          applyFetched(envelope, startedAt)
         })
         .catch(() => {
           // 실패는 아래에서 잠시 쉰 뒤 다시 조회한다.
@@ -249,44 +258,46 @@ export function useChatEvents(options: UseChatEventsOptions): ChatEventsView {
           timersRef.current.add(timer)
         })
     }
-  }, [state.unresolved, state.serverTime, userId, resolveTick])
+  }, [state.unresolved, state.serverTime, userId, resolveTick, applyFetched])
 
-  const refreshJob = useCallback(async (jobId: string) => {
-    const { getAccessToken, resolveJob = fetchChatJob } = optionsRef.current
-    const accessToken = getAccessToken()
-    if (!accessToken) return
+  const refreshJob = useCallback(
+    async (jobId: string) => {
+      const { getAccessToken, resolveJob = fetchChatJob } = optionsRef.current
+      const accessToken = getAccessToken()
+      if (!accessToken) return
 
-    const epoch = epochRef.current
-    const startedAt = eventSeqRef.current
+      const epoch = epochRef.current
+      const startedAt = ++eventSeqRef.current
 
-    try {
-      const envelope = await resolveJob(accessToken, jobId)
+      try {
+        const envelope = await resolveJob(accessToken, jobId)
 
-      // 그 사이 사용자가 바뀌었다면 이전 사용자의 응답은 버린다.
-      if (!envelope || epochRef.current !== epoch) return
-      // 조회하는 동안 같은 작업의 구독 이벤트가 왔다면 그쪽이 더 최신이라 이 응답은 버린다.
-      if ((lastEventSeqRef.current.get(jobId) ?? 0) > startedAt) return
+        // 그 사이 사용자가 바뀌었다면 이전 사용자의 응답은 버린다.
+        if (!envelope || epochRef.current !== epoch) return
+        // 조회하는 동안 같은 작업의 구독 이벤트나 더 늦게 보낸 요청의 응답이 반영됐다면 이 응답은 버린다.
+        applyFetched(envelope, startedAt)
+      } catch {
+        // 다시 읽지 못해도 구독 이벤트와 재연결 snapshot이 상태를 맞춰 준다.
+      }
+    },
+    [applyFetched],
+  )
 
-      dispatch({ type: 'event', event: { type: 'job', data: envelope } })
-    } catch {
-      // 다시 읽지 못해도 구독 이벤트와 재연결 snapshot이 상태를 맞춰 준다.
-    }
-  }, [])
+  const mark = useCallback((): ChatEventsMark => ({ epoch: epochRef.current, seq: ++eventSeqRef.current }), [])
 
-  const mark = useCallback((): ChatEventsMark => ({ epoch: epochRef.current, seq: eventSeqRef.current }), [])
+  const applyResponse = useCallback<ChatEventsView['applyResponse']>(
+    (since, update) => {
+      if (epochRef.current !== since.epoch) return
 
-  const applyResponse = useCallback<ChatEventsView['applyResponse']>((since, update) => {
-    if (epochRef.current !== since.epoch) return
+      for (const envelope of update.envelopes ?? []) applyFetched(envelope, since.seq)
 
-    for (const envelope of update.envelopes ?? []) {
-      if ((lastEventSeqRef.current.get(envelope.job.id) ?? 0) > since.seq) continue
-      dispatch({ type: 'event', event: { type: 'job', data: envelope } })
-    }
-
-    if (update.limits && lastLimitsSeqRef.current <= since.seq) {
-      dispatch({ type: 'event', event: { type: 'limits', data: update.limits } })
-    }
-  }, [])
+      if (update.limits && lastLimitsSeqRef.current < since.seq) {
+        lastLimitsSeqRef.current = since.seq
+        dispatch({ type: 'event', event: { type: 'limits', data: update.limits } })
+      }
+    },
+    [applyFetched],
+  )
 
   return useMemo(() => ({ ...state, refreshJob, mark, applyResponse }), [state, refreshJob, mark, applyResponse])
 }

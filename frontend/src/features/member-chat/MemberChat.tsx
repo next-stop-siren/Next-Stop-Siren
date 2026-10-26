@@ -147,7 +147,7 @@ function MemberChat({ chat }: MemberChatProps) {
       {chat.error && (
         <div className={styles.error} role="alert">
           <p className={styles.errorText}>{chat.error}</p>
-          {chat.conversationId && !chat.sending && (
+          {chat.errorReloadable && chat.conversationId && !chat.sending && (
             <button type="button" onClick={() => void chat.reloadConversation()}>
               대화 다시 불러오기
             </button>

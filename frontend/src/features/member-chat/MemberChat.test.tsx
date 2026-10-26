@@ -368,6 +368,33 @@ test('작업 없이 이력에만 있는 실패·중단·진행 중 답변은 내
   expect(screen.getByText('저장된 답변을 확인하는 중입니다.')).toBeTruthy()
 })
 
+test('대화를 읽지 못하면 다시 불러오기를 권하고, 누르면 그 대화를 다시 읽는다', async () => {
+  const user = userEvent.setup()
+  let reads = 0
+
+  mockApi((url) => {
+    if (url === '/api/conversations?limit=20') return json(200, page([conversation('502'), conversation('501')]))
+    if (url === '/api/conversations/502/messages?limit=100') return json(200, page([userMessage('1', 'Q-502')]))
+    if (url === '/api/conversations/501/messages?limit=100') {
+      reads += 1
+      return reads === 1
+        ? json(503, { error: { message: '일시적으로 서비스를 이용할 수 없습니다.' } })
+        : json(200, page([userMessage('2', 'Q-501')]))
+    }
+    return undefined
+  })
+
+  renderChat()
+  await screen.findByText('Q-502')
+  await user.click(conversationButton('501'))
+
+  expect((await screen.findByRole('alert')).textContent).toContain('일시적으로 서비스를 이용할 수 없습니다.')
+  await user.click(screen.getByRole('button', { name: '대화 다시 불러오기' }))
+
+  expect(await screen.findByText('Q-501')).toBeTruthy()
+  expect(screen.queryByRole('alert')).toBeNull()
+})
+
 test('대화를 빠르게 바꿔도 늦게 도착한 이전 대화의 이력이 지금 대화를 덮어쓰지 않는다', async () => {
   const user = userEvent.setup()
   const slow501 = deferred<Response | undefined>()
@@ -783,7 +810,9 @@ test('429 거절은 서버가 알려 준 남은 초를 보여 주고 입력을 �
   await user.type(textarea(), '질문')
   await user.click(sendButton())
 
-  expect((await screen.findByRole('alert')).textContent).toBe('7초 뒤에 보낼 수 있습니다.대화 다시 불러오기')
+  expect((await screen.findByRole('alert')).textContent).toBe('7초 뒤에 보낼 수 있습니다.')
+  // 전송 거절은 대화를 다시 불러와도 풀리지 않으므로 다시 불러오기를 권하지 않는다.
+  expect(screen.queryByRole('button', { name: '대화 다시 불러오기' })).toBeNull()
   expect(textarea().disabled).toBe(false)
 })
 

@@ -4,6 +4,7 @@ import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { ChatStreamHttpError, type OpenChatEvents } from './chatEventStream'
 import { selectAnswerView } from './chatEventsReducer'
 import { makeEnvelope, makeLimits } from './chatQueueBuilders'
+import type { ChatJobEnvelope } from './chatQueueTypes'
 import { createMockChatServer, MOCK_ANSWER_TEXT } from './mockChatServer'
 import { MAX_RESOLVE_ATTEMPTS, useChatEvents, type UseChatEventsOptions } from './useChatEvents'
 
@@ -743,6 +744,44 @@ test('applyResponse: 요청을 보낸 뒤 같은 작업·한도의 구독 이벤
   })
   expect(result.current.jobs['7002']?.job.state).toBe('queued')
   expect(result.current.limits?.next_attempt_at).toBeNull()
+})
+
+test('applyResponse로 반영한 응답은 그보다 먼저 시작한 작업 조회의 늦은 결과에 덮어쓰이지 않는다', async () => {
+  let release: (envelope: ChatJobEnvelope) => void = () => undefined
+  const resolveJob = vi.fn(
+    () =>
+      new Promise<ChatJobEnvelope>((resolve) => {
+        release = resolve
+      }),
+  )
+  const open: OpenChatEvents = ({ onEvent, signal }) => {
+    onEvent({ type: 'snapshot', data: { items: [], limits: makeLimits(), server_time: SERVER_TIME } })
+    return new Promise((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
+  }
+  const { result } = renderHook(() =>
+    useChatEvents({ userId: 'u1', getAccessToken: () => 'token-1', open, resolveJob, reconnectDelayMs: () => 0 }),
+  )
+  await waitFor(() => expect(result.current.connection).toBe('open'))
+
+  // 실패 작업을 다시 읽기 시작한 뒤(건너뛰기 전 버튼을 돌려줄 조회) 건너뛰기를 보내 버튼이 재시도만 남는다.
+  const failedWith = (actions: ('retry' | 'skip')[]) =>
+    makeEnvelope({ job: { state: 'failed', position: null, error_code: 'provider_failed', allowed_actions: actions } })
+  let refreshing: Promise<void> = Promise.resolve()
+  act(() => {
+    refreshing = result.current.refreshJob('7001')
+  })
+  const mark = result.current.mark()
+  act(() => {
+    result.current.applyResponse(mark, { envelopes: [failedWith(['retry'])] })
+  })
+  expect(result.current.jobs['7001']?.job.allowed_actions).toEqual(['retry'])
+
+  await act(async () => {
+    release(failedWith(['retry', 'skip']))
+    await refreshing
+  })
+
+  expect(result.current.jobs['7001']?.job.allowed_actions).toEqual(['retry'])
 })
 
 test('applyResponse: 회원이 바뀐 뒤 도착한 이전 회원의 응답은 버린다', async () => {

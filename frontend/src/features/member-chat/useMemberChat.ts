@@ -56,6 +56,8 @@ export interface MemberChat {
   threads: ChatThread[]
   loading: boolean
   error: string
+  /** 오류가 대화를 읽지 못한 것이라 다시 불러오면 풀릴 수 있다. 전송 거절·한도 같은 오류에는 다시 불러오기를 권하지 않는다. */
+  errorReloadable: boolean
   question: string
   setQuestion: (value: string) => void
   sending: boolean
@@ -187,7 +189,11 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
   const [question, setQuestion] = useState('')
   const [loading, setLoading] = useState(false)
   const [sending, setSending] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setErrorState] = useState<{ message: string; reloadable: boolean } | null>(null)
+  const setError = useCallback((message: string) => {
+    setErrorState(message ? { message, reloadable: false } : null)
+  }, [])
+  const setLoadError = useCallback((message: string) => setErrorState({ message, reloadable: true }), [])
   const [scrollRequest, setScrollRequest] = useState(0)
 
   // access 토큰은 약 15분마다 새 값으로 바뀐다. 토큰이 바뀔 때마다 대화를 다시 불러오면
@@ -291,7 +297,7 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
           if (!stale) setScrollRequest((count) => count + 1)
         }
       } catch (err) {
-        if (!stale) setError(errorText(err, '대화 목록을 불러오지 못했습니다.'))
+        if (!stale) setLoadError(errorText(err, '대화 목록을 불러오지 못했습니다.'))
       } finally {
         if (!stale) setLoading(false)
       }
@@ -302,7 +308,7 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
     return () => {
       stale = true
     }
-  }, [userId, selectId, loadConversation])
+  }, [userId, selectId, loadConversation, setLoadError])
 
   const selectConversation = async (id: string) => {
     if (!accessTokenRef.current || sendingRef.current) return
@@ -317,7 +323,7 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
       await loadConversation(id)
       if (conversationIdRef.current === id) setScrollRequest((count) => count + 1)
     } catch (err) {
-      if (alive() && conversationIdRef.current === id) setError(errorText(err, '메시지를 불러오지 못했습니다.'))
+      if (alive() && conversationIdRef.current === id) setLoadError(errorText(err, '메시지를 불러오지 못했습니다.'))
     } finally {
       // 그 사이 다른 대화로 바뀌었다면 로딩 표시는 새로 선택한 대화가 관리한다.
       if (alive() && conversationIdRef.current === id) setLoading(false)
@@ -333,7 +339,7 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
     try {
       await loadConversation(id)
     } catch (err) {
-      if (alive() && conversationIdRef.current === id) setError(errorText(err, '대화를 다시 불러오지 못했습니다.'))
+      if (alive() && conversationIdRef.current === id) setLoadError(errorText(err, '대화를 다시 불러오지 못했습니다.'))
     }
   }
 
@@ -472,7 +478,7 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
       // #53 이전에 저장된 질문을 같은 키로 다시 보내면 작업 없이 답변만 온다. 그때는 이력으로 보여 준다.
       if (!envelope) {
         await loadConversation(request.conversationId).catch(() => {
-          if (alive()) setError('질문은 접수됐지만 대화를 다시 불러오지 못했습니다. 다시 불러와 주세요.')
+          if (alive()) setLoadError('질문은 접수됐지만 대화를 다시 불러오지 못했습니다. 다시 불러와 주세요.')
         })
       }
     } catch (err) {
@@ -501,7 +507,12 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
       return await send(token, call.signal)
     } catch (err) {
       if (err instanceof ChatApiError && err.outcomeUnknown) {
-        throw new ChatApiError(`${err.message} 다시 누르면 같은 요청으로 확인합니다.`, err.status, err.code)
+        throw new ChatApiError(
+          `${err.message} 다시 누르면 같은 요청으로 확인합니다.`,
+          err.status,
+          err.code,
+          err.retryAfterSeconds,
+        )
       }
       throw err
     } finally {
@@ -567,7 +578,8 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
     conversationId,
     threads,
     loading,
-    error,
+    error: error?.message ?? '',
+    errorReloadable: error?.reloadable ?? false,
     question,
     setQuestion,
     sending,
