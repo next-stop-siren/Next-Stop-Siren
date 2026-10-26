@@ -106,7 +106,7 @@ Set-Location Next-Stop-Siren
 | `test-db` | 전용 테스트 DB의 ORM·인증·대화·메시지 통합 검사; 가짜 데이터·격리 트랜잭션 사용 |
 | `db-init` | 등록된 앱 모델의 누락 테이블만 개발 DB에 생성 |
 | `db-init-test` | 전용 테스트 DB 보호 검사 후 누락 테이블만 생성 |
-| `test-e2e` | 테스트 DB에 없는 제품 테이블만 만든 뒤(`db-init-test`와 같음), Chromium으로 API·DB 준비 상태, 인증 모달 키보드, 실제 가입→회원 채팅(모의 제공자) 흐름을 검사 |
+| `test-e2e` | 테스트 DB에 없는 제품 테이블만 만들고(`db-init-test`와 같음) 이번 실행에만 쓰는 인증 키로 API를 띄운 뒤, Chromium으로 API·DB 준비 상태, 인증 모달 키보드, 실제 가입→회원 채팅(모의 제공자) 흐름을 검사. `.env`의 인증 키는 읽지 않는다 |
 | `test` | `test-unit`, `test-db`, `test-e2e` 순서로 실행 |
 | `stop` | 이 프로젝트의 개발·테스트 DB 컨테이너만 중지, 데이터 보존 |
 | `clean` | 프런트엔드 빌드/Vite 캐시와 알려진 Python 캐시 정리 |
