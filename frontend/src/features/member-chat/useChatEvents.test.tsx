@@ -11,6 +11,8 @@ afterEach(() => {
   cleanup()
 })
 
+const SERVER_TIME = '2026-10-20T03:00:00Z'
+
 function setup(overrides: Partial<UseChatEventsOptions> & { server?: ReturnType<typeof createMockChatServer> } = {}) {
   const { server = createMockChatServer(), ...hookOverrides } = overrides
   const open = vi.fn<OpenChatEvents>((options) => server.open(options))
@@ -657,4 +659,109 @@ test('snapshot에서 빠진 작업을 조회하는 동안 그 작업의 새 이�
   })
 
   expect(result.current.jobs['7001']?.job.allowed_actions).toEqual([])
+})
+
+test('화면을 떠난 뒤 늦게 끝난 작업 조회는 다시 조회할 타이머를 만들지 않는다', async () => {
+  const RETRY_MS = 4321
+  let fail: () => void = () => {}
+  const resolveJob = vi.fn(
+    () =>
+      new Promise<never>((_resolve, reject) => {
+        fail = () => reject(new Error('조회 실패'))
+      }),
+  )
+  const running = makeEnvelope({ job: { state: 'running', position: null, allowed_actions: [] } })
+  let call = 0
+  const open: OpenChatEvents = async ({ onEvent, signal }) => {
+    call += 1
+    // 첫 연결의 진행 중 작업이 두 번째 snapshot에서 빠져 최종 결과를 조회하게 만든다.
+    onEvent({
+      type: 'snapshot',
+      data: { items: call === 1 ? [running] : [], limits: makeLimits(), server_time: SERVER_TIME },
+    })
+    if (call === 1) return
+    await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
+  }
+
+  const { unmount } = renderHook(() =>
+    useChatEvents({
+      userId: 'u1',
+      getAccessToken: () => 'token-1',
+      open,
+      resolveJob,
+      reconnectDelayMs: () => 0,
+      resolveRetryMs: RETRY_MS,
+    }),
+  )
+  await waitFor(() => expect(resolveJob).toHaveBeenCalledTimes(1))
+
+  unmount()
+  const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+  await act(async () => {
+    fail()
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+
+  expect(setTimeoutSpy.mock.calls.filter(([, delay]) => delay === RETRY_MS)).toEqual([])
+  setTimeoutSpy.mockRestore()
+})
+
+test('applyResponse: 요청을 보낸 뒤 같은 작업·한도의 구독 이벤트가 먼저 왔다면 늦은 응답 값을 버린다', async () => {
+  let pushEvent: Parameters<OpenChatEvents>[0]['onEvent'] = () => undefined
+  const open: OpenChatEvents = ({ onEvent, signal }) => {
+    pushEvent = onEvent
+    onEvent({ type: 'snapshot', data: { items: [], limits: makeLimits(), server_time: SERVER_TIME } })
+    return new Promise((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
+  }
+  const { result } = renderHook(() =>
+    useChatEvents({ userId: 'u1', getAccessToken: () => 'token-1', open, reconnectDelayMs: () => 0 }),
+  )
+  await waitFor(() => expect(result.current.connection).toBe('open'))
+
+  const mark = result.current.mark()
+  const running = makeEnvelope({ job: { state: 'running', position: null, allowed_actions: [] } })
+  const newerLimits = makeLimits({ next_attempt_at: '2026-10-20T03:00:10Z' })
+  act(() => {
+    pushEvent({ type: 'job', data: running })
+    pushEvent({ type: 'limits', data: newerLimits })
+  })
+
+  // 접수 응답은 요청 시점의 대기 상태와 그때의 한도를 담고 있다.
+  act(() => {
+    result.current.applyResponse(mark, { envelopes: [makeEnvelope()], limits: makeLimits() })
+  })
+
+  expect(result.current.jobs['7001']?.job.state).toBe('running')
+  expect(result.current.limits).toEqual(newerLimits)
+
+  // 그 뒤에 보낸 요청의 응답은 반영한다.
+  const later = result.current.mark()
+  const other = makeEnvelope({ job: { id: '7002', question_message_id: '9003' } })
+  act(() => {
+    result.current.applyResponse(later, { envelopes: [other], limits: makeLimits() })
+  })
+  expect(result.current.jobs['7002']?.job.state).toBe('queued')
+  expect(result.current.limits?.next_attempt_at).toBeNull()
+})
+
+test('applyResponse: 회원이 바뀐 뒤 도착한 이전 회원의 응답은 버린다', async () => {
+  const open: OpenChatEvents = ({ onEvent, signal }) => {
+    onEvent({ type: 'snapshot', data: { items: [], limits: makeLimits(), server_time: SERVER_TIME } })
+    return new Promise((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
+  }
+  const { result, rerender } = renderHook(
+    ({ userId }: { userId: string }) =>
+      useChatEvents({ userId, getAccessToken: () => 'token', open, reconnectDelayMs: () => 0 }),
+    { initialProps: { userId: 'u1' } },
+  )
+  await waitFor(() => expect(result.current.connection).toBe('open'))
+  const mark = result.current.mark()
+
+  rerender({ userId: 'u2' })
+  act(() => {
+    result.current.applyResponse(mark, { envelopes: [makeEnvelope()], limits: makeLimits() })
+  })
+
+  expect(result.current.jobs).toEqual({})
 })

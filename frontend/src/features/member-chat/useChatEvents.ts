@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
 import { openChatEvents, type OpenChatEvents } from './chatEventStream'
 import { chatEventsReducer, initialChatEventsState, type ChatEventsState } from './chatEventsReducer'
 import { fetchChatJob } from './chatQueueApi'
-import type { ChatJobEnvelope } from './chatQueueTypes'
+import type { ChatJobEnvelope, ChatLimits } from './chatQueueTypes'
 
 export interface UseChatEventsOptions {
   /** 로그인한 회원 ID. 바뀌거나 null이 되면 이전 회원의 구독과 비공개 상태를 모두 버린다. */
@@ -25,6 +25,19 @@ export interface ChatEventsView extends ChatEventsState {
    * 구독 이벤트를 놓쳐 화면이 뒤처졌을 수 있을 때 쓴다. 실패하면 아무것도 바꾸지 않는다.
    */
   refreshJob: (jobId: string) => Promise<void>
+  /** HTTP 요청을 보내기 직전에 불러 둔다. 응답을 `applyResponse`로 반영할 때 그 사이 온 이벤트를 가려내는 기준이다. */
+  mark: () => ChatEventsMark
+  /**
+   * 질문 접수·재시도·취소처럼 HTTP 응답으로 받은 작업과 한도를 반영한다. 구독 이벤트를 기다리지 않고 바로 보이게 하려는 것이다.
+   * 요청을 보낸 뒤 같은 작업(또는 한도)의 구독 이벤트가 먼저 왔다면 그쪽이 최신이라 응답 값은 버린다. 회원이 바뀌었으면 모두 버린다.
+   */
+  applyResponse: (mark: ChatEventsMark, update: { envelopes?: ChatJobEnvelope[]; limits?: ChatLimits | null }) => void
+}
+
+/** `mark()`가 돌려주는 기준점. 내용은 이 훅만 쓴다. */
+export interface ChatEventsMark {
+  readonly epoch: number
+  readonly seq: number
 }
 
 const MAX_RECONNECT_DELAY_MS = 15_000
@@ -85,6 +98,8 @@ export function useChatEvents(options: UseChatEventsOptions): ChatEventsView {
   // 작업 조회를 시작한 뒤 같은 작업의 이벤트가 먼저 오면, 늦게 온 조회 결과는 오래된 상태라 버린다.
   const eventSeqRef = useRef(0)
   const lastEventSeqRef = useRef(new Map<string, number>())
+  // 한도를 마지막으로 바꾼 이벤트(snapshot·limits)의 번호. 늦게 온 HTTP 응답의 한도가 이보다 오래됐으면 버린다.
+  const lastLimitsSeqRef = useRef(0)
   const [resolveTick, bumpResolveTick] = useReducer((count: number) => count + 1, 0)
 
   useEffect(() => {
@@ -95,6 +110,7 @@ export function useChatEvents(options: UseChatEventsOptions): ChatEventsView {
     cooldownRef.current.clear()
     lastServerTimeRef.current = null
     lastEventSeqRef.current.clear()
+    lastLimitsSeqRef.current = 0
     for (const timer of timersRef.current) clearTimeout(timer)
     timersRef.current.clear()
     dispatch({ type: 'reset' })
@@ -138,6 +154,7 @@ export function useChatEvents(options: UseChatEventsOptions): ChatEventsView {
                 } else if (event.type === 'job') {
                   lastEventSeqRef.current.set(event.data.job.id, seq)
                 }
+                if (event.type === 'snapshot' || event.type === 'limits') lastLimitsSeqRef.current = seq
 
                 everOpened = true
                 openedAt ??= Date.now()
@@ -165,6 +182,8 @@ export function useChatEvents(options: UseChatEventsOptions): ChatEventsView {
     void run()
 
     return () => {
+      // 화면을 떠난 뒤 늦게 끝난 작업 조회가 다시 조회할 타이머를 만들지 않도록 세대를 넘긴다.
+      epochRef.current += 1
       controller.abort()
       for (const timer of timersRef.current) clearTimeout(timer)
       timersRef.current.clear()
@@ -254,5 +273,20 @@ export function useChatEvents(options: UseChatEventsOptions): ChatEventsView {
     }
   }, [])
 
-  return useMemo(() => ({ ...state, refreshJob }), [state, refreshJob])
+  const mark = useCallback((): ChatEventsMark => ({ epoch: epochRef.current, seq: eventSeqRef.current }), [])
+
+  const applyResponse = useCallback<ChatEventsView['applyResponse']>((since, update) => {
+    if (epochRef.current !== since.epoch) return
+
+    for (const envelope of update.envelopes ?? []) {
+      if ((lastEventSeqRef.current.get(envelope.job.id) ?? 0) > since.seq) continue
+      dispatch({ type: 'event', event: { type: 'job', data: envelope } })
+    }
+
+    if (update.limits && lastLimitsSeqRef.current <= since.seq) {
+      dispatch({ type: 'event', event: { type: 'limits', data: update.limits } })
+    }
+  }, [])
+
+  return useMemo(() => ({ ...state, refreshJob, mark, applyResponse }), [state, refreshJob, mark, applyResponse])
 }

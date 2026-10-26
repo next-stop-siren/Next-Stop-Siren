@@ -1,10 +1,11 @@
 /**
- * 대기열 API 호출 (제안 초안, #53 확정 전). 기준: docs/04-reference/chat-queue-api-draft.md
- * 구독(`GET /api/chat/events`)은 chatEventStream.ts에 있다.
+ * 대기열 API 호출. 기준: docs/04-reference/api.md Rev 1 "회원 채팅 대기열 (#53)"
+ * 구독(`GET /api/chat/events`)은 chatEventStream.ts에, 질문 접수·재시도·건너뛰기는 memberChatApi.ts에 있다.
  */
 
 import { isEnvelope } from './chatEventStream'
-import type { ChatJobEnvelope } from './chatQueueTypes'
+import type { ChatCancelResult, ChatJobEnvelope, ChatJobPage } from './chatQueueTypes'
+import { ChatApiError, requestJson } from './memberChatApi'
 
 /**
  * 작업 하나를 조회한다 — `GET /api/chat/jobs/{id}`.
@@ -12,15 +13,42 @@ import type { ChatJobEnvelope } from './chatQueueTypes'
  * 없는 작업과 타인의 작업은 같은 404라 null을 돌려준다.
  */
 export async function fetchChatJob(accessToken: string, jobId: string): Promise<ChatJobEnvelope | null> {
-  const response = await fetch(`/api/chat/jobs/${encodeURIComponent(jobId)}`, {
-    headers: { Accept: 'application/json', Authorization: `Bearer ${accessToken}` },
-  })
+  let body: unknown
 
-  if (response.status === 404) return null
-  if (!response.ok) throw new Error(`작업을 조회하지 못했습니다 (${response.status}).`)
+  try {
+    body = await requestJson<unknown>(`/api/chat/jobs/${encodeURIComponent(jobId)}`, accessToken)
+  } catch (error) {
+    if (error instanceof ChatApiError && error.status === 404) return null
+    throw error
+  }
 
-  const body: unknown = await response.json().catch(() => null)
   if (!isEnvelope(body)) throw new Error('작업 조회 응답이 계약과 다릅니다.')
 
   return body
+}
+
+/**
+ * 한 대화의 작업을 최신순으로 읽는다 — `GET /api/chat/jobs?conversation_id=`.
+ * 재연결 snapshot에는 끝나지 않은 작업만 오므로, 새로고침 뒤 실패한 질문의 재시도·건너뛰기 버튼은 이 목록으로 되살린다.
+ */
+export async function listConversationJobs(
+  accessToken: string,
+  conversationId: string,
+  limit = 50,
+): Promise<ChatJobPage> {
+  const params = new URLSearchParams({ conversation_id: conversationId, limit: String(limit) })
+  return requestJson(`/api/chat/jobs?${params.toString()}`, accessToken)
+}
+
+/** 실행 전(`queued`·`paused`) 작업을 취소한다. 실행 중인 작업은 취소할 수 없다. */
+export async function cancelChatJob(
+  accessToken: string,
+  jobId: string,
+  signal?: AbortSignal,
+): Promise<ChatCancelResult> {
+  return requestJson(`/api/chat/jobs/${encodeURIComponent(jobId)}/cancel`, accessToken, {
+    method: 'POST',
+    body: JSON.stringify({}),
+    signal,
+  })
 }
