@@ -126,6 +126,19 @@ class LocalAutomationTest(unittest.TestCase):
             compose.assert_not_called()
             command.assert_not_called()
 
+    def test_e2e_initializes_test_schema_before_starting_servers(self):
+        order = []
+        url = "postgresql://test:secret@127.0.0.1:55433/test"
+        with patch.object(local, "preflight"), patch.object(local, "require_free_ports"), \
+             patch.object(local, "with_test_database", side_effect=lambda action: action(url)), \
+             patch.object(local, "initialize_test_schema", side_effect=lambda target: order.append(("schema", target))), \
+             patch.object(local, "spawn", side_effect=lambda command, cwd, env=None: order.append(("spawn", cwd))), \
+             patch.object(local, "wait_http"), patch.object(local, "stop_child"), \
+             patch.object(local, "run", side_effect=lambda command, **kwargs: order.append(("run", kwargs.get("cwd")))):
+            local.test_e2e()
+        self.assertEqual(order[0], ("schema", url))
+        self.assertEqual([step for step, _ in order], ["schema", "spawn", "spawn", "run"])
+
     def test_dev_schema_initialization_refuses_foreign_container_before_sql(self):
         settings = {"DATABASE_URL": "postgresql://dev:secret@127.0.0.1:55432/dev",
                     "DEV_DB_USER": "dev", "DEV_DB_PASSWORD": "secret", "DEV_DB_NAME": "dev"}

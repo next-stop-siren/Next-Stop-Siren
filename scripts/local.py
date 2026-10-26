@@ -620,14 +620,17 @@ def db_init():
         cwd=BACKEND, env={**command_env(), "DATABASE_URL": url})
 
 
+def initialize_test_schema(url):
+    """Create the missing application tables in the verified test DB; existing tables and rows are kept."""
+    code = ("import os; from app.db_init import initialize_schema; "
+            "count = initialize_schema(os.environ['TEST_DATABASE_URL']); "
+            "print(f'Registered application tables: {count}; missing tables created, existing tables preserved')")
+    run(tool("uv", "run", "--no-sync", "python", "-c", code),
+        cwd=BACKEND, env={**command_env(), "TEST_DATABASE_URL": url})
+
+
 def db_init_test():
-    def initialize(url):
-        code = ("import os; from app.db_init import initialize_schema; "
-                "count = initialize_schema(os.environ['TEST_DATABASE_URL']); "
-                "print(f'Registered application tables: {count}; missing tables created, existing tables preserved')")
-        run(tool("uv", "run", "--no-sync", "python", "-c", code),
-            cwd=BACKEND, env={**command_env(), "TEST_DATABASE_URL": url})
-    with_test_database(initialize)
+    with_test_database(initialize_test_schema)
 
 
 def ensure_dev_container():
@@ -684,6 +687,8 @@ def test_e2e():
     preflight(frontend=True, backend=True)
     def check(url):
         require_free_ports()
+        # Browser tests sign up and chat for real, so the test DB needs the application tables.
+        initialize_test_schema(url)
         api_env = command_env()
         api_env["DATABASE_URL"] = url
         browser_env = command_env()
