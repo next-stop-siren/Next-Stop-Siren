@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import AuthModal from './features/auth/AuthModal'
 import { AuthProvider, useAuth } from './features/auth/AuthContext'
 import Sidebar from './features/layout/Sidebar'
@@ -11,26 +11,16 @@ function AppShell() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
   const [isRetryingLogout, setIsRetryingLogout] = useState(false)
 
-  // 모달을 닫으면 AuthModal이 이전 포커스 요소(질문 입력창)로 초점을 되돌린다.
-  // 그 입력창은 onFocus로 모달을 다시 여는 핸들러를 갖고 있어서, 복원된 포커스가
-  // 그대로 재오픈을 유발할 수 있다. 닫은 직후 한 번의 open 요청만 무시해 이를 막는다.
-  const suppressNextAuthRequestRef = useRef(false)
+  // 질문 입력창은 초점만으로 모달을 열지 않으므로, 닫을 때 초점이 입력창으로
+  // 돌아와도 다시 열리지 않는다.
+  const openAuthModal = () => setIsAuthModalOpen(true)
+  const closeAuthModal = () => setIsAuthModalOpen(false)
 
-  const openAuthModal = () => {
-    if (suppressNextAuthRequestRef.current) {
-      suppressNextAuthRequestRef.current = false
-      return
-    }
-    setIsAuthModalOpen(true)
-  }
-
-  const closeAuthModal = () => {
-    suppressNextAuthRequestRef.current = true
-    setIsAuthModalOpen(false)
-    setTimeout(() => {
-      suppressNextAuthRequestRef.current = false
-    }, 0)
-  }
+  // 닫힌 모달의 늦은 로그인 성공도 세션은 적용된다. 회원 화면으로 바뀌면 모달
+  // 열림 상태를 비워, 다시 열린 모달이 남거나 로그아웃 뒤 저절로 뜨지 않게 한다.
+  useEffect(() => {
+    if (status === 'authenticated') setIsAuthModalOpen(false)
+  }, [status])
 
   const handleLogout = () => {
     // 실패 배너는 Provider가 해당 세대에만 연결한다.
@@ -84,7 +74,7 @@ function AppShell() {
           </>
         )}
 
-        {isAuthModalOpen && <AuthModal onClose={closeAuthModal} />}
+        {isAuthModalOpen && status !== 'authenticated' && <AuthModal onClose={closeAuthModal} />}
       </div>
     </div>
   )

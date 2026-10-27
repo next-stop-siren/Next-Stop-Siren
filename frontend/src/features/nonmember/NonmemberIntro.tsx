@@ -1,3 +1,4 @@
+import type { KeyboardEvent } from 'react'
 import styles from './NonmemberIntro.module.css'
 
 type NonmemberIntroProps = {
@@ -17,6 +18,23 @@ const popularQuestions = [
 ]
 
 function NonmemberIntro({ onAuthRequired }: NonmemberIntroProps) {
+  // Tab으로 지나가거나 모달을 닫은 뒤 초점이 돌아오는 것만으로는 열지 않는다.
+  // Enter는 keydown에서 기본 동작(keypress)을 막고 연다. 막지 않으면 모달로 옮겨간
+  // 초점의 첫 버튼이 같은 키 입력으로 눌릴 수 있다. Space는 버튼과 같이 keyup에서 연다.
+  const handlePromptKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      if (event.key === 'Enter' && !event.repeat) onAuthRequired()
+    }
+  }
+
+  const handlePromptKeyUp = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === ' ') {
+      event.preventDefault()
+      onAuthRequired()
+    }
+  }
+
   return (
     <section className={styles.introPage} aria-labelledby="service-title">
       <header className={styles.introHeader}>
@@ -59,7 +77,8 @@ function NonmemberIntro({ onAuthRequired }: NonmemberIntroProps) {
           placeholder="교통법에 대해 궁금한 내용을 물어보세요..."
           readOnly
           onClick={onAuthRequired}
-          onFocus={onAuthRequired}
+          onKeyDown={handlePromptKeyDown}
+          onKeyUp={handlePromptKeyUp}
           aria-label="질문하려면 로그인 또는 회원가입이 필요합니다"
         />
         <button type="button" className={styles.sendButton} onClick={onAuthRequired} aria-label="로그인하고 질문하기">
