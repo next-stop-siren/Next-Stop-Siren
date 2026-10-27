@@ -26,14 +26,18 @@ function AuthModal({ onClose }: AuthModalProps) {
   const modalRef = useRef<HTMLElement>(null)
   const previouslyFocusedRef = useRef<HTMLElement | null>(null)
   const onCloseRef = useRef(onClose)
+  // 제출·모드 전환·닫기마다 바뀌는 요청 세대. 늦게 끝난 이전 요청의 성공·실패는
+  // 세대가 다르면 이 모달의 상태와 초점, onClose에 손대지 않는다.
+  const requestGenerationRef = useRef(0)
 
   useEffect(() => {
     onCloseRef.current = onClose
   }, [onClose])
 
   useEffect(() => {
-    setFormStatus('idle')
-    setErrorMessage(null)
+    return () => {
+      requestGenerationRef.current += 1
+    }
   }, [])
 
   useEffect(() => {
@@ -82,6 +86,7 @@ function AuthModal({ onClose }: AuthModalProps) {
   }, [])
 
   const switchMode = (nextMode: 'login' | 'signup') => {
+    requestGenerationRef.current += 1
     setMode(nextMode)
     setFormStatus('idle')
     setErrorMessage(null)
@@ -108,6 +113,10 @@ function AuthModal({ onClose }: AuthModalProps) {
       return
     }
 
+    requestGenerationRef.current += 1
+    const generation = requestGenerationRef.current
+    const isCurrent = () => requestGenerationRef.current === generation
+
     setFormStatus('submitting')
     setErrorMessage(null)
 
@@ -117,8 +126,10 @@ function AuthModal({ onClose }: AuthModalProps) {
       } else {
         await register(email.trim(), password)
       }
-      onClose()
+      if (!isCurrent()) return
+      onCloseRef.current()
     } catch (error) {
+      if (!isCurrent()) return
       setFormStatus('error')
       setErrorMessage(error instanceof AuthApiError ? error.message : '요청을 처리하지 못했습니다. 다시 시도해 주세요.')
     }
@@ -219,13 +230,6 @@ function AuthModal({ onClose }: AuthModalProps) {
             </div>
 
             <form onSubmit={handleSubmit}>
-              {!isLogin && (
-                <label>
-                  이름
-                  <input type="text" name="name" placeholder="이름을 입력하세요" autoComplete="name" required />
-                </label>
-              )}
-
               <label>
                 이메일
                 <input
