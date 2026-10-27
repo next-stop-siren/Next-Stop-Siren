@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, test, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from './App'
 
@@ -78,7 +78,10 @@ test('로그인 모달에서 회원가입 탭으로 전환할 수 있다', async
 
   expect(screen.getByRole('heading', { name: '회원가입' })).toBeTruthy()
 
-  expect(screen.getByRole('textbox', { name: '이름' })).toBeTruthy()
+  // 가입 API는 이메일·비밀번호만 받으므로 이름 입력을 요구하지 않는다.
+  expect(screen.queryByRole('textbox', { name: '이름' })).toBeNull()
+  expect(screen.getByLabelText('이메일')).toBeTruthy()
+  expect(screen.getByLabelText('비밀번호')).toBeTruthy()
 
   fetchSpy.mockRestore()
 })
@@ -131,6 +134,169 @@ test('질문 입력창과 전송 버튼은 실제 질문을 전송하지 않고 
   expect(promptInput.value).toBe('')
   // 세션 확인(csrf) 호출 1번 외에 추가 호출이 없어야 한다.
   expect(fetchSpy).toHaveBeenCalledTimes(1)
+
+  fetchSpy.mockRestore()
+})
+
+// 이슈 #67: 초점만으로는 열지 않고, 명시적 Enter·Space로 연다. 닫은 뒤 초점이 돌아와도 다시 열리지 않는다.
+test('Tab으로 질문 입력창을 지나가기만 하면 모달이 열리지 않는다', async () => {
+  const fetchSpy = mockGuestSession()
+  const user = userEvent.setup()
+  render(<App />)
+
+  const promptInput = await screen.findByRole('textbox', { name: '질문하려면 로그인 또는 회원가입이 필요합니다' })
+  for (let i = 0; i < 20 && document.activeElement !== promptInput; i += 1) {
+    await user.tab()
+  }
+  expect(document.activeElement).toBe(promptInput)
+  expect(screen.queryByRole('dialog')).toBeNull()
+
+  await user.tab()
+  expect(screen.queryByRole('dialog')).toBeNull()
+
+  fetchSpy.mockRestore()
+})
+
+test.each([
+  ['Enter', '{Enter}'],
+  ['Space', ' '],
+])('질문 입력창에서 %s로 열고 Escape로 닫으면 초점이 돌아오고 다시 열 수 있다', async (_name, key) => {
+  const fetchSpy = mockGuestSession()
+  const user = userEvent.setup()
+  render(<App />)
+
+  const promptInput = await screen.findByRole('textbox', { name: '질문하려면 로그인 또는 회원가입이 필요합니다' })
+  promptInput.focus()
+  expect(screen.queryByRole('dialog')).toBeNull()
+
+  await user.keyboard(key)
+  const dialog = screen.getByRole('dialog')
+  expect(dialog.contains(document.activeElement)).toBe(true)
+
+  await user.keyboard('{Escape}')
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(document.activeElement).toBe(promptInput)
+
+  // 초점 복귀만으로는 다시 열리지 않는다.
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  expect(screen.queryByRole('dialog')).toBeNull()
+
+  await user.keyboard(key)
+  expect(screen.getByRole('dialog')).toBeTruthy()
+
+  fetchSpy.mockRestore()
+})
+
+function authBody(email: string) {
+  return {
+    user: { id: 'u1', email, created_at: '2026-01-01T00:00:00Z' },
+    access_token: 'a',
+    token_type: 'Bearer',
+    expires_in: 900,
+    csrf_token: 'c',
+  }
+}
+
+// 늦은 login 실패가 닫혔다가 다시 열린 모달의 상태와 초점을 바꾸지 않는다.
+test('닫은 모달의 늦은 로그인 실패는 다시 연 모달에 오류나 초점 변화를 남기지 않는다', async () => {
+  let rejectLogin: (response: Response) => void = () => {}
+  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const url = typeof input === 'string' ? input : input.toString()
+    if (url === '/api/auth/csrf') {
+      return new Response(
+        JSON.stringify({ error: { code: 'unauthenticated', message: '인증', fields: {}, trace_id: 't' } }),
+        {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      )
+    }
+    if (url === '/api/auth/login') {
+      return new Promise<Response>((resolve) => {
+        rejectLogin = resolve
+      })
+    }
+    throw new Error(`예상하지 못한 호출: ${url}`)
+  })
+  const user = userEvent.setup()
+  render(<App />)
+
+  const loginButton = await screen.findByRole('button', { name: /^로그인$/ })
+  await user.click(loginButton)
+  await user.type(screen.getByLabelText('이메일'), 'a@test.com')
+  await user.type(screen.getByLabelText('비밀번호'), 'password123456')
+  await user.click(document.querySelector('button[type="submit"]') as HTMLButtonElement)
+  await screen.findByRole('button', { name: '처리 중...' })
+
+  await user.keyboard('{Escape}')
+  expect(screen.queryByRole('dialog')).toBeNull()
+  await user.click(loginButton)
+  const emailInput = screen.getByLabelText('이메일')
+  await user.click(emailInput)
+
+  rejectLogin(
+    new Response(
+      JSON.stringify({ error: { code: 'unauthenticated', message: '늦은 실패', fields: {}, trace_id: 't' } }),
+      {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      },
+    ),
+  )
+  await new Promise((resolve) => setTimeout(resolve, 20))
+
+  expect(screen.getByRole('dialog')).toBeTruthy()
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(document.activeElement).toBe(emailInput)
+
+  fetchSpy.mockRestore()
+})
+
+// 늦은 login 성공은 세션을 적용하지만, 다시 연 모달은 회원 화면 전환과 함께 정리된다.
+test('닫은 모달의 늦은 로그인 성공은 회원 화면으로 전환하고 모달을 남기지 않는다', async () => {
+  let resolveLogin: (response: Response) => void = () => {}
+  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const url = typeof input === 'string' ? input : input.toString()
+    if (url === '/api/auth/csrf') {
+      return new Response(
+        JSON.stringify({ error: { code: 'unauthenticated', message: '인증', fields: {}, trace_id: 't' } }),
+        {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      )
+    }
+    if (url === '/api/auth/login') {
+      return new Promise<Response>((resolve) => {
+        resolveLogin = resolve
+      })
+    }
+    // 회원 화면이 뜨며 부르는 조회는 이 검사의 대상이 아니다.
+    return new Promise<Response>(() => {})
+  })
+  const user = userEvent.setup()
+  render(<App />)
+
+  const loginButton = await screen.findByRole('button', { name: /^로그인$/ })
+  await user.click(loginButton)
+  await user.type(screen.getByLabelText('이메일'), 'a@test.com')
+  await user.type(screen.getByLabelText('비밀번호'), 'password123456')
+  await user.click(document.querySelector('button[type="submit"]') as HTMLButtonElement)
+  await screen.findByRole('button', { name: '처리 중...' })
+
+  await user.keyboard('{Escape}')
+  await user.click(loginButton)
+  expect(screen.getByRole('dialog')).toBeTruthy()
+
+  resolveLogin(
+    new Response(JSON.stringify(authBody('a@test.com')), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  )
+
+  await waitFor(() => expect(screen.queryByRole('button', { name: /^로그인$/ })).toBeNull())
+  expect(screen.queryByRole('dialog')).toBeNull()
 
   fetchSpy.mockRestore()
 })
