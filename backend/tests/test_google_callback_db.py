@@ -40,9 +40,14 @@ def counts(flow):
         )
 
 
-def assert_failure(response, status):
-    assert response.status_code == status and "location" not in response.headers
-    assert response.json()["error"]["trace_id"]
+def assert_failure(response, reason="temporarily_unavailable", *, fallback=False):
+    if fallback:
+        assert response.status_code == 503 and "location" not in response.headers
+        assert response.json()["error"]["trace_id"]
+    else:
+        assert response.status_code == 302
+        assert response.headers["location"] == "/?google_login_error=" + reason
+        assert response.content == b""
     assert response.headers["cache-control"] == "no-store"
     values = SimpleCookie()
     for header in response.headers.get_list("set-cookie"):
@@ -94,18 +99,19 @@ def test_first_and_repeat_callback_commit_before_cookies_and_keep_local_account_
 def test_verification_failures_create_no_accounts_or_sessions(callback_db, failure):
     flow = callback_db
     params = dict(flow.params)
-    status = 401
+    reason = "invalid_request"
     if failure == "cancelled":
         params.pop("code")
         params["error"] = "access_denied"
+        reason = "cancelled"
     elif failure == "claim":
         flow.behavior["claims"] = {"email_verified": False}
     elif failure == "provider":
         flow.behavior["discovery_failure"] = True
-        status = 503
+        reason = "temporarily_unavailable"
     else:
         flow.behavior["exchange_error"] = "invalid_grant"
-    assert_failure(flow.client.get(PATH, params=params), status)
+    assert_failure(flow.client.get(PATH, params=params), reason)
     assert counts(flow) == (0, 0, 0)
 
 
@@ -117,7 +123,7 @@ def test_replayed_callback_with_restored_transaction_preserves_existing_session(
     response = flow.client.get(
         PATH, params=flow.params, headers={"Cookie": f"google_transaction={flow.cookie}; refresh_token={original}"}
     )
-    assert_failure(response, 401)
+    assert_failure(response, "invalid_request")
     assert counts(flow) == (1, 1, 1)
     assert flow.client.cookies.get("refresh_token") == original
     with flow.sessions() as reader:
@@ -133,7 +139,10 @@ def test_simultaneous_duplicate_callbacks_issue_exactly_one_session(callback_db)
     with ThreadPoolExecutor(max_workers=2) as workers:
         futures = [workers.submit(callback) for _ in range(2)]
         responses = [future.result(timeout=20) for future in futures]
-    assert sorted(response.status_code for response in responses) == [302, 401]
+    assert sorted(response.headers["location"] for response in responses) == [
+        "/",
+        "/?google_login_error=invalid_request",
+    ]
     assert counts(flow) == (1, 1, 1)
 
 
@@ -150,7 +159,7 @@ def test_save_failure_returns_no_auth_cookies_and_rolls_back_all_rows(callback_d
     )
     with failure:
         response = callback_db.client.get(PATH, params=callback_db.params)
-    assert_failure(response, 503)
+    assert_failure(response)
     assert counts(callback_db) == (0, 0, 0)
     assert "fixture-private" not in response.text
 
@@ -176,7 +185,7 @@ def test_cookie_failure_cancels_this_session_preserving_account_and_other_logins
 
     with patch("app.api.google_auth.set_auth_cookies", side_effect=partial_cookie), caplog.at_level(logging.INFO):
         response = flow.client.get(PATH, params=flow.params)
-    assert_failure(response, 503)
+    assert_failure(response)
     assert counts(flow) == (1, 1, int(other_login))
     assert "event=login_cancelled" in caplog.text and "fixture-private" not in caplog.text
     flow.start(code="fixture-retry-code")
@@ -187,7 +196,7 @@ def test_cookie_failure_cancels_this_session_preserving_account_and_other_logins
 def test_response_construction_failure_also_cancels_committed_refresh(callback_db):
     with patch("app.api.google_auth.RedirectResponse", side_effect=RuntimeError("fixture-private-response")):
         response = callback_db.client.get(PATH, params=callback_db.params)
-    assert_failure(response, 503)
+    assert_failure(response, fallback=True)
     assert counts(callback_db) == (1, 1, 0)
 
 
@@ -203,7 +212,7 @@ def test_transaction_cleanup_failure_discards_auth_cookies_and_compensates(callb
 
     with patch("app.api.google_auth.clear_google_transaction_cookie", side_effect=fail_once):
         response = callback_db.client.get(PATH, params=callback_db.params)
-    assert_failure(response, 503)
+    assert_failure(response)
     assert counts(callback_db) == (1, 1, 0)
 
 
@@ -225,7 +234,7 @@ def test_compensation_failure_is_logged_without_issuing_partial_cookies(callback
         caplog.at_level(logging.INFO),
     ):
         response = callback_db.client.get(PATH, params=callback_db.params)
-    assert_failure(response, 503)
+    assert_failure(response)
     assert counts(callback_db) == (1, 1, 1)
     assert "event=login_compensation_failed" in caplog.text
     assert "event=login_cancelled" not in caplog.text and "fixture-private" not in caplog.text
