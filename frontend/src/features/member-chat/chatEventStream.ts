@@ -1,7 +1,7 @@
 /**
  * 회원 단위 구독(`GET /api/chat/events`) 클라이언트.
  * `EventSource`는 `Authorization` 헤더를 보낼 수 없어 `fetch` 스트림으로 읽는다.
- * 기준: docs/04-reference/chat-queue-api-draft.md (PR #56)
+ * 기준: docs/04-reference/api.md Rev 1 "구독"
  */
 
 import type { ChatEvent, ChatJobEnvelope, ChatLimits, ChatSnapshot } from './chatQueueTypes'

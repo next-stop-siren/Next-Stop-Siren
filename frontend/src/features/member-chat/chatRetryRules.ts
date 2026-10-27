@@ -1,5 +1,5 @@
 /**
- * 재시도·건너뛰기 버튼의 표시 규칙. 기준: docs/04-reference/chat-queue-api-draft.md (PR #56)
+ * 재시도·건너뛰기 버튼의 표시 규칙. 기준: docs/04-reference/chat-queue-api-draft.md "재시도·건너뛰기 버튼"
  *
  * 버튼을 보일지는 서버가 준 `allowed_actions`만으로 정한다. 여기서는 허용된 재시도 버튼을
  * `limits` 때문에 잠시 막아야 하는지와 그 이유 문구만 계산한다. 잔량을 화면에서 다시 계산하지 않는다.
@@ -26,22 +26,46 @@ export function formatResetTime(resetsAt: string): string {
 export function retryBlockReason(limits: ChatLimits | null, nowMs: number): string | null {
   if (!limits) return null
 
+  return (
+    exhaustedReason(limits) ??
+    (limits.queue.retries_waiting >= limits.queue.retries_max ? '다른 재시도가 대기 중입니다.' : null) ??
+    tooSoonReason(limits, nowMs)
+  )
+}
+
+/** 한도를 모두 쓴 기간이 있으면 그 안내 문구. 둘 다 소진됐으면 더 늦게 초기화되는 쪽이 풀려야 다시 보낼 수 있다. */
+function exhaustedReason(limits: ChatLimits): string | null {
   const exhausted = [limits.daily, limits.six_hour].filter((window) => window.remaining <= 0)
+  if (exhausted.length === 0) return null
 
-  if (exhausted.length > 0) {
-    // 둘 다 소진됐으면 더 늦게 초기화되는 쪽이 풀려야 다시 보낼 수 있다.
-    const resetsAt = exhausted.map((window) => window.resets_at).sort()[exhausted.length - 1]
-    return `질문 한도를 모두 썼습니다. 다음 초기화: ${formatResetTime(resetsAt)}`
-  }
+  const resetsAt = exhausted.map((window) => window.resets_at).sort()[exhausted.length - 1]
+  return `질문 한도를 모두 썼습니다. 다음 초기화: ${formatResetTime(resetsAt)}`
+}
 
-  if (limits.queue.retries_waiting >= limits.queue.retries_max) return '다른 재시도가 대기 중입니다.'
+function tooSoonReason(limits: ChatLimits, nowMs: number): string | null {
+  if (!limits.next_attempt_at) return null
 
-  if (limits.next_attempt_at) {
-    const seconds = Math.ceil((Date.parse(limits.next_attempt_at) - nowMs) / 1000)
-    if (seconds > 0) return `${seconds}초 뒤에 보낼 수 있습니다`
-  }
+  const seconds = Math.ceil((Date.parse(limits.next_attempt_at) - nowMs) / 1000)
+  return seconds > 0 ? `${seconds}초 뒤에 보낼 수 있습니다` : null
+}
 
-  return null
+/**
+ * 새 질문을 보낼 수 없으면 그 이유를, 아니면 null을 돌려준다.
+ * 재시도 대기(`retries_waiting`)가 가득 차도 새 질문은 막지 않는다. 재시도 버튼만 막는 조건이기 때문이다.
+ * 응답을 잃은 질문을 같은 키로 다시 확인하는 일은 한도와 무관하므로, 호출한 쪽이 그때는 이 값을 쓰지 않는다.
+ *
+ * @param nowMs 지금 시각(ms). 서버 시각에 맞춘 값을 넘긴다.
+ */
+export function questionBlockReason(limits: ChatLimits | null, nowMs: number): string | null {
+  if (!limits) return null
+
+  return (
+    exhaustedReason(limits) ??
+    (limits.queue.questions_waiting >= limits.queue.questions_max
+      ? `대기 중인 질문이 ${limits.queue.questions_max}개입니다. 답변 뒤에 보내 주세요.`
+      : null) ??
+    tooSoonReason(limits, nowMs)
+  )
 }
 
 /**

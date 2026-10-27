@@ -1,5 +1,6 @@
 """Safe automation scenarios; all mutable state is temporary."""
 
+import base64
 import ctypes
 import json
 import os
@@ -125,6 +126,36 @@ class LocalAutomationTest(unittest.TestCase):
                 local.db_init_test()
             compose.assert_not_called()
             command.assert_not_called()
+
+    def test_e2e_initializes_test_schema_before_starting_servers(self):
+        order = []
+        url = "postgresql://test:secret@127.0.0.1:55433/test"
+        with patch.object(local, "preflight"), patch.object(local, "require_free_ports"), \
+             patch.object(local, "with_test_database", side_effect=lambda action: action(url)), \
+             patch.object(local, "initialize_test_schema", side_effect=lambda target: order.append(("schema", target))), \
+             patch.object(local, "spawn", side_effect=lambda command, cwd, env=None: order.append(("spawn", cwd))), \
+             patch.object(local, "wait_http"), patch.object(local, "stop_child"), \
+             patch.object(local, "run", side_effect=lambda command, **kwargs: order.append(("run", kwargs.get("cwd")))):
+            local.test_e2e()
+        self.assertEqual(order[0], ("schema", url))
+        self.assertEqual([step for step, _ in order], ["schema", "spawn", "spawn", "run"])
+
+    def test_e2e_api_gets_valid_throwaway_auth_settings(self):
+        spawned = []
+        url = "postgresql://test:secret@127.0.0.1:55433/test"
+        with patch.dict(os.environ, {"AUTH_ACCESS_KEY": ""}), patch.object(local, "preflight"), \
+             patch.object(local, "require_free_ports"), patch.object(local, "initialize_test_schema"), \
+             patch.object(local, "with_test_database", side_effect=lambda action: action(url)), \
+             patch.object(local, "spawn", side_effect=lambda command, cwd, env=None: spawned.append(env)), \
+             patch.object(local, "wait_http"), patch.object(local, "stop_child"), patch.object(local, "run"):
+            local.test_e2e()
+        api_env = spawned[0]
+        self.assertEqual(api_env["DATABASE_URL"], url)
+        keys = [api_env[name] for name in ("AUTH_ACCESS_KEY", "AUTH_REFRESH_KEY", "AUTH_REFRESH_DIGEST_KEY", "AUTH_CSRF_KEY")]
+        self.assertEqual(len(set(keys)), 4)
+        self.assertTrue(all(len(base64.b64decode(key, validate=True)) == 32 for key in keys))
+        self.assertEqual(api_env["AUTH_COOKIE_SECURE"], "false")
+        self.assertNotEqual(local.e2e_auth_env()["AUTH_ACCESS_KEY"], local.e2e_auth_env()["AUTH_ACCESS_KEY"])
 
     def test_dev_schema_initialization_refuses_foreign_container_before_sql(self):
         settings = {"DATABASE_URL": "postgresql://dev:secret@127.0.0.1:55432/dev",

@@ -26,7 +26,9 @@ function ChatJobActions({ envelope, jobs, limits, nowMs, commands }: ChatJobActi
 
   const actions = job.allowed_actions
   const activeRetry = activeRetryFor(job, jobs)
-  const retryBlocked = actions.includes('retry') ? retryBlockReason(limits, nowMs) : null
+  // 접수를 확인하지 못한 재시도를 같은 키로 다시 확인하는 일은 한도·간격과 무관하다.
+  const retryBlocked =
+    actions.includes('retry') && !commands.hasUnconfirmedRetry(job.id) ? retryBlockReason(limits, nowMs) : null
 
   const run = async (name: string, send: (jobId: string) => Promise<void>) => {
     if (pending) return

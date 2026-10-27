@@ -1,10 +1,12 @@
 """Bounded, repository-scoped local development commands (Python stdlib only)."""
 
 import argparse
+import base64
 import ctypes
 import json
 import os
 from pathlib import Path
+import secrets
 import signal
 import socket
 import shutil
@@ -620,14 +622,17 @@ def db_init():
         cwd=BACKEND, env={**command_env(), "DATABASE_URL": url})
 
 
+def initialize_test_schema(url):
+    """Create the missing application tables in the verified test DB; existing tables and rows are kept."""
+    code = ("import os; from app.db_init import initialize_schema; "
+            "count = initialize_schema(os.environ['TEST_DATABASE_URL']); "
+            "print(f'Registered application tables: {count}; missing tables created, existing tables preserved')")
+    run(tool("uv", "run", "--no-sync", "python", "-c", code),
+        cwd=BACKEND, env={**command_env(), "TEST_DATABASE_URL": url})
+
+
 def db_init_test():
-    def initialize(url):
-        code = ("import os; from app.db_init import initialize_schema; "
-                "count = initialize_schema(os.environ['TEST_DATABASE_URL']); "
-                "print(f'Registered application tables: {count}; missing tables created, existing tables preserved')")
-        run(tool("uv", "run", "--no-sync", "python", "-c", code),
-            cwd=BACKEND, env={**command_env(), "TEST_DATABASE_URL": url})
-    with_test_database(initialize)
+    with_test_database(initialize_test_schema)
 
 
 def ensure_dev_container():
@@ -680,12 +685,34 @@ def wait_http(url, expected):
     raise Failure("Owned test server did not become ready", 4)
 
 
+def e2e_auth_env():
+    """Throwaway local-auth settings for the API that test-e2e owns; the keys in .env are never read or needed."""
+    def key():
+        return base64.b64encode(secrets.token_bytes(32)).decode("ascii")
+    return {
+        "AUTH_ENV": "development",
+        "AUTH_ACCESS_KEY": key(),
+        "AUTH_REFRESH_KEY": key(),
+        "AUTH_REFRESH_DIGEST_KEY": key(),
+        "AUTH_CSRF_KEY": key(),
+        "AUTH_ACCESS_KID": "e2e-access",
+        "AUTH_REFRESH_KID": "e2e-refresh",
+        "AUTH_JWT_ISSUER": "next-stop-siren-e2e",
+        "AUTH_JWT_AUDIENCE": "next-stop-siren-e2e-api",
+        "AUTH_API_ORIGIN": "http://127.0.0.1:8000",
+        "AUTH_ALLOWED_ORIGINS": "http://127.0.0.1:5173,http://127.0.0.1:8000",
+        "AUTH_COOKIE_SECURE": "false",
+    }
+
+
 def test_e2e():
     preflight(frontend=True, backend=True)
     def check(url):
         require_free_ports()
-        api_env = command_env()
-        api_env["DATABASE_URL"] = url
+        # Browser tests sign up and chat for real, so the test DB needs the application tables.
+        initialize_test_schema(url)
+        # The browser tests sign up and log in, so the API needs local-auth settings even where .env has none (CI).
+        api_env = {**command_env(), **e2e_auth_env(), "DATABASE_URL": url}
         browser_env = command_env()
         browser_env["PLAYWRIGHT_BROWSERS_PATH"] = str(ROOT / ".cache" / "playwright")
         children = []
