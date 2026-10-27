@@ -1022,6 +1022,41 @@ test('새로고침 뒤에도 대화의 작업 목록으로 실패 답변의 재�
   expect(screen.getByRole('button', { name: '질문 취소' })).toBeTruthy()
 })
 
+test('작업 목록만 읽지 못하면 이력은 보여 주고 안내와 다시 불러오기를 주며, 다시 불러오면 재시도·건너뛰기 버튼을 되살린다', async () => {
+  const user = userEvent.setup()
+  const { history, failed, paused } = failedConversation()
+  let jobReads = 0
+
+  mockApi((url) => {
+    if (url === '/api/conversations?limit=20') return json(200, page([conversation('501')]))
+    if (url === '/api/conversations/501/messages?limit=100') return json(200, page(history))
+    if (url === '/api/chat/jobs?conversation_id=501&limit=100') {
+      jobReads += 1
+      return jobReads === 1
+        ? json(503, { error: { code: 'temporarily_unavailable', message: '일시적으로 서비스를 이용할 수 없습니다.' } })
+        : json(200, jobPage([paused, failed]))
+    }
+    return undefined
+  })
+
+  renderChat()
+
+  // 이력은 보인다. 작업 상태를 몰라 버튼은 없고, 그 사실과 다시 불러오는 방법을 알린다.
+  expect(await screen.findByText('음주운전 단속 기준은?')).toBeTruthy()
+  expect(screen.getByText('전동킥보드 헬멧 범칙금은?')).toBeTruthy()
+  expect((await screen.findByRole('alert')).textContent).toContain('답변 상태를 불러오지 못해')
+  expect(screen.queryByRole('button', { name: '재시도' })).toBeNull()
+  expect(screen.queryByRole('button', { name: '건너뛰기' })).toBeNull()
+
+  await user.click(screen.getByRole('button', { name: '대화 다시 불러오기' }))
+
+  expect(await screen.findByRole('button', { name: '재시도' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: '건너뛰기' })).toBeTruthy()
+  expect(screen.getByText('앞 질문 실패로 대기 중')).toBeTruthy()
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(jobReads).toBe(2)
+})
+
 test('재시도 응답을 잃으면 다시 눌러도 같은 retry_key로 보내고, 접수되면 원래 실패 답변의 버튼을 숨긴다', async () => {
   const user = userEvent.setup()
   const { history, failed, paused } = failedConversation()

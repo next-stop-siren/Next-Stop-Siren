@@ -26,6 +26,10 @@ export const QUESTION_MAX_CODE_POINTS = 4000
  */
 export const REQUEST_TIMEOUT_MS = 15_000
 
+/** 대화 이력은 읽었지만 그 대화의 작업 목록을 읽지 못했을 때의 안내 */
+export const JOBS_LOAD_ERROR =
+  '답변 상태를 불러오지 못해 재시도·건너뛰기 버튼과 대기 중인 질문의 상태가 보이지 않을 수 있습니다. 대화를 다시 불러와 주세요.'
+
 /** 한 대화에서 함께 읽는 작업 수. 서버 한 페이지의 최대값이다. */
 const CONVERSATION_JOBS_LIMIT = 100
 
@@ -277,6 +281,10 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
             envelopes: envelopesFromHistory(jobs.items, items),
             limits: jobs.limits,
           })
+        } else {
+          // 이력은 보여 주지만, 실패한 답변의 재시도·건너뛰기 버튼과 멈춘 질문의 상태는 이 목록으로만 되살릴 수 있다.
+          // 구독을 다시 연결해도 끝난 작업은 오지 않으므로, 다시 불러오도록 안내한다.
+          setLoadError(JOBS_LOAD_ERROR)
         }
       } catch (err) {
         // 끊겼거나 더 새로운 조회가 시작됐다면 이 실패는 화면에 알리지 않는다.
@@ -287,7 +295,7 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
         if (loadAbortRef.current === controller) loadAbortRef.current = null
       }
     },
-    [alive],
+    [alive, setLoadError],
   )
 
   useEffect(() => {
