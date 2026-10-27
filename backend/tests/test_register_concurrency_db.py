@@ -13,12 +13,14 @@ from app.models.refresh_session import RefreshSession
 from app.models.user import User
 from app.repositories.users import find_local_user_by_email
 from app.security.session_values import create_refresh_digest
+from app.security.settings import RegistrationLimitSettings
 
 pytestmark = pytest.mark.db
 
 
 def test_concurrent_case_variant_signups_commit_one_user_and_one_session(committed_signup_sessions, auth_settings):
-    application = create_app(auth_settings)
+    # DB 유일 제약 경합 검사는 설정으로 두 요청을 허용한다. 기본 상한 1 검사는 별도 수행한다.
+    application = create_app(auth_settings, registration_limit_settings=RegistrationLimitSettings(max_concurrent=2))
     email = f"race-{uuid4().hex}@example.test"
     precheck = Barrier(2)
 

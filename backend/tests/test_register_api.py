@@ -1,6 +1,8 @@
 """Registration HTTP contracts, Origin rejection and CORS preflight."""
 
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from unittest.mock import Mock, patch
 from uuid import UUID
 
@@ -9,10 +11,13 @@ import pytest
 from sqlalchemy.exc import OperationalError
 
 from app.api.auth import registration_session
+from app.api.cookies import AuthCookieError, set_auth_cookies
+from app.api.errors import ApiError
 from app.main import create_app
 from app.schemas.auth import PublicUser
 from app.security.session_values import create_csrf_token
-from app.security.settings import AuthSettings
+from app.security.registration_limits import RegistrationBusy, RegistrationLimiter
+from app.security.settings import AuthSettings, RegistrationLimitSettings
 from app.security.tokens import issue_access_token, issue_refresh_token
 from app.services.registration import LocalEmailExists, RegistrationResult, RegistrationUnavailable
 
@@ -311,3 +316,149 @@ def test_origin_is_checked_before_opening_a_database_session(auth_settings):
             response = client.post(PATH, json=INPUT, headers={"Origin": "https://evil.test"})
     assert_error(response, 403, "csrf_failed")
     sessions.assert_not_called()
+
+
+@pytest.fixture
+def limited_register_client(register_client):
+    client, service, result = register_client
+    clock = [0.0]
+    limiter = RegistrationLimiter(
+        RegistrationLimitSettings(limit=2, window_seconds=30, busy_retry_seconds=7), clock=lambda: clock[0]
+    )
+    client.app.state.registration_limiter = limiter
+    return client, service, result, limiter, clock
+
+
+def post_signup(client):
+    return client.post(PATH, json=INPUT, headers={"Origin": ORIGIN})
+
+
+def assert_registration_rejection(response, status, code, retry_after):
+    error = assert_error(response, status, code)
+    assert response.headers["Retry-After"] == str(retry_after)
+    assert f"{retry_after}초 후" in error["message"]
+    assert response.headers["Cache-Control"] == "no-store"
+    assert "Retry-After" in response.headers["access-control-expose-headers"]
+    assert "access_token" not in response.text
+
+
+def test_registration_rate_response_and_exact_window_reset(limited_register_client):
+    client, service, _, _, clock = limited_register_client
+    assert post_signup(client).status_code == 201
+    assert post_signup(client).status_code == 201
+    assert_registration_rejection(post_signup(client), 429, "registration_rate_limited", 30)
+    clock[0] = 29.1
+    assert_registration_rejection(post_signup(client), 429, "registration_rate_limited", 1)
+    assert service.call_count == 2
+    clock[0] = 30.0
+    assert post_signup(client).status_code == 201
+
+
+def test_busy_http_rejections_do_not_consume_quota(limited_register_client):
+    client, service, _, limiter, _ = limited_register_client
+    with limiter.attempt():
+        for _ in range(12):
+            assert_registration_rejection(post_signup(client), 503, "registration_busy", 7)
+        service.assert_not_called()
+    assert post_signup(client).status_code == 201
+    assert_registration_rejection(post_signup(client), 429, "registration_rate_limited", 30)
+    assert service.call_count == 1
+
+
+def test_invalid_input_and_origin_do_not_consume_quota(limited_register_client):
+    client, service, _, _, _ = limited_register_client
+    for _ in range(3):
+        assert client.post(PATH, json=INPUT).status_code == 403
+        assert client.post(PATH, json={}, headers={"Origin": ORIGIN}).status_code == 422
+    service.assert_not_called()
+    assert post_signup(client).status_code == 201
+    assert post_signup(client).status_code == 201
+
+
+@pytest.mark.parametrize("failure,status", [(LocalEmailExists("duplicate"), 409), (RegistrationUnavailable("DB"), 503)])
+def test_admitted_failure_keeps_quota_and_releases_slot(limited_register_client, failure, status):
+    client, service, _, _, _ = limited_register_client
+    service.side_effect = failure
+    response = post_signup(client)
+    assert response.status_code == status
+    assert "Retry-After" not in response.headers
+    service.side_effect = None
+    assert post_signup(client).status_code == 201
+    assert_registration_rejection(post_signup(client), 429, "registration_rate_limited", 30)
+
+
+def test_unexpected_service_error_also_returns_slot(limited_register_client):
+    client, service, _, _, _ = limited_register_client
+    service.side_effect = RuntimeError("synthetic error")
+    with pytest.raises(RuntimeError, match="synthetic error"):
+        post_signup(client)
+    service.side_effect = None
+    assert post_signup(client).status_code == 201
+    assert_registration_rejection(post_signup(client), 429, "registration_rate_limited", 30)
+
+
+@pytest.mark.parametrize("compensation_fails", [False, True])
+def test_cookie_failure_holds_slot_through_compensation(limited_register_client, compensation_fails):
+    client, _, _, limiter, _ = limited_register_client
+
+    def compensate(*args):
+        with pytest.raises(RegistrationBusy):
+            with limiter.attempt():
+                pytest.fail("보상 중인 가입의 자리가 먼저 반환되면 안 된다.")
+        if compensation_fails:
+            raise RegistrationUnavailable("synthetic compensation error")
+
+    with (
+        patch("app.api.auth.set_auth_cookies", side_effect=AuthCookieError("synthetic cookie error")),
+        patch("app.api.auth.cancel_registration", side_effect=compensate) as cancellation,
+    ):
+        response = post_signup(client)
+    assert_error(response, 503, "temporarily_unavailable")
+    assert "Retry-After" not in response.headers
+    cancellation.assert_called_once()
+    assert post_signup(client).status_code == 201
+
+
+def test_next_http_signup_is_rejected_until_cookie_work_finishes(limited_register_client):
+    client, service, _, _, _ = limited_register_client
+    entered = Event()
+    release = Event()
+
+    def blocked_cookies(*args):
+        entered.set()
+        assert release.wait(timeout=10)
+        return set_auth_cookies(*args)
+
+    with (
+        patch("app.api.auth.set_auth_cookies", side_effect=blocked_cookies),
+        ThreadPoolExecutor(max_workers=1) as workers,
+    ):
+        future = workers.submit(post_signup, client)
+        try:
+            assert entered.wait(timeout=10)
+            assert_registration_rejection(post_signup(client), 503, "registration_busy", 7)
+            assert service.call_count == 1
+        finally:
+            release.set()
+        assert future.result(timeout=10).status_code == 201
+    assert post_signup(client).status_code == 201
+
+
+def test_missing_registration_limiter_blocks_without_calling_service(register_client):
+    client, service, _ = register_client
+    client.app.state.registration_limiter = None
+    assert_error(post_signup(client), 503, "temporarily_unavailable")
+    service.assert_not_called()
+
+
+@pytest.mark.parametrize("code", ["registration_rate_limited", "registration_busy"])
+@pytest.mark.parametrize("retry_after", [None, 0, -1, True, 1.5])
+def test_registration_error_requires_valid_retry_guidance(code, retry_after):
+    with pytest.raises(ValueError):
+        ApiError(code, retry_after=retry_after)
+
+
+def test_registration_openapi_includes_rate_limit(register_client):
+    client, _, _ = register_client
+    responses = client.get("/openapi.json").json()["paths"][PATH]["post"]["responses"]
+    assert "429" in responses and "503" in responses
