@@ -40,6 +40,8 @@ def google_callback_flow(auth_settings, google_settings, google_rsa_private_key)
                 raise httpx.ReadTimeout("fixture-private-provider")
             return httpx.Response(200, json=metadata)
         if str(request.url) == google_settings.jwks_uri:
+            if behavior.get("jwks_failure"):
+                raise httpx.ReadTimeout("fixture-private-jwks")
             return httpx.Response(200, json=public_jwks(google_rsa_private_key))
         assert str(request.url) == google_settings.token_endpoint and request.method == "POST"
         form = parse_qs(request.content.decode())
@@ -59,7 +61,7 @@ def google_callback_flow(auth_settings, google_settings, google_rsa_private_key)
             "exp": now + 3600,
             **behavior.get("claims", {}),
         }
-        flow.id_token = signed_token(claims, google_rsa_private_key)
+        flow.id_token = signed_token(claims, behavior.get("signing_key", google_rsa_private_key))
         return httpx.Response(
             200,
             json={

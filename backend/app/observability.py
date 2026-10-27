@@ -13,9 +13,14 @@ logger = logging.getLogger(__name__)
 
 
 class GoogleCallbackQueryFilter(logging.Filter):
-    """Remove callback queries while preserving Uvicorn's structured access log arguments."""
+    """Remove Google login queries while preserving Uvicorn's structured access log arguments."""
 
-    _paths = {"/api/auth/google/callback", "/api/auth/google/callback/"}
+    _paths = {
+        "/api/auth/google/callback",
+        "/api/auth/google/callback/",
+        "/api/auth/google/start",
+        "/api/auth/google/start/",
+    }
 
     @classmethod
     def _safe_url(cls, value: object) -> object:
@@ -35,7 +40,7 @@ class GoogleCallbackQueryFilter(logging.Filter):
             position = 1
         if position is None or not isinstance(record.args, tuple) or len(record.args) != 5:
             # Drop unfamiliar callback formats rather than risk logging their credentials.
-            return "/api/auth/google/callback" not in unquote(record.getMessage())
+            return not any(path in unquote(record.getMessage()) for path in self._paths)
         values = list(record.args)
         values[position] = self._safe_url(values[position])
         record.args = tuple(values)
@@ -125,6 +130,13 @@ class RegistrationTraceMiddleware:
 def google_callback_verification_failed(request: Request) -> None:
     """Correlate rejected callbacks without recording credentials or provider error text."""
     logger.warning("event=google_callback_verification_failed trace_id=%s", request_trace_id(request))
+
+
+def google_login_failure(
+    request: Request, reason: Literal["cancelled", "invalid_request", "temporarily_unavailable"]
+) -> None:
+    """Record only the fixed public classification, linked to the server-generated trace ID."""
+    logger.warning("event=google_login_failure trace_id=%s reason=%s", request_trace_id(request), reason)
 
 
 def registration_saved(request: Request) -> None:

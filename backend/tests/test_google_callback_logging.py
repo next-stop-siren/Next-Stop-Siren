@@ -35,7 +35,17 @@ def make_record(name, target):
 
 
 @pytest.mark.parametrize("name", ["uvicorn.access", "httpx"])
-@pytest.mark.parametrize("path", [PATH, PATH + "/", "/api/auth/google/%63allback"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        PATH,
+        PATH + "/",
+        "/api/auth/google/%63allback",
+        "/api/auth/google/start",
+        "/api/auth/google/start/",
+        "/api/auth/google/%73tart",
+    ],
+)
 @pytest.mark.parametrize("query", QUERIES)
 def test_entire_callback_query_is_removed_before_formatting(name, path, query):
     target = ("https://api.example.test" if name == "httpx" else "") + path + "?" + query
@@ -57,7 +67,7 @@ def test_entire_callback_query_is_removed_before_formatting(name, path, query):
 
 
 @pytest.mark.parametrize("name", ["uvicorn.access", "httpx"])
-@pytest.mark.parametrize("path", ["/api/health", "/api/auth/google/start", PATH + "-other"])
+@pytest.mark.parametrize("path", ["/api/health", "/api/auth/google/start-other", PATH + "-other"])
 def test_unrelated_url_and_all_log_arguments_are_unchanged(name, path):
     target = ("https://api.example.test" if name == "httpx" else "") + path + "?note='demo'&value=keep"
     record = make_record(name, target)
@@ -75,14 +85,15 @@ def test_callback_fragment_is_not_logged(name):
 
 
 @pytest.mark.parametrize("name", ["uvicorn.access", "httpx"])
-def test_unfamiliar_callback_log_format_is_suppressed(name):
+@pytest.mark.parametrize("path", [PATH, "/api/auth/google/%73tart"])
+def test_unfamiliar_callback_log_format_is_suppressed(name, path):
     record = logging.LogRecord(
         name,
         logging.INFO,
         __file__,
         1,
         "Unexpected request: %s",
-        (PATH + '?note="demo"&code=fixture-secret&state=fixture-state',),
+        (path + '?note="demo"&code=fixture-secret&state=fixture-state',),
         None,
     )
     assert GoogleCallbackQueryFilter().filter(record) is False
