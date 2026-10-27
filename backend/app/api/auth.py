@@ -24,7 +24,7 @@ from app.observability import (
 )
 from app.schemas.auth import LoginRequest, LoginResponse, RegisterRequest, RegisterResponse
 from app.schemas.errors import ErrorResponse
-from app.security.settings import AuthSettings
+from app.security.settings import AuthSettings, RegistrationLimitSettings
 from app.security.login_limits import LoginFailureLimiter
 from app.security.session_values import verify_csrf_token
 from app.security.tokens import TokenVerifyError, VerifiedToken, verify_access, verify_refresh_token
@@ -57,6 +57,14 @@ def request_login_limiter(request: Request) -> LoginFailureLimiter:
     if not isinstance(limiter, LoginFailureLimiter):
         raise ApiError("temporarily_unavailable")
     return limiter
+
+
+def request_registration_limit_settings(request: Request) -> RegistrationLimitSettings:
+    """잘못된 가입 제한 설정은 가입만 차단하며 기존 로그인 설정과 분리한다."""
+    settings = getattr(request.app.state, "registration_limit_settings", None)
+    if not isinstance(settings, RegistrationLimitSettings):
+        raise ApiError("temporarily_unavailable")
+    return settings
 
 
 def request_client_ip(request: Request) -> str:
@@ -183,7 +191,7 @@ def login(
     "/register",
     status_code=201,
     response_model=RegisterResponse,
-    dependencies=[Depends(require_allowed_origin)],
+    dependencies=[Depends(require_allowed_origin), Depends(request_registration_limit_settings)],
     responses={code: {"model": ErrorResponse} for code in (403, 409, 422, 503)},
 )
 def register(
