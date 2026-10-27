@@ -1,18 +1,18 @@
 # API 계약
 
-**Rev 2 · 2026-10-27 (KST)** · 코드 기준: [`1566e8b`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/1566e8ba7af681ebc39bcdbab8339b1c4f32a313)
+**Rev 3 · 2026-10-27 (KST)** · 코드 기준: [`1cbf709`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/1cbf709eeef88f6c592c50bfd13b386d43dc8e5c)
 
-변경 근거: [PR #50](https://github.com/next-stop-siren/Next-Stop-Siren/pull/50) · [PR #56](https://github.com/next-stop-siren/Next-Stop-Siren/pull/56) · [PR #57](https://github.com/next-stop-siren/Next-Stop-Siren/pull/57) · [PR #59](https://github.com/next-stop-siren/Next-Stop-Siren/pull/59) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62) · [PR #78](https://github.com/next-stop-siren/Next-Stop-Siren/pull/78) · [PR #79](https://github.com/next-stop-siren/Next-Stop-Siren/pull/79). Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
+변경 근거: [PR #50](https://github.com/next-stop-siren/Next-Stop-Siren/pull/50) · [PR #56](https://github.com/next-stop-siren/Next-Stop-Siren/pull/56) · [PR #57](https://github.com/next-stop-siren/Next-Stop-Siren/pull/57) · [PR #59](https://github.com/next-stop-siren/Next-Stop-Siren/pull/59) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62) · [PR #78](https://github.com/next-stop-siren/Next-Stop-Siren/pull/78) · [PR #79](https://github.com/next-stop-siren/Next-Stop-Siren/pull/79). [#69](https://github.com/next-stop-siren/Next-Stop-Siren/issues/69)의 서버 구현 `8921f8a`와 검증 `1cbf709`를 반영했다. Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
 
 이 문서는 **현재 구현 계약**이다. #53부터 질문·재시도는 [회원 채팅 정책](chat-policy.md)의 대기열로 접수하고, 결과는 회원 단위 구독과 작업 조회로 받는다([회원 채팅 대기열](#회원-채팅-대기열-53)). 이전의 동기 생성(`201`), `409 conversation_busy`, `502`·`504`, `/messages/stream`, D4 재시도와 60초 `pending` 회복은 더 이상 쓰지 않는다. 네 메시지 상태와 공개 메시지 형식은 그대로다.
 
-현재 백엔드는 health/ready, 로컬·Google 인증, 쿠키 세션, 본인 대화·메시지 API와 대기열·구독 API를 등록한다. 일반 채팅은 모의 답변을 저장·재조회하며 실제 AI 키를 요구하지 않는다. 가입 접수량·해시 동시 처리 제한은 PR #79에서 구현했다. 회원 화면의 실제 대화·대기열·구독 연결은 #65의 PR #78에 반영됐으며 #19·#54의 독립 통합 검증과 운영 검증은 별도다. #18·#20·#21의 목업 완료 이력은 유지한다. 실행·Swagger 확인은 [온보딩](../01-start/onboarding.md#3-1-swagger로-가입로그인과-모의-대화-확인)을 따른다. 예시 계정·내용·시각은 가짜다.
+현재 백엔드는 health/ready, 로컬·Google 인증, 쿠키 세션, 본인 대화·메시지 API와 대기열·구독 API를 등록한다. 일반 채팅은 모의 답변을 저장·재조회하며 실제 AI 키를 요구하지 않는다. #69의 Google 실패 서버 복귀는 구현·검증했으며 실패 화면 연결과 실제 Google 전체 흐름 확인은 별도다. 가입 접수량·해시 동시 처리 제한은 PR #79에서 구현했다. 회원 화면의 실제 대화·대기열·구독 연결은 #65의 PR #78에 반영됐으며 #19·#54의 독립 통합 검증과 운영 검증은 별도다. #18·#20·#21의 목업 완료 이력은 유지한다. 실행·Swagger 확인은 [온보딩](../01-start/onboarding.md#3-1-swagger로-가입로그인과-모의-대화-확인)을 따른다. 예시 계정·내용·시각은 가짜다.
 
 ## 공통 규칙
 
 이 문서의 **요청·응답 형식**은 현재 백엔드 계약과 후속 화면 연결의 기준이다. **테스트 예시(fixture)**는 실제 계정·토큰 없이 만든 가짜 입력과 예상 결과다. **확인된 사용자 정보(principal)**는 서버가 로그인 자격을 검사해 얻은 사용자 ID다.
 
-- 기본 경로는 기존 앱과 같은 `/api`다. JSON 요청에는 `Content-Type: application/json`, 응답에는 `application/json`을 쓴다.
+- 기본 경로는 기존 앱과 같은 `/api`다. JSON 요청·응답에는 `Content-Type: application/json`을 쓴다. Google의 302 응답은 빈 본문과 Location으로 이동을 지시한다.
 - DB의 `bigint` ID와 이를 참조하는 필드는 JSON **십진 문자열**이다. 화면에서 `Number`로 바꾸지 않는다. 경로와 페이지 기준 ID도 같은 십진 문자열이다.
 - 시각은 UTC ISO 8601 문자열(`2026-01-02T03:04:05Z`)이다. 예시에서 `null`은 값이 아직 없거나 해당 상태에 적용되지 않음을 뜻한다.
 - 보호 경로는 서버가 검증한 principal의 사용자 ID만 신뢰한다. 요청 본문의 `user_id`는 받지 않는다. 비인증은 401, 없는 자원과 다른 사용자 소유 자원은 똑같이 404다.
@@ -63,7 +63,7 @@
 
 정책과 브라우저 절차는 [인증 구현 기준](authentication.md)을 따른다. 인증 경로는 백엔드에 구현되어 있으며, 화면의 세션 복구·제한된 refresh 재시도는 PR #50에 구현됐고 실제 통합 검증은 #19에 남아 있다. 예시 계정·토큰·시각은 가짜 테스트 데이터다.
 
-모든 인증 오류도 위의 `error`/`fields`/`trace_id` 형식을 쓴다. 없는 계정과 틀린 비밀번호는 같은 `401 unauthenticated` 문구다. 로컬 가입·로그인 및 refresh·logout `POST`에는 정확히 허용된 `Origin`(요청을 시작한 화면의 출처)이 필요하다. Google의 top-level 시작·callback `GET`은 state·nonce·PKCE로 검증한다.
+인증의 JSON 오류 응답은 위의 `error`/`fields`/`trace_id` 형식을 쓴다. Google의 처리 가능한 실패는 아래 302 복귀 계약을 사용한다. 없는 계정과 틀린 비밀번호는 같은 `401 unauthenticated` 문구다. 로컬 가입·로그인 및 refresh·logout `POST`에는 정확히 허용된 `Origin`(요청을 시작한 화면의 출처)이 필요하다. Google의 top-level 시작·callback `GET`은 state·nonce·PKCE로 검증한다.
 
 **로컬 계정과 현재 사용자**
 
@@ -79,8 +79,41 @@
 
 **Google 로그인**
 
-- `GET /api/auth/google/start`: top-level 이동으로 시작한다. 선택 `return_to`는 허용 목록의 상대 경로다. 성공은 Google authorization endpoint로 `302`와 트랜잭션 쿠키다. 복귀 경로 오류는 422, 설정·제공자 실패는 503이다.
-- `GET /api/auth/google/callback`: 제공자의 `code`, `state`와 트랜잭션 쿠키를 받는다. 성공은 `302`와 refresh·CSRF 쿠키다. `GOOGLE_FRONTEND_ORIGIN`이 있으면 검증된 설정 Origin + 허용 상대 경로로 이동하고 없으면 기존 상대 경로를 유지한다. callback URL은 바뀌지 않는다. 검증 실패는 401, 제공자·설정 실패는 503이며 실패 시 세션은 없다.
+- `GET /api/auth/google/start`: top-level 이동으로 시작한다. 선택 `return_to`는 현재 `/`만 허용한다. 성공은 Google authorization endpoint로 `302`와 트랜잭션 쿠키다. 잘못된·중복 복귀 경로는 `422 validation_error`이며 기존 트랜잭션을 변경하지 않는다. 설정이 유효한 상태의 제공자·트랜잭션·쿠키 준비 실패는 아래 302 실패 복귀로 처리한다.
+- `GET /api/auth/google/callback`: 제공자의 `code`, `state`, 선택 `error`·`iss`와 트랜잭션 쿠키를 받는다. 성공은 허용 경로로 `302`와 refresh·CSRF 쿠키, 트랜잭션 쿠키 삭제다. 실패는 아래 계약을 사용하며 기존 401 JSON은 반환하지 않는다. callback URL은 바뀌지 않는다.
+
+### Google 실패 복귀 계약
+
+인증과 Google 설정이 유효하면 start·callback의 처리 가능한 실패는 302로 복귀한다.
+`GOOGLE_FRONTEND_ORIGIN`이 있으면 검증된 Origin + `/?google_login_error=<고정 값>`,
+없으면 동일한 상대 Location을 사용한다. 상대 Location은 API Origin에 남으므로 다른 프런트 포트로 이동하려면 설정을 명시한다.
+실패는 고정 `/`만 사용하며 callback의 return_to query나 Origin·Referer·전달 헤더에서 복귀 주소를 추정하지 않는다.
+
+| `google_login_error` | 분류 |
+| --- | --- |
+| `cancelled` | 유효한 트랜잭션에서 code 없이 `error=access_denied` 수신 |
+| `invalid_request` | 중복·모순 callback, 잘못된 issuer, 쿠키·state·code·신원 검증 실패, 알 수 없는 또는 빈 error |
+| `temporarily_unavailable` | 유효 트랜잭션의 `error=server_error`·`temporarily_unavailable`, 제공자 장애·저장·응답 준비 실패 |
+
+error와 code 동시 존재, code·state·error·iss 중복, 잘못된 선택 issuer는 거부한다.
+제공자의 error를 분류하기 전에 트랜잭션 쿠키·state·만료를 확인한다.
+code 교환 단계의 invalid_grant·access_denied와 재사용 code는 invalid_request이며 취소로 추정하지 않는다.
+시작의 허용 목록 밖 URL·프로토콜 상대 URL·query·fragment·인코딩 우회는 기존 422로 거부한다.
+
+실패 302는 본문이 비어 있고 트랜잭션 쿠키만 삭제한다. refresh·CSRF 쿠키를 새로 발급하거나 기존 값을 삭제하지 않는다.
+커밋 후 응답 준비가 실패하면 부분 응답을 버리고 이번 세션만 보상 취소한다. 보상 실패는 서버 로그에 구분해 기록한다.
+실패 복귀 URL에는 고정 실패 값 외에 code·state·토큰·사용자 식별자·trace ID·예외·제공자 오류 설명을 넣지 않는다.
+
+다음 경우에는 redirect 대신 `503 temporarily_unavailable` 공통 JSON과 트랜잭션 쿠키 삭제를 반환하며 Location은 없다.
+
+- 인증 또는 Google 설정을 사용할 수 없어 안전한 복귀 구성을 확보하지 못한 경우
+- 실패 redirect 또는 쿠키 정리 응답 준비가 실패해 새 JSON 응답으로 대체하는 경우
+
+실패 302와 503 모두 `Cache-Control: no-store`, `Pragma: no-cache`, `Referrer-Policy: no-referrer`를 적용한다.
+실패 값은 화면 안내용이며 인증 상태를 증명하지 않는다. 응답 예시·수동 재현·프런트 담당 범위는
+[Google 실패 복귀 연동 안내](../03-development/google-login-failure.md)를 따른다.
+
+### 로컬 계정 입력과 성공 본문
 
 로컬 이메일은 앞뒤 공백 제거, 유효한 형식과 최대 320자이며 로컬 계정에서만 `lower(email)`로 중복 판정한다. 비밀번호는 정규화 없이 Unicode 코드 포인트 12~128자와 UTF-8 1024바이트 이하를 모두 만족해야 한다. 두 값 모두 필수 문자열이다. 가입 중복의 `409` 코드는 `local_email_exists`이며 Google과 이메일이 같아도 중복이 아니다. 미인증 이메일은 소유 증명이 아니다.
 
@@ -525,3 +558,4 @@ stateDiagram-v2
 | --- | --- | --- |
 | 1 | 2026-10-25 | PR #62 이후 단일 API 계약, 구독 복구, 당시 실제 화면 미연동과 문맥 순서 차이를 정리했다. 당시 기준 코드는 `2d50da5`다. |
 | 2 | 2026-10-27 | PR #79의 가입 429·503 코드와 재시도 시간·접수 횟수·거절 응답을 반영했다. PR #78 이후 회원 화면을 미연동으로 읽게 하는 설명도 수정했다. 코드 기준 `1566e8b`, 정책 근거는 #71의 승인 댓글이다. |
+| 3 | 2026-10-27 | #69의 Google start·callback 실패를 302 고정 코드 복귀와 503 JSON 대체 응답으로 갱신했다. 422 경계·쿠키 정리·안전한 복귀와 프런트 인계 조건을 명시했다. 구현 `8921f8a`, 검증 `1cbf709`. |

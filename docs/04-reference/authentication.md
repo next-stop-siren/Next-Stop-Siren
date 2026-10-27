@@ -1,14 +1,14 @@
 # 인증 구현 기준
 
-**Rev 2 · 2026-10-27 (KST)** · 코드 기준: [`1566e8b`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/1566e8ba7af681ebc39bcdbab8339b1c4f32a313)
+**Rev 3 · 2026-10-27 (KST)** · 코드 기준: [`1cbf709`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/1cbf709eeef88f6c592c50bfd13b386d43dc8e5c)
 
-변경 근거: [PR #47](https://github.com/next-stop-siren/Next-Stop-Siren/pull/47) · [PR #48](https://github.com/next-stop-siren/Next-Stop-Siren/pull/48) · [PR #50](https://github.com/next-stop-siren/Next-Stop-Siren/pull/50) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62) · [PR #79](https://github.com/next-stop-siren/Next-Stop-Siren/pull/79). Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
+변경 근거: [PR #47](https://github.com/next-stop-siren/Next-Stop-Siren/pull/47) · [PR #48](https://github.com/next-stop-siren/Next-Stop-Siren/pull/48) · [PR #50](https://github.com/next-stop-siren/Next-Stop-Siren/pull/50) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62) · [PR #79](https://github.com/next-stop-siren/Next-Stop-Siren/pull/79). [#69](https://github.com/next-stop-siren/Next-Stop-Siren/issues/69)의 서버 구현 `8921f8a`와 검증 `1cbf709`를 반영했다. Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
 
 [회원 채팅 목표](chat-policy.md)의 접수·조회·구독·실행 전 취소·재시도·건너뛰기도 검증된 회원과 대화 소유권으로 제한한다. #19는 이 경계와 비공개 화면·구독 격리를 확인한다.
 
 로그아웃 시 화면의 대화·임시 출력·구독을 제거하되 서버 작업은 취소하지 않는다. 기존 access·refresh 유효성과 잔여 access 규칙은 유지한다.
 
-이 문서는 승인된 D1 A·B·C 정책의 팀 구현 기준이다. 앱 JWT는 PyJWT, Google OAuth/OIDC는 Authlib, 비밀번호 해시는 `argon2-cffi`를 선택했다. 세 라이브러리는 현재 잠금 의존성에 포함된다. [기술 구성](../01-start/stack.md)에 현재 상태를 정리했다. 경로별 요청·응답은 [공통 API 형식](api.md), 저장 제약은 [DB 설계](database.md)를 따른다. 로컬·Google 인증, Bearer 현재 사용자, CSRF·refresh·logout 경로와 관련 검사가 구현되어 있다. 화면 인증 API·세션 복구는 PR #50에서 연결됐다. 실제 브라우저 통합·운영 검증과 Google 실패 리다이렉트는 별도다. 운영 Origin·키·Google 자격 증명과 공유 로그인 제한 방식은 배포 전에 정한다.
+이 문서는 승인된 D1 A·B·C 정책의 팀 구현 기준이다. 앱 JWT는 PyJWT, Google OAuth/OIDC는 Authlib, 비밀번호 해시는 `argon2-cffi`를 선택했다. 세 라이브러리는 현재 잠금 의존성에 포함된다. [기술 구성](../01-start/stack.md)에 현재 상태를 정리했다. 경로별 요청·응답은 [공통 API 형식](api.md), 저장 제약은 [DB 설계](database.md)를 따른다. 로컬·Google 인증, Bearer 현재 사용자, CSRF·refresh·logout 경로와 관련 검사가 구현되어 있다. 화면 인증 API·세션 복구는 PR #50에서 연결됐다. Google 실패의 서버 복귀 처리는 #69에서 구현·검증했다. 실패 화면 연결, 실제 Google 전체 흐름, 독립 통합·운영 검증은 별도다. 운영 Origin·키·Google 자격 증명과 공유 로그인 제한 방식은 배포 전에 정한다.
 
 여기서 **확인된 사용자 정보(principal)**는 서버가 로그인 자격을 검사해 얻은 사용자 ID다. **계보(lineage)**는 한 번의 로그인에서 시작해 refresh 토큰을 교체하며 이어진 세션들의 연결이다.
 
@@ -21,7 +21,7 @@
 | 보호 API | 메모리의 access를 `Authorization: Bearer`로 보낸다. 쿠키는 인증 수단이 아니다. |
 | 새로고침 | `/api/auth/csrf`에서 CSRF 값을 받은 뒤 `/api/auth/refresh`를 호출해 새 access를 메모리에 둔다. |
 | 로그아웃 | 현재 refresh 계보와 쿠키만 폐기한다. 이미 발급된 access는 최대 15분 유효하다. |
-| Google | 서버 시작 OIDC → callback에서 refresh·CSRF 쿠키 설정과 상대 경로 이동 → 화면에서 CSRF·refresh로 access 획득. |
+| Google | 서버 시작 OIDC → 성공 시 refresh·CSRF 쿠키와 허용 경로 복귀 → 화면에서 access 획득. 실패는 고정 코드로 복귀하며 설정·응답 준비 불가 시 503 JSON. |
 | 탭 경합 | 낡은 refresh와 짝인 CSRF는 5초 안에 409, 창 밖 재사용은 계보 폐기·401. 새 refresh 쿠키와 낡은 CSRF 헤더는 403이다. |
 
 ## 화면 흐름
@@ -56,17 +56,41 @@
 1. 화면은 서버의 `/api/auth/google/start`로 top-level 이동한다. 서버는 요청과 callback을 연결하는 `state`, ID 토큰을 해당 로그인에 묶는 `nonce`, code 교환을 보호하는 PKCE(S256)를 만든다. 서버는 state·nonce·PKCE verifier를 암호화·무결성 보호된 짧은 수명의 앱 호스트 전용 트랜잭션 쿠키에 담아 설정한다. 그런 다음 브라우저를 Google로 이동시킨다.
 2. `/api/auth/google/callback`은 일회용 code를 교환하고 state·nonce·verifier, JWKS 서명·허용 알고리즘·`iss`·client `aud`·`exp`·`iat`·`nonce`·`email_verified=true`·필수 이메일을 검증한다. 검증된 `(issuer, subject)`로만 사용자를 찾는다.
 3. 성공 시 서버는 refresh·CSRF 쿠키를 발급하고 아래 설정에 따라 복귀한다. callback URL은 API `:8000`이며 host-only 쿠키는 같은 호스트의 포트 사이에서 유지된다.
-4. 화면은 `/api/auth/csrf` → `/api/auth/refresh`로 access를 받아 메모리에 둬야 한다. 화면 세션 복구는 PR #50에 구현됐다. Google 실패의 실제 리다이렉트는 제외됐으며 #19의 인증·소유권 통합 검증은 열려 있다. redirect URL·쿠키에 access를 넣지 않는다.
+4. 화면은 `/api/auth/csrf` → `/api/auth/refresh`로 access를 받아 메모리에 둬야 한다. 화면 세션 복구는 PR #50에 구현됐다. 실패의 서버 리다이렉트는 #69에서 추가했으며 실패 안내·재시도 화면 연결과 #19의 인증·소유권 통합 검증은 남아 있다. redirect URL·쿠키에 access를 넣지 않는다.
 
-| `GOOGLE_FRONTEND_ORIGIN` | callback 성공 후 복귀 |
+| `GOOGLE_FRONTEND_ORIGIN` | 성공 및 실패 복귀 |
 | --- | --- |
-| 검증된 Origin 명시 | 설정 Origin + 허용된 상대 `return_to`(현재 `/`); 로컬 예시 `http://127.0.0.1:5173/` |
+| 검증된 Origin 명시 | 설정 Origin + 성공의 허용 상대 `return_to` 또는 실패의 고정 `/`와 query; 로컬 예시 `http://127.0.0.1:5173/` |
 | 설정 항목 없음 | 기존 상대 경로 유지, API `:8000`에 남음 |
 | 잘못된 값 명시 | Google 경로만 차단, 로컬 인증 유지 |
 
 Origin은 API와 scheme·hostname이 같고 `AUTH_ALLOWED_ORIGINS`에 정확히 포함되어야 한다. 기존 `.env`는 수동 추가 후 API를 재시작한다. Google 시작은 Swagger Execute 대신 브라우저 전체 이동을 사용한다.
 
 트랜잭션 쿠키의 삭제만으로 callback 단일 사용을 보장하지 않는다. 제공자의 code 1회 교환과 state/nonce 검증에 의존한다. 중복 callback 또는 code 교환 실패에는 세션을 발급하지 않는다.
+
+### Google 실패 복귀
+
+서버는 실패 시 `/`에 고정 query `google_login_error`를 붙여 302로 복귀한다.
+유효한 트랜잭션에서 받은 취소는 `cancelled`, 요청·트랜잭션·신원 검증 실패는 `invalid_request`,
+제공자·저장 등 일시 장애는 `temporarily_unavailable`로 분류한다.
+코드별 상세 조건과 422·503 대체 응답은 [API 계약](api.md#google-실패-복귀-계약)을 따른다.
+
+취소와 제공자 callback 오류도 중복·모순 파라미터, 선택 issuer, 쿠키·state·만료를 검사한 뒤 분류한다.
+성공의 state·nonce·PKCE·서명·claim 검증은 유지한다. callback의 return_to와 요청 헤더로 복귀 주소를 정하지 않는다.
+실패 복귀의 code는 안내용이며 URL을 조작해도 인증 성공·강제 로그아웃의 근거가 되지 않는다.
+
+실패 응답은 트랜잭션 쿠키만 삭제하고 기존 refresh·CSRF 쿠키와 다른 로그인 세션을 유지한다.
+커밋 후 응답 준비가 실패하면 부분 쿠키 응답을 폐기하고 이번 세션만 보상 취소한다.
+보상 취소가 실패한 경우에는 안전한 로그를 남기며 세션 잔존 없음이나 취소 성공을 주장하지 않는다.
+인증 또는 Google 설정이 없거나 redirect·쿠키 정리 응답을 준비하지 못하면 503 JSON으로 대체한다.
+
+실패 응답은 no-store·no-cache·no-referrer를 적용한다. 화면 복귀 URL·안내·앱 로그에 code·토큰·내부 예외 원문을 넣지 않으며,
+서버 Uvicorn·HTTPX 로그에서는 start와 callback의 query를 제거한다. 배포 프록시 로그는 별도 확인한다.
+서버 trace ID는 로그와 JSON 대체 응답에만 두고 실패 복귀 query에 넣지 않는다.
+
+화면의 실패 안내·다시 로그인·URL 값 소비와 접근성 처리는 프런트 담당 범위다.
+기존 유효 세션이 남을 수 있으므로 화면은 세션 복구 결과와 실패 안내를 구분해야 한다.
+[프런트 연동과 수동 확인](../03-development/google-login-failure.md)에 재현 방법과 인계 조건을 정리했다.
 
 ## 보안 경계와 구현 참고
 
@@ -137,7 +161,7 @@ Argon2 강도와 입력 규칙, 사용자·최초 세션의 저장 원자성 및
 - [ ] 가입 접수량·실제 해시 동시 상한, 거절 응답과 재시도 시간, 503 거절의 횟수 미소모, 실패·연결 종료 뒤 자리 반환을 검증한다.
 - [ ] JWT 종류·서명·claim·만료 실패, digest 불일치, 절대 만료 상속과 쿠키 속성을 검증한다.
 - [ ] 동시 회전 승자 하나, 5초 경합, 창 밖 재사용 폐기, 낡은 CSRF 403, 두 번 제한한 화면 재시도, logout 잔여 access를 검증한다.
-- [ ] Google callback의 검증 실패·중복·상대 경로 제한과 callback 뒤 access 획득을 검증한다.
+- [ ] Google callback의 검증 실패·중복·상대 경로 제한과 callback 뒤 access 획득, 실패 안내·재로그인을 실제 화면과 Google에서 확인한다. 서버 대체 제공자·DB 검증과 구분한다.
 - [ ] 배포 전 정확한 프론트/API Origin과 동일 사이트 여부, HTTPS 종료, issuer/audience·키 주입/교체, Google client/callback을 확정한다.
 - [ ] 다중 인스턴스 로그인 실패 제한의 공유 원자 카운터 또는 프록시 방식을 결정한다. 그 전에는 다중 인스턴스 실제 로그인을 열지 않는다.
 
@@ -149,3 +173,4 @@ Argon2 강도와 입력 규칙, 사용자·최초 세션의 저장 원자성 및
 | --- | --- | --- |
 | 1 | 2026-10-25 | 인증·세션 구현과 화면 연결, Google 실패·운영 검증의 경계를 갱신했다. 당시 기준 코드는 `2d50da5`다. |
 | 2 | 2026-10-27 | #71의 승인된 가입 접수·해시 동시 처리 제한, 조정 가능한 설정, 자리 반환과 운영 경계를 PR #79 구현에 맞췄다. 가입 해시 전 제한을 미구현으로 읽게 하는 설명을 수정했다. 코드 기준 `1566e8b`. |
+| 3 | 2026-10-27 | #69의 302 실패 복귀·쿠키 정리·기존 세션 보존과 503 대체 응답을 반영했다. 실패 화면·실제 Google·독립 통합 검증은 별도로 유지한다. 구현 `8921f8a`, 검증 `1cbf709`. |
