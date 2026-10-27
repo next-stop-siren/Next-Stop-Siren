@@ -4,7 +4,7 @@ PR #57의 한도, PR #59의 영속 대기열, PR #62의 API·실행기·구독 �
 
 | 영역 | 현재 저장소 | 남은 연결·검증 |
 | --- | --- | --- |
-| 화면 | React·TypeScript·Vite, 인증 API·기본 HTTP 채팅·대기열 목업 | 실제 MemberChat 대기열·SSE·작업 동작 연결 |
+| 화면 | React·TypeScript·Vite, 인증 API·실제 MemberChat 대기열·SSE·작업 연결(PR #78), 인증 모달 정리(PR #80) | Google 실패 화면·실제 AI 화면 확인, #19·#54 최종 통합 |
 | 서버 | FastAPI 라우터·서비스·저장소, health/ready·인증·대화·대기열·구독 API | 화면과의 통합·배포 검증 |
 | 저장 | PostgreSQL, SQLAlchemy 2.0.44 동기 Session, 등록 ORM 모델 10개 | 기존 스키마 변경 절차·운영 백업 |
 | 데이터 경계 | 별도 Pydantic 요청·응답과 ORM 모델 | 구현 변경마다 계약·소유권 검사 유지 |
@@ -13,6 +13,8 @@ PR #57의 한도, PR #59의 영속 대기열, PR #62의 API·실행기·구독 �
 | 검사·설치 | npm·uv 잠금, pytest·Ruff·mypy·Vitest·Playwright·Biome | 실제 브라우저 가입→채팅 E2E, Windows 실행 |
 
 `backend/pyproject.toml`·`uv.lock`에는 PyJWT 2.15.1, Authlib 1.9.1, argon2-cffi 25.1.0과 SQLAlchemy 2.0.44가 고정되어 있다. Python 3.13.15/psycopg 3.2.10을 사용한다. GPT 어댑터는 표준 라이브러리 `http.client`를 사용하며 일반 모의 채팅에는 실제 AI 키가 필요 없다.
+
+PR #79의 가입 접수·해시 동시 처리 보호와 API·인증 Rev 2 문서는 병합됐다. #71은 남은 독립 확인·인계를 기다린다. #69 실패 서버 복귀는 PR #81 검토 중이며 화면·실제 Google 확인은 별도다.
 
 ## 개발과 초기 DB
 

@@ -2,18 +2,20 @@
 
 Next-Stop-Siren은 교통법 질문을 위한 챗봇 프로젝트다. 일반 앱은 무료 모의 답변을 사용한다. 요청·응답의 단일 계약은 [API 기준](docs/04-reference/api.md), 정책의 의도와 구현 경계는 [회원 채팅 정책](docs/04-reference/chat-policy.md)에 있다.
 
-## 구현 상태 (2026-10-25)
+## 구현 상태 (2026-10-27)
 
-기준 코드는 [main 병합 커밋 `2d50da5`](https://github.com/next-stop-siren/Next-Stop-Siren/commit/2d50da5976548db7b85c5b0b931b7c43e622fa15)이다. 현재 상태와 요구사항을 구분한다.
+기준 코드는 [main 병합 커밋 `c3f508d`](https://github.com/next-stop-siren/Next-Stop-Siren/commit/c3f508d7ab14b9f2a6b95e86e3698c0099ecd5a7)이다. 현재 상태와 요구사항을 구분한다.
 
 | 영역 | 구현·병합된 범위 | 남은 연결·검증 |
 | --- | --- | --- |
-| 서버 | 인증·세션·소유권, 대기열 접수·예약·실행·복구·재시도·건너뛰기·구독 ([PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62)) | 실제 화면 연결, 결함 수정과 #19·#54 통합 검증 |
+| 서버 | 인증·세션·소유권, 대기열 접수·예약·실행·복구·재시도·건너뛰기·구독 ([PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62)) | 문맥 결함 수정, 실제 AI 연결과 #19·#54 통합 검증 |
 | 화면 | 인증 API 연결 ([PR #50](https://github.com/next-stop-siren/Next-Stop-Siren/pull/50)), 대기열·구독·재시도 목업 (PR #58·#60·#61), 회원 채팅의 실제 `202` 접수·구독·재시도·건너뛰기·취소·한도 표시와 사이드바 대화 목록 연결 ([#65](https://github.com/next-stop-siren/Next-Stop-Siren/issues/65)) | #19·#54 독립 통합 검증, 실제 AI `stream` 답변의 화면 확인 |
 | 저장 | 인증·대화 5개, 한도 2개, 대기열 3개로 총 10개 ORM 모델 등록 | 기존 DB의 명시적 스키마 변경과 운영 데이터 백업·복원 검증 |
 | AI·배포 | 무료 모의 제공자, 실제 AI의 격리 `complete` 어댑터와 개발·테스트 DB Compose | 실제 어댑터의 `stream` 연결, 운영 설정·배포·전체 브라우저 검증 |
 
 #18·#20·#21은 목업 범위로 종료됐다. 실제 회원 채팅 연결은 [#65](https://github.com/next-stop-siren/Next-Stop-Siren/issues/65)에서 구현했고, 모의 제공자로 실제 API·DB·브라우저 자체검사를 마쳤다. [2차 마일스톤](https://github.com/next-stop-siren/Next-Stop-Siren/milestone/2)에 구현·운영 작업 12개를 등록했으며, #19·#54의 최종 통합검증은 관련 기능과 자체검사 뒤에 진행한다. Owner `xifoxy-ru`가 #73·#76을 맡고 #74·#75의 운영 역할을 함께 담당한다. 실제 진행 방법은 [담당별 우선순서와 병렬 진행](docs/02-team/development-flow.md#담당별-우선순서와-병렬-진행)을 따른다. #76의 독립 확인은 다른 팀원이 수행한다. 문서 대조는 앱 실행·실제 Google 실패 리다이렉트·AI 호출·운영 검증을 대신하지 않는다.
+
+[PR #78](https://github.com/next-stop-siren/Next-Stop-Siren/pull/78)과 [PR #80](https://github.com/next-stop-siren/Next-Stop-Siren/pull/80)이 병합돼 #65 회원 채팅 연결과 #67 인증 모달은 종료됐다. [PR #79](https://github.com/next-stop-siren/Next-Stop-Siren/pull/79)의 가입 보호도 병합됐지만 #71은 남은 독립 확인·인계 완료 전까지 열어 둔다. #69의 Google 실패 서버 복귀는 [PR #81](https://github.com/next-stop-siren/Next-Stop-Siren/pull/81)에서 검토 중이며 실패 화면 연결은 남았다. 열린 PR #63의 부분 QA를 #19·#54 최종 완료로 보지 않는다.
 
 제품 범위는 [서비스 범위](docs/01-start/service-scope.md), 실행은 [온보딩](docs/01-start/onboarding.md), 담당별 다음 작업은 [팀 인계](docs/02-team/team-handoff.md), 검사 경계는 [품질 지침](docs/03-development/quality.md)을 따른다.
 
