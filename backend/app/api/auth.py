@@ -24,8 +24,9 @@ from app.observability import (
 )
 from app.schemas.auth import LoginRequest, LoginResponse, RegisterRequest, RegisterResponse
 from app.schemas.errors import ErrorResponse
-from app.security.settings import AuthSettings
+from app.security.settings import AuthSettings, RegistrationLimitSettings
 from app.security.login_limits import LoginFailureLimiter
+from app.security.registration_limits import RegistrationBusy, RegistrationLimiter, RegistrationRateLimited
 from app.security.session_values import verify_csrf_token
 from app.security.tokens import TokenVerifyError, VerifiedToken, verify_access, verify_refresh_token
 from app.services.login import (
@@ -55,6 +56,22 @@ def request_login_limiter(request: Request) -> LoginFailureLimiter:
     """요청마다 새 카운터를 만들지 않고 앱에 저장된 제한 모듈을 사용한다."""
     limiter = getattr(request.app.state, "login_failure_limiter", None)
     if not isinstance(limiter, LoginFailureLimiter):
+        raise ApiError("temporarily_unavailable")
+    return limiter
+
+
+def request_registration_limit_settings(request: Request) -> RegistrationLimitSettings:
+    """잘못된 가입 제한 설정은 가입만 차단하며 기존 로그인 설정과 분리한다."""
+    settings = getattr(request.app.state, "registration_limit_settings", None)
+    if not isinstance(settings, RegistrationLimitSettings):
+        raise ApiError("temporarily_unavailable")
+    return settings
+
+
+def request_registration_limiter(request: Request) -> RegistrationLimiter:
+    """앱에서 공유하는 가입 제한 모듈이 없으면 가입을 거부한다."""
+    limiter = getattr(request.app.state, "registration_limiter", None)
+    if not isinstance(limiter, RegistrationLimiter):
         raise ApiError("temporarily_unavailable")
     return limiter
 
@@ -183,15 +200,30 @@ def login(
     "/register",
     status_code=201,
     response_model=RegisterResponse,
-    dependencies=[Depends(require_allowed_origin)],
-    responses={code: {"model": ErrorResponse} for code in (403, 409, 422, 503)},
+    dependencies=[Depends(require_allowed_origin), Depends(request_registration_limit_settings)],
+    responses={code: {"model": ErrorResponse} for code in (403, 409, 422, 429, 503)},
 )
 def register(
     body: RegisterRequest,
     request: Request,
     response: Response,
+    limiter: Annotated[RegistrationLimiter, Depends(request_registration_limiter)],
     session: Annotated[Session, Depends(registration_session)],
     settings: Annotated[AuthSettings, Depends(request_auth_settings)],
+) -> RegisterResponse:
+    """동기 해시부터 저장·쿠키 또는 보상 종료까지 가입 처리 자리를 유지한다."""
+    try:
+        # 동기 작업과 같은 스레드에서 자리를 소유한다. 연결 종료로 먼저 반환하지 않는다.
+        with limiter.attempt():
+            return _complete_registration(body, request, response, session, settings)
+    except RegistrationRateLimited as exc:
+        raise ApiError("registration_rate_limited", retry_after=exc.retry_after) from None
+    except RegistrationBusy as exc:
+        raise ApiError("registration_busy", retry_after=exc.retry_after) from None
+
+
+def _complete_registration(
+    body: RegisterRequest, request: Request, response: Response, session: Session, settings: AuthSettings
 ) -> RegisterResponse:
     """저장 커밋이 성공한 뒤에만 토큰과 쿠키를 반환한다."""
     try:

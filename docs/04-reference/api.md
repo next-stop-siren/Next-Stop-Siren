@@ -1,12 +1,12 @@
 # API 계약
 
-**Rev 1 · 2026-10-25 (KST)** · 코드 기준: [`2d50da5`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/2d50da5976548db7b85c5b0b931b7c43e622fa15)
+**Rev 2 · 2026-10-27 (KST)** · 코드 기준: [`1566e8b`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/1566e8ba7af681ebc39bcdbab8339b1c4f32a313)
 
-변경 근거: [PR #50](https://github.com/next-stop-siren/Next-Stop-Siren/pull/50) · [PR #56](https://github.com/next-stop-siren/Next-Stop-Siren/pull/56) · [PR #57](https://github.com/next-stop-siren/Next-Stop-Siren/pull/57) · [PR #59](https://github.com/next-stop-siren/Next-Stop-Siren/pull/59) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62). Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
+변경 근거: [PR #50](https://github.com/next-stop-siren/Next-Stop-Siren/pull/50) · [PR #56](https://github.com/next-stop-siren/Next-Stop-Siren/pull/56) · [PR #57](https://github.com/next-stop-siren/Next-Stop-Siren/pull/57) · [PR #59](https://github.com/next-stop-siren/Next-Stop-Siren/pull/59) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62) · [PR #78](https://github.com/next-stop-siren/Next-Stop-Siren/pull/78) · [PR #79](https://github.com/next-stop-siren/Next-Stop-Siren/pull/79). Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
 
 이 문서는 **현재 구현 계약**이다. #53부터 질문·재시도는 [회원 채팅 정책](chat-policy.md)의 대기열로 접수하고, 결과는 회원 단위 구독과 작업 조회로 받는다([회원 채팅 대기열](#회원-채팅-대기열-53)). 이전의 동기 생성(`201`), `409 conversation_busy`, `502`·`504`, `/messages/stream`, D4 재시도와 60초 `pending` 회복은 더 이상 쓰지 않는다. 네 메시지 상태와 공개 메시지 형식은 그대로다.
 
-현재 백엔드는 health/ready, 로컬·Google 인증, 쿠키 세션, 본인 대화·메시지 API와 대기열·구독 API를 등록한다. 일반 채팅은 모의 답변을 저장·재조회하며 실제 AI 키를 요구하지 않는다. 인증 화면과 기본 HTTP 채팅은 있지만 실제 MemberChat 대기열·구독 연동은 남았다. #18·#20·#21은 목업 범위로 종료됐으며 실제 연결 후속 이슈는 등록이 필요하다. 실행·Swagger 확인은 [온보딩](../01-start/onboarding.md#3-1-swagger로-가입로그인과-모의-대화-확인)을 따른다. 예시 계정·내용·시각은 가짜다.
+현재 백엔드는 health/ready, 로컬·Google 인증, 쿠키 세션, 본인 대화·메시지 API와 대기열·구독 API를 등록한다. 일반 채팅은 모의 답변을 저장·재조회하며 실제 AI 키를 요구하지 않는다. 가입 접수량·해시 동시 처리 제한은 PR #79에서 구현했다. 회원 화면의 실제 대화·대기열·구독 연결은 #65의 PR #78에 반영됐으며 #19·#54의 독립 통합 검증과 운영 검증은 별도다. #18·#20·#21의 목업 완료 이력은 유지한다. 실행·Swagger 확인은 [온보딩](../01-start/onboarding.md#3-1-swagger로-가입로그인과-모의-대화-확인)을 따른다. 예시 계정·내용·시각은 가짜다.
 
 ## 공통 규칙
 
@@ -54,8 +54,10 @@
 | 409 | `local_email_exists` | 로컬 가입 이메일이 이미 존재함 |
 | 422 | `validation_error` | 경로·본문·페이지 입력 오류 |
 | 429 | `rate_limited` | 로컬 로그인 실패 제한 초과; `Retry-After` 포함 |
+| 429 | `registration_rate_limited` | 서버 전체 가입 접수량 초과; `Retry-After`는 가장 오래된 접수가 시간창을 벗어날 때까지 남은 초를 올림한 정수, 최소 1초 |
 | 429 | `attempt_too_soon`, `quota_exceeded` | 채팅 접수 간격·한도; `Retry-After` 포함 |
-| 503 | `temporarily_unavailable` | 저장 전 서비스·DB 실패 |
+| 503 | `registration_busy` | 가입 처리 자리 부족; `Retry-After`는 설정된 재시도 권고 초, 기본 5초 |
+| 503 | `temporarily_unavailable` | 서비스·DB·인증 설정·쿠키 처리 실패 등; 가입 처리 자리 부족과 구분 |
 
 ## 인증 요청·응답
 
@@ -65,7 +67,7 @@
 
 **로컬 계정과 현재 사용자**
 
-- `POST /api/auth/register`: JSON `email`, `password`와 `Origin`을 보낸다. 성공은 `201`, 공개 `user`, 메모리용 `access_token`, `expires_in: 900`, 본문의 `csrf_token`, refresh·CSRF `Set-Cookie`다. 실패는 입력 422, 로컬 이메일 중복 409, Origin 403이다.
+- `POST /api/auth/register`: JSON `email`, `password`와 `Origin`을 보낸다. 성공은 `201`, 공개 `user`, 메모리용 `access_token`, `expires_in: 900`, 본문의 `csrf_token`, refresh·CSRF `Set-Cookie`다. 실패는 입력 422, 로컬 이메일 중복 409, Origin 403, 접수량 초과 `429 registration_rate_limited`, 처리 자리 부족 `503 registration_busy`, 내부 처리·설정 실패 `503 temporarily_unavailable`이다. 가입 제한 응답은 [가입 제한](#가입-제한)을 따른다.
 - `POST /api/auth/login`: 가입과 같은 JSON·`Origin`을 보낸다. 성공은 `200`과 같은 인증 본문·쿠키다. 실패는 동일한 로그인 실패 401, 실패 제한 429, Origin 403이다.
 - `GET /api/me`: `Authorization: Bearer <access>`를 보낸다. 성공은 `200`과 공개 `user`, access 검증 실패는 401이다.
 
@@ -113,6 +115,37 @@
 
 개발 인증은 API 주소 `http://127.0.0.1:8000`을 사용하고 화면 `http://127.0.0.1:5173`과 Swagger UI `http://127.0.0.1:8000`을 `AUTH_ALLOWED_ORIGINS`에 명시한다. `localhost`는 제외하며 Origin에는 `/docs` 경로를 넣지 않는다. 개발용 HTTP `127.0.0.1`에서만 `Secure=false`를 허용하고 CORS credentials는 허용 목록과 정확히 일치하는 Origin에만 허용한다.
 
+### 가입 제한
+
+`POST /api/auth/register`는 Origin·입력 검사 후 해시 시작 전에 서버 전체 접수량과 처리 자리를 함께 확인한다.
+승인 기본값은 최근 600초에 10건, 가입 전체 처리 동시 1건이며 대기열은 없다.
+설정과 운영 전제는 [인증 기준의 가입 접수와 해시 제한](authentication.md#가입-접수와-해시-제한)을 따른다.
+
+| 거절 조건 | 상태와 `error.code` | `Retry-After`와 안내 |
+| --- | --- | --- |
+| 접수량 상한 도달 | `429 registration_rate_limited` | 가장 오래된 접수 시각 + 시간창 - 현재 경과 시간을 올림한 초, 최소 1초. 기본 시간창에서 1~600초 |
+| 처리 자리 상한 도달 | `503 registration_busy` | `AUTH_REGISTER_BUSY_RETRY_SECONDS`, 기본 5초 |
+
+두 조건에 모두 걸리면 접수량 초과를 우선한다. 거절된 요청은 해시·가입 저장을 시작하지 않고 접수 횟수에도 포함하지 않는다.
+접수 후 중복 이메일·해시·저장·쿠키 실패는 접수 횟수에 유지한다. 내부 실패의 `503 temporarily_unavailable`에는 가입 제한의 재시도 헤더를 붙이지 않는다.
+
+두 제한 응답은 공통 오류 본문을 사용하고 `message`에도 헤더와 같은 재시도 초를 표시한다.
+`Set-Cookie`·토큰 없이 `Cache-Control: no-store`, `Pragma: no-cache`를 반환한다.
+`Retry-After`는 CORS `Access-Control-Expose-Headers`에 포함된다.
+화면은 안내 시간 뒤 사용자가 다시 제출하게 하며 자동 재전송하지 않는다. 재시도 시점에 접수량과 처리 자리를 다시 판정한다.
+
+기본 처리 자리 부족 응답 예시:
+
+```http
+HTTP/1.1 503 Service Unavailable
+Content-Type: application/json
+Retry-After: 5
+Cache-Control: no-store
+Pragma: no-cache
+
+{"error":{"code":"registration_busy","message":"다른 가입 요청을 처리하고 있습니다. 5초 후 다시 시도해 주세요.","fields":{},"trace_id":"trace-demo-register-001"}}
+```
+
 ### 현재 사용자 — `GET /api/me`
 
 본문과 쿼리는 없다. 검증된 access principal의 공개 사용자만 반환한다. `200 OK`:
@@ -153,7 +186,7 @@
 3. 낡은 refresh와 짝 CSRF가 5초 안에 다시 오면 `409 refresh_race`, `Retry-After: 1`, `Set-Cookie` 없음이다. 새 refresh 쿠키에 낡은 CSRF 헤더가 붙으면 `403 csrf_failed`이며 재사용 폐기로 취급하지 않는다. 화면은 잠시 기다려 `/csrf`를 다시 읽고 refresh를 한 번만 재시도한다. 실패하면 재로그인을 안내한다.
 4. `POST /api/auth/logout` 성공은 `204 No Content`와 두 쿠키 만료다. 화면 메모리의 access·CSRF를 지운다. 다른 로그인 계보는 유지되고 이미 발급된 access는 최대 15분 유효할 수 있다.
 
-일반 인증 오류 예시 (`401`; 403·409·429도 같은 JSON 형식에 각각 위 코드를 쓴다):
+일반 인증 오류 예시 (`401`; 403·409·429·503도 같은 JSON 형식에 각각 위 코드를 쓴다):
 
 ```json
 {
@@ -484,10 +517,11 @@ stateDiagram-v2
 - [ ] 실패는 같은 대화의 뒤 질문만 정지하고, 재시도 성공이나 건너뛰기만 재개한다. 뒤 질문이 시작되면 앞 질문 재시도는 `409 retry_not_latest`다.
 - [ ] `completed` 이벤트는 저장·정산 커밋 뒤에만 오고, 작업마다 차감 또는 예약 해제는 한 번이다. 연결 끊김·로그아웃은 작업을 멈추지 않고 재연결 `snapshot`이 저장 결과를 준다.
 
-백엔드 라우트·ORM 모델·인증/채팅 검사는 존재하지만 실제 화면 가입→채팅 E2E나 운영 준비 완료를 뜻하지 않는다. 실제 GPT 어댑터·격리 시험 경계는 [S11 기준](ai.md)을 따른다. 대기열 실행기는 제공자의 `stream`을 쓰는데 실제 Codyssey 어댑터에는 아직 `complete`만 있으므로, 공개 서비스는 모의 제공자를 유지하고 실제 AI 연결은 별도 작업에서 `stream`을 더해 검증한다. 실제 MemberChat 연결 후속 이슈 등록과 #19·#54 통합 검증이 남았다. 기존 #20·#21의 목업 완료 이력은 유지한다.
+백엔드 라우트·ORM 모델·인증/채팅 검사와 PR #78의 회원 화면 연결이 있으며, 가입 제한은 PR #79에서 구현했다. 이것이 #19·#54의 독립 통합 검증이나 운영 준비 완료를 뜻하지는 않는다. 실제 GPT 어댑터·격리 시험 경계는 [S11 기준](ai.md)을 따른다. 대기열 실행기는 제공자의 `stream`을 쓰는데 실제 Codyssey 어댑터에는 아직 `complete`만 있으므로, 공개 서비스는 모의 제공자를 유지하고 실제 AI 연결은 별도 작업에서 `stream`을 더해 검증한다. 기존 #20·#21의 목업 완료 이력은 유지한다.
 
 ## 변경 이력
 
 | Rev | 일자 (KST) | 변경과 근거 |
 | --- | --- | --- |
-| 1 | 2026-10-25 | PR #62 이후 단일 API 계약, 구독 복구, 실제 화면 미연동과 문맥 순서 차이를 정리했다. 기준 코드는 위 고정 SHA이며 근거 PR은 문서 상단에 있다. |
+| 1 | 2026-10-25 | PR #62 이후 단일 API 계약, 구독 복구, 당시 실제 화면 미연동과 문맥 순서 차이를 정리했다. 당시 기준 코드는 `2d50da5`다. |
+| 2 | 2026-10-27 | PR #79의 가입 429·503 코드와 재시도 시간·접수 횟수·거절 응답을 반영했다. PR #78 이후 회원 화면을 미연동으로 읽게 하는 설명도 수정했다. 코드 기준 `1566e8b`, 정책 근거는 #71의 승인 댓글이다. |
