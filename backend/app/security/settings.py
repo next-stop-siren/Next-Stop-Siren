@@ -156,6 +156,56 @@ def get_auth_settings() -> AuthSettings:
     return AuthSettings.from_env()
 
 
+def _positive_integer(environ: Mapping[str, str], name: str, default: int) -> int:
+    """생략한 값만 기본값을 쓰며, 명시한 빈 값·0·잘못된 정수는 거부한다."""
+    if name not in environ:
+        return default
+    value = environ[name]
+    try:
+        if not re.fullmatch(r"[0-9]+", value):
+            raise ValueError
+        parsed = int(value)
+        if parsed < 1:
+            raise ValueError
+    except ValueError:
+        raise AuthSettingsError(f"{name}: 양의 정수를 지정해 주세요.") from None
+    return parsed
+
+
+@dataclass(frozen=True, slots=True)
+class RegistrationLimitSettings:
+    """단일 worker 파일럿의 가입 제한 설정. 기존 로그인 설정과 독립적으로 검증한다."""
+
+    limit: int = 10
+    window_seconds: int = 600
+    max_concurrent: int = 1
+    busy_retry_seconds: int = 5
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("AUTH_REGISTER_LIMIT", self.limit),
+            ("AUTH_REGISTER_WINDOW_SECONDS", self.window_seconds),
+            ("AUTH_REGISTER_MAX_CONCURRENT", self.max_concurrent),
+            ("AUTH_REGISTER_BUSY_RETRY_SECONDS", self.busy_retry_seconds),
+        ):
+            if type(value) is not int or value < 1:
+                raise AuthSettingsError(f"{name}: 양의 정수를 지정해 주세요.")
+
+    @classmethod
+    def from_env(cls, environ: Mapping[str, str] | None = None) -> "RegistrationLimitSettings":
+        """앱 생성 때 한 번 읽으며, 설정 변경은 앱을 재생성한 뒤 적용한다."""
+        values = os.environ if environ is None else environ
+        defaults = cls()
+        return cls(
+            limit=_positive_integer(values, "AUTH_REGISTER_LIMIT", defaults.limit),
+            window_seconds=_positive_integer(values, "AUTH_REGISTER_WINDOW_SECONDS", defaults.window_seconds),
+            max_concurrent=_positive_integer(values, "AUTH_REGISTER_MAX_CONCURRENT", defaults.max_concurrent),
+            busy_retry_seconds=_positive_integer(
+                values, "AUTH_REGISTER_BUSY_RETRY_SECONDS", defaults.busy_retry_seconds
+            ),
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class GoogleSettings:
     """Google 로그인 전용 설정. 로컬 인증 설정을 읽을 때는 필요하지 않다.
