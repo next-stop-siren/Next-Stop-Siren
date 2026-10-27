@@ -3,7 +3,7 @@
  * 기준: docs/04-reference/api.md
  *
  * 대화·메시지 데이터만 정의한다.
- * 회원 대기열 정책에만 존재하는 값은 여기에 넣지 않는다.
+ * 질문 접수 응답처럼 대기열 작업(`job`)·한도(`limits`)가 함께 오는 형식은 chatQueueTypes.ts에 있다.
  */
 
 export interface ApiConversation {
@@ -47,11 +47,6 @@ export interface ApiMessageListResponse {
 export interface ApiSendMessageRequest {
   content: string
   request_key: string
-}
-
-export interface ApiSendMessageResponse {
-  question: ApiMessage
-  answer: ApiMessage
 }
 
 export interface ApiRetryMessageRequest {

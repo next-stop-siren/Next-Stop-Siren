@@ -17,6 +17,7 @@ function makeCommands(overrides: Partial<ChatJobCommands> = {}): ChatJobCommands
     retry: vi.fn(async () => undefined),
     skip: vi.fn(async () => undefined),
     cancel: vi.fn(async () => undefined),
+    hasUnconfirmedRetry: () => false,
     ...overrides,
   }
 }
@@ -132,6 +133,23 @@ test.each([
 
   // 건너뛰기는 한도와 무관하다.
   expect((screen.getByRole('button', { name: '건너뛰기' }) as HTMLButtonElement).disabled).toBe(false)
+})
+
+test.each([
+  ['한도 소진', makeLimits({ daily: { ...makeLimits().daily, remaining: 0 } })],
+  ['10초 간격', makeLimits({ next_attempt_at: new Date(NOW + 4_000).toISOString() })],
+])('접수를 확인하지 못한 재시도는 %s이어도 같은 키로 다시 확인할 수 있다', (_name, limits) => {
+  const commands = renderActions(failed(['retry', 'skip']), {
+    limits,
+    commands: makeCommands({ hasUnconfirmedRetry: (jobId) => jobId === '7001' }),
+  })
+
+  const retry = screen.getByRole('button', { name: '재시도' }) as HTMLButtonElement
+  expect(retry.disabled).toBe(false)
+  expect(retry.getAttribute('aria-describedby')).toBeNull()
+
+  fireEvent.click(retry)
+  expect(commands.retry).toHaveBeenCalledWith('7001')
 })
 
 test('새 질문 대기가 가득 차도 재시도 버튼은 막지 않는다', () => {

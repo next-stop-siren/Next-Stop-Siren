@@ -56,6 +56,25 @@ test('접수가 확인되면 키를 버리고, 다음 재시도는 새 키를 �
   expect(second?.[1]).not.toBe(first?.[1])
 })
 
+test('접수를 확인하지 못한 재시도가 있는 동안만 hasUnconfirmedRetry가 참이다', async () => {
+  const api = makeApi({
+    retry: vi.fn<ChatJobCommandApi['retry']>().mockRejectedValueOnce(new Error('network')).mockResolvedValue(undefined),
+  })
+  const { result } = renderHook(() => useChatJobCommands('user-1', api))
+  expect(result.current.hasUnconfirmedRetry('7001')).toBe(false)
+
+  await act(async () => {
+    await result.current.retry('7001').catch(() => undefined)
+  })
+  expect(result.current.hasUnconfirmedRetry('7001')).toBe(true)
+  expect(result.current.hasUnconfirmedRetry('7002')).toBe(false)
+
+  await act(async () => {
+    await result.current.retry('7001')
+  })
+  expect(result.current.hasUnconfirmedRetry('7001')).toBe(false)
+})
+
 test('다른 작업의 재시도는 다른 키를 쓴다', async () => {
   const api = makeApi({ retry: vi.fn<ChatJobCommandApi['retry']>().mockRejectedValue(new Error('network')) })
   const { result } = renderHook(() => useChatJobCommands('user-1', api))

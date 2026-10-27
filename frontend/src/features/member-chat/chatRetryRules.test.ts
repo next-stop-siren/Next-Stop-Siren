@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'vitest'
-import { activeRetryFor, formatExpiresIn, formatResetTime, retryBlockReason } from './chatRetryRules'
+import {
+  activeRetryFor,
+  formatExpiresIn,
+  formatResetTime,
+  questionBlockReason,
+  retryBlockReason,
+} from './chatRetryRules'
 import { makeEnvelope, makeLimits } from './chatQueueBuilders'
 import type { ChatJobEnvelope } from './chatQueueTypes'
 
@@ -80,6 +86,45 @@ describe('retryBlockReason', () => {
       '질문 한도',
     )
     expect(retryBlockReason(limitsWith({ retriesWaiting: 1, nextAttemptAt }), NOW)).toBe('다른 재시도가 대기 중입니다.')
+  })
+})
+
+describe('questionBlockReason', () => {
+  test('한도 정보가 없거나 제한에 걸리지 않으면 막지 않는다', () => {
+    expect(questionBlockReason(null, NOW)).toBeNull()
+    expect(questionBlockReason(limitsWith({}), NOW)).toBeNull()
+  })
+
+  test('한도를 다 썼으면 초기화 시각을 알려 준다', () => {
+    expect(questionBlockReason(limitsWith({ sixHourRemaining: 0 }), NOW)).toBe(
+      '질문 한도를 모두 썼습니다. 다음 초기화: 오후 6:00',
+    )
+  })
+
+  test('새 질문 대기가 가득 차면 막는다', () => {
+    expect(questionBlockReason(limitsWith({ questionsWaiting: 3 }), NOW)).toBe(
+      '대기 중인 질문이 3개입니다. 답변 뒤에 보내 주세요.',
+    )
+  })
+
+  test('재시도 대기가 가득 차도 새 질문은 막지 않는다', () => {
+    expect(questionBlockReason(limitsWith({ retriesWaiting: 1 }), NOW)).toBeNull()
+  })
+
+  test('10초 간격이 남았으면 남은 초를 알려 주고, 지나면 막지 않는다', () => {
+    expect(questionBlockReason(limitsWith({ nextAttemptAt: new Date(NOW + 9_100).toISOString() }), NOW)).toBe(
+      '10초 뒤에 보낼 수 있습니다',
+    )
+    expect(questionBlockReason(limitsWith({ nextAttemptAt: new Date(NOW - 1).toISOString() }), NOW)).toBeNull()
+  })
+
+  test('여러 조건이 겹치면 한도, 새 질문 대기, 간격 순서로 이유를 보여 준다', () => {
+    const nextAttemptAt = new Date(NOW + 5_000).toISOString()
+
+    expect(questionBlockReason(limitsWith({ dailyRemaining: 0, questionsWaiting: 3, nextAttemptAt }), NOW)).toContain(
+      '질문 한도',
+    )
+    expect(questionBlockReason(limitsWith({ questionsWaiting: 3, nextAttemptAt }), NOW)).toContain('대기 중인 질문')
   })
 })
 

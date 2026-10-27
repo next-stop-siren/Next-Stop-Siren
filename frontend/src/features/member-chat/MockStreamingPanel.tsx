@@ -1,8 +1,8 @@
 import { useReducer, useRef, useState, type FormEvent } from 'react'
 import ChatAnswerView from './ChatAnswerView'
 import ChatJobActions from './ChatJobActions'
-import { selectAnswerView, type ConnectionStatus } from './chatEventsReducer'
-import type { ChatJobState } from './memberChatMock'
+import { selectAnswerView } from './chatEventsReducer'
+import { connectionLabels, jobStateLabels as stateLabels } from './chatJobLabels'
 import type { ChatJobEnvelope } from './chatQueueTypes'
 import { createMockChatServer } from './mockChatServer'
 import { useChatEvents } from './useChatEvents'
@@ -10,24 +10,6 @@ import { useChatJobCommands } from './useChatJobCommands'
 import styles from './MockStreamingPanel.module.css'
 
 const CHUNKS = ['도로교통법 제160조에 따라 ', '어린이 보호구역의 ', '주정차 위반은 과태료 부과 대상입니다.']
-
-const connectionLabels: Record<ConnectionStatus, string> = {
-  idle: '연결 안 됨',
-  connecting: '연결 중',
-  open: '연결됨',
-  reconnecting: '끊김, 다시 연결 중',
-}
-
-const stateLabels: Record<ChatJobState, string> = {
-  queued: '대기 중',
-  paused: '앞 질문 실패로 대기 중',
-  running: '실행 중',
-  completed: '완료',
-  failed: '실패',
-  interrupted: '중단됨',
-  canceled: '취소한 질문',
-  expired: '대기 시간이 지나 취소됨',
-}
 
 type MockStreamingPanelProps = {
   /** 끊긴 뒤 다시 연결하기까지의 시간. 기본값은 구독 훅의 기본 간격이다. */
