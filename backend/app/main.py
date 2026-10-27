@@ -19,6 +19,7 @@ from app.db import get_session_factory
 from app.integrations.provider import get_provider
 from app.observability import RegistrationTraceMiddleware, protect_google_callback_logs
 from app.security.login_limits import LoginFailureLimiter
+from app.security.registration_limits import RegistrationLimiter
 from app.security.settings import (
     AuthSettings,
     AuthSettingsError,
@@ -123,6 +124,9 @@ def create_app(
     application.state.auth_settings = auth_settings
     application.state.google_settings = google_settings
     application.state.registration_limit_settings = registration_limit_settings
+    application.state.registration_limiter = (
+        RegistrationLimiter(registration_limit_settings) if registration_limit_settings is not None else None
+    )
     application.state.login_failure_limiter = LoginFailureLimiter()
     application.state.chat_events = ChatEvents()
     register_error_handlers(application)
