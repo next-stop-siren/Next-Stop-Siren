@@ -52,7 +52,8 @@ test.each([
 
   const retry = screen.getByRole('link', { name: 'Google로 다시 시도하기' })
   expect(retry.getAttribute('href')).toBe(googleLoginStartUrl)
-  expect(document.activeElement).toBe(retry)
+  // 모달이 보인 뒤에도 첫 초점 이동 effect가 아직 끝나지 않았을 수 있다.
+  await waitFor(() => expect(document.activeElement).toBe(retry))
 
   expect(currentPath()).toBe('/')
   // 실패 안내만으로 로그인·로그아웃 같은 인증 요청을 보내지 않는다.
