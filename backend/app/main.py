@@ -17,7 +17,7 @@ from app.api.chat_events import ChatEvents
 from app.api.errors import register_error_handlers
 from app.db import get_session_factory
 from app.integrations.provider import get_provider
-from app.observability import RegistrationTraceMiddleware, protect_google_callback_logs
+from app.observability import RegistrationTraceMiddleware, protect_exception_logs, protect_google_callback_logs
 from app.security.login_limits import LoginFailureLimiter
 from app.security.registration_limits import RegistrationLimiter
 from app.security.settings import (
@@ -102,6 +102,7 @@ def create_app(
     # 기존 로그 설정이 없으면 요청·저장 성공의 INFO 기록도 출력한다.
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     protect_google_callback_logs()
+    protect_exception_logs()
     if auth_settings is None:
         try:
             auth_settings = get_auth_settings()
