@@ -11,7 +11,7 @@ from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
 from app.api.cookies import AuthCookieError, clear_auth_cookies
-from app.observability import FailureDetails, request_trace_id
+from app.observability import FailureDetails, error_types, request_trace_id
 from app.schemas.errors import ErrorDetail, ErrorResponse
 from app.security.login_limits import LoginRateLimited
 from app.security.settings import AuthSettings
@@ -148,14 +148,7 @@ def retry_not_latest() -> ApiError:
 
 def loggable(exc: Exception) -> str:
     """SQL·입력값 없이 예외 클래스와 SQLSTATE만 기록한다."""
-    names = [type(exc).__name__]
-    cause = getattr(exc, "orig", None)
-    if cause is not None:
-        names.append(type(cause).__name__)
-        sqlstate = getattr(cause, "sqlstate", None)
-        if isinstance(sqlstate, str):
-            names.append(sqlstate)
-    return "/".join(names)
+    return error_types(exc)
 
 
 def _error_response(
