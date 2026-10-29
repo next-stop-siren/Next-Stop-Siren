@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, aliased
 
 from app.models.chat_job import ACTIVE_STATES, WAITING_STATES, ChatJob, ChatQueueMember, ConversationHold
 from app.models.conversation import Conversation, Message
+from app.repositories.conversations import context_order
 
 
 def database_time(session: Session) -> datetime:
@@ -272,7 +273,13 @@ def add_answer(
 
 
 def context_before(session: Session, conversation_id: int, question_id: int) -> Sequence[Message]:
-    """The completed question+answer pairs before the question, in ascending ID order."""
+    """The completed question+answer pairs before the question, as Q1·A1·Q2·A2 (#66).
+
+    The question itself and its own attempts are never included, so the caller adds
+    the question once. A failed or interrupted attempt followed by a completed retry
+    leaves only the completed one, and a question with no completed answer is left
+    out together with its attempts. The rows stay in the history.
+    """
     answer = aliased(Message)
     answered = select(answer.reply_to_message_id).where(
         answer.conversation_id == conversation_id, answer.role == "assistant", answer.status == "completed"
@@ -283,7 +290,7 @@ def context_before(session: Session, conversation_id: int, question_id: int) -> 
         .where(or_(Message.role == "assistant", Message.id.in_(answered)))
         .where(or_(Message.role == "user", Message.reply_to_message_id < question_id))
         .where(or_(Message.role == "assistant", Message.id < question_id))
-        .order_by(Message.id)
+        .order_by(*context_order())
     )
     return session.scalars(statement).all()
 
