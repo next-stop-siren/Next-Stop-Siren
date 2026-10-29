@@ -11,7 +11,7 @@ from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
 from app.api.cookies import AuthCookieError, clear_auth_cookies
-from app.observability import FailureDetails, request_trace_id
+from app.observability import FailureDetails, error_types, request_trace_id
 from app.schemas.errors import ErrorDetail, ErrorResponse
 from app.security.login_limits import LoginRateLimited
 from app.security.settings import AuthSettings
@@ -28,6 +28,8 @@ ApiErrorCode = Literal[
     "unauthenticated",
     "not_found",
     "rate_limited",
+    "registration_rate_limited",
+    "registration_busy",
     "request_key_conflict",
     "retry_not_allowed",
     "retry_not_latest",
@@ -40,6 +42,7 @@ ApiErrorCode = Literal[
 ]
 # 다시 요청할 수 있을 때까지의 초를 `Retry-After`로 반드시 알리는 회원 채팅 거부.
 _CHAT_WAITS: frozenset[ApiErrorCode] = frozenset({"quota_exceeded", "attempt_too_soon"})
+_REGISTRATION_WAITS: frozenset[ApiErrorCode] = frozenset({"registration_rate_limited", "registration_busy"})
 
 _API_ERRORS: dict[ApiErrorCode, tuple[int, str]] = {
     "local_email_exists": (409, "이미 가입된 이메일입니다."),
@@ -49,6 +52,8 @@ _API_ERRORS: dict[ApiErrorCode, tuple[int, str]] = {
     "unauthenticated": (401, "로그인이 필요합니다."),
     "not_found": (404, "찾을 수 없습니다."),
     "rate_limited": (429, "로그인 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요."),
+    "registration_rate_limited": (429, "가입 요청이 많습니다. {retry_after}초 후 다시 시도해 주세요."),
+    "registration_busy": (503, "다른 가입 요청을 처리하고 있습니다. {retry_after}초 후 다시 시도해 주세요."),
     "request_key_conflict": (409, "같은 요청 키로 다른 질문을 보낼 수 없습니다."),
     "retry_not_allowed": (409, "이 답변은 다시 시도할 수 없습니다. 대화 기록을 확인해 주세요."),
     "retry_not_latest": (409, "가장 최근 질문만 다시 시도할 수 있습니다. 새 질문으로 보내 주세요."),
@@ -103,12 +108,17 @@ class ApiError(Exception):
         elif code in _CHAT_WAITS:
             if type(retry_after) is not int or retry_after < 1:
                 raise ValueError("채팅 한도·간격 거부에는 양의 정수 대기 시간이 필요합니다.")
+        elif code in _REGISTRATION_WAITS:
+            if type(retry_after) is not int or retry_after < 1:
+                raise ValueError("가입 제한에는 양의 정수 대기 시간이 필요합니다.")
         elif retry_after is not None:
-            raise ValueError("대기 시간은 로그인 제한, refresh 경합, 채팅 한도·간격 오류에만 지정할 수 있습니다.")
+            raise ValueError("대기 시간은 로그인·가입 제한, refresh 경합, 채팅 한도·간격 오류에만 지정할 수 있습니다.")
         if clear_cookies and code != "unauthenticated":
             raise ValueError("인증 쿠키 만료는 폐기 커밋 후 인증 실패에만 지정할 수 있습니다.")
         self.code = code
         self.status_code, self.public_message = _API_ERRORS[code]
+        if code in _REGISTRATION_WAITS:
+            self.public_message = self.public_message.format(retry_after=retry_after)
         self.failure = failure
         self.retry_after = retry_after
         self.clear_cookies = clear_cookies
@@ -138,14 +148,7 @@ def retry_not_latest() -> ApiError:
 
 def loggable(exc: Exception) -> str:
     """SQL·입력값 없이 예외 클래스와 SQLSTATE만 기록한다."""
-    names = [type(exc).__name__]
-    cause = getattr(exc, "orig", None)
-    if cause is not None:
-        names.append(type(cause).__name__)
-        sqlstate = getattr(cause, "sqlstate", None)
-        if isinstance(sqlstate, str):
-            names.append(sqlstate)
-    return "/".join(names)
+    return error_types(exc)
 
 
 def _error_response(

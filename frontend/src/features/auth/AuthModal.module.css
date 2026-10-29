@@ -239,9 +239,29 @@
   cursor: not-allowed;
 }
 
-.googleFailureActions .authSubmit {
-  margin-top: 0;
-  cursor: pointer;
+.googleRetryLink {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  border-radius: 9px;
+  background: var(--color-primary);
+  color: #ffffff;
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+}
+
+.googleRetryLink:hover {
+  background: var(--color-primary-hover);
+}
+
+.googleFailurePreviewNotice {
+  margin: 12px 0 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--color-border);
+  border-radius: 9px;
+  color: var(--color-muted);
+  font-size: 0.8rem;
 }
 
 @media (max-width: 760px) {

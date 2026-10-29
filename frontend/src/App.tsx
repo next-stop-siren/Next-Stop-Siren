@@ -1,36 +1,64 @@
-import { useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import AuthModal from './features/auth/AuthModal'
 import { AuthProvider, useAuth } from './features/auth/AuthContext'
+import {
+  type GoogleLoginFailureKind,
+  consumeGoogleLoginFailureParam,
+  googleLoginFailureCopy,
+  readGoogleLoginFailure,
+} from './features/auth/googleLoginFailure'
 import Sidebar from './features/layout/Sidebar'
 import NonmemberIntro from './features/nonmember/NonmemberIntro'
-import MemberChat from './features/member-chat/MemberChat'
+import MemberWorkspace from './features/member-chat/MemberWorkspace'
 import MemberChatMockPreview from './features/member-chat/MemberChatMockPreview'
 
 function AppShell() {
-  const { status, logout, retryLogout, logoutError } = useAuth()
+  const { status, user, logout, retryLogout, logoutError } = useAuth()
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
   const [isRetryingLogout, setIsRetryingLogout] = useState(false)
+  // Google 실패 복귀 query는 첫 화면에서 한 번만 읽는다. 안내용 값이라 인증 상태는
+  // 바꾸지 않고, 세션 복구가 끝난 뒤 비회원이면 모달, 기존 회원이면 배너로 보여준다.
+  const [pendingGoogleFailure, setPendingGoogleFailure] = useState<GoogleLoginFailureKind | null>(() =>
+    readGoogleLoginFailure(window.location.search),
+  )
+  const [modalGoogleFailure, setModalGoogleFailure] = useState<GoogleLoginFailureKind | null>(null)
+  const [bannerGoogleFailure, setBannerGoogleFailure] = useState<GoogleLoginFailureKind | null>(null)
 
-  // 모달을 닫으면 AuthModal이 이전 포커스 요소(질문 입력창)로 초점을 되돌린다.
-  // 그 입력창은 onFocus로 모달을 다시 여는 핸들러를 갖고 있어서, 복원된 포커스가
-  // 그대로 재오픈을 유발할 수 있다. 닫은 직후 한 번의 open 요청만 무시해 이를 막는다.
-  const suppressNextAuthRequestRef = useRef(false)
-
-  const openAuthModal = () => {
-    if (suppressNextAuthRequestRef.current) {
-      suppressNextAuthRequestRef.current = false
-      return
-    }
-    setIsAuthModalOpen(true)
-  }
-
+  // 질문 입력창은 초점만으로 모달을 열지 않으므로, 닫을 때 초점이 입력창으로
+  // 돌아와도 다시 열리지 않는다.
+  const openAuthModal = () => setIsAuthModalOpen(true)
   const closeAuthModal = () => {
-    suppressNextAuthRequestRef.current = true
     setIsAuthModalOpen(false)
-    setTimeout(() => {
-      suppressNextAuthRequestRef.current = false
-    }, 0)
+    setModalGoogleFailure(null)
   }
+
+  // 처리할 실패 값을 상태로 옮겼으므로 주소에서 지워 새로고침 때 안내가 반복되지 않게 한다.
+  useEffect(() => {
+    consumeGoogleLoginFailureParam()
+  }, [])
+
+  useEffect(() => {
+    if (pendingGoogleFailure === null || status === 'checking') return
+    setPendingGoogleFailure(null)
+    if (status === 'authenticated') {
+      setBannerGoogleFailure(pendingGoogleFailure)
+    } else {
+      setModalGoogleFailure(pendingGoogleFailure)
+      setIsAuthModalOpen(true)
+    }
+  }, [pendingGoogleFailure, status])
+
+  // 닫힌 모달의 늦은 로그인 성공도 세션은 적용된다. 회원 화면으로 바뀌면 모달
+  // 열림 상태를 비워, 다시 열린 모달이 남거나 로그아웃 뒤 저절로 뜨지 않게 한다.
+  // 회원 화면을 벗어나면 이전 세션에 붙인 Google 실패 배너도 함께 비운다.
+  useEffect(() => {
+    if (status === 'authenticated') {
+      setIsAuthModalOpen(false)
+      setModalGoogleFailure(null)
+    } else {
+      setBannerGoogleFailure(null)
+    }
+  }, [status])
 
   const handleLogout = () => {
     // 실패 배너는 Provider가 해당 세대에만 연결한다.
@@ -70,22 +98,36 @@ function AppShell() {
         </div>
       )}
 
+      {bannerGoogleFailure && status === 'authenticated' && (
+        <div role="status" className="google-failure-banner">
+          <span>{googleLoginFailureCopy(bannerGoogleFailure).title}. 현재 로그인 상태는 그대로 유지돼요.</span>
+          <button type="button" onClick={() => setBannerGoogleFailure(null)}>
+            닫기
+          </button>
+        </div>
+      )}
+
       <div className="app-layout">
-        <Sidebar
-          isAuthenticated={status === 'authenticated'}
-          onLoginClick={openAuthModal}
-          onLogoutClick={handleLogout}
-        />
+        {status === 'authenticated' ? (
+          // 회원이 바뀌면 새로 마운트해 이전 회원의 대화·임시 출력·구독이 첫 화면부터 남지 않게 한다.
+          <MemberWorkspace key={user?.id ?? ''} onLogoutClick={handleLogout} />
+        ) : (
+          <>
+            <Sidebar isAuthenticated={false} onLoginClick={openAuthModal} onLogoutClick={handleLogout} />
 
-        <main className="main-content">
-          {status === 'guest' ? (
-            <NonmemberIntro onAuthRequired={openAuthModal} />
-          ) : status === 'authenticated' ? (
-            <MemberChat />
-          ) : null}
-        </main>
+            <main className="main-content">
+              {status === 'guest' ? <NonmemberIntro onAuthRequired={openAuthModal} /> : null}
+            </main>
+          </>
+        )}
 
-        {isAuthModalOpen && <AuthModal onClose={closeAuthModal} />}
+        {isAuthModalOpen && status !== 'authenticated' && (
+          <AuthModal
+            onClose={closeAuthModal}
+            googleFailure={modalGoogleFailure}
+            onGoogleFailureDismiss={() => setModalGoogleFailure(null)}
+          />
+        )}
       </div>
     </div>
   )

@@ -1,9 +1,8 @@
 /**
- * 회원 채팅 대기열 API 타입 (제안 초안)
- * 기준: docs/04-reference/chat-queue-api-draft.md (PR #56)
+ * 회원 채팅 대기열 API 타입
+ * 기준: docs/04-reference/api.md Rev 1 "회원 채팅 대기열 (#53)"
  *
- * 구현 전 계약이라 #53에서 확정되면 이 파일을 확정 내용에 맞춘다.
- * 현재 구현 계약(docs/04-reference/api.md)의 타입은 memberChatApiTypes.ts에 있다.
+ * 대화·메시지 자체의 타입은 memberChatApiTypes.ts에 있다.
  */
 
 import type { ApiMessage } from './memberChatApiTypes'
@@ -70,6 +69,38 @@ export interface ChatSnapshot {
 export interface ChatDelta {
   job_id: string
   text: string
+}
+
+/**
+ * 질문 접수와 수동 재시도의 응답. 새로 접수했거나 아직 끝나지 않은 작업은 `202`, 끝난 작업을 같은 키로 다시 물으면 `200`이다.
+ * `job`은 #53 이전 동기 API가 저장한 질문을 같은 키로 다시 보냈을 때만 null이고, 그때 `answer`는 그 질문의 최신 답변이다.
+ */
+export interface ChatAdmission {
+  question: ApiMessage
+  answer: ApiMessage | null
+  job: ChatJob | null
+  limits: ChatLimits
+}
+
+/** 실행 전 취소 — `POST /api/chat/jobs/{id}/cancel` */
+export interface ChatCancelResult {
+  job: ChatJob
+  limits: ChatLimits
+}
+
+/** 건너뛰기 — `POST /api/conversations/{id}/messages/{id}/skip`. 다시 대기열에 들어간 뒤 질문의 작업이 온다. */
+export interface ChatSkipResult {
+  skipped_message_id: string
+  resumed_jobs: ChatJob[]
+  limits: ChatLimits
+}
+
+/** 작업 목록 — `GET /api/chat/jobs`. 대화를 지정하면 그 대화의 작업 전체(종결 포함)를 ID 내림차순으로 준다. */
+export interface ChatJobPage {
+  items: ChatJob[]
+  next_cursor: string | null
+  limits: ChatLimits
+  server_time: string
 }
 
 /** `GET /api/chat/events` 구독으로 받는 이벤트 */

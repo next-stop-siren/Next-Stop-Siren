@@ -83,7 +83,6 @@ test('회원가입 성공 시 onClose가 호출된다', async () => {
   )
 
   await user.click(screen.getByRole('button', { name: '회원가입' }))
-  await user.type(screen.getByLabelText('이름'), '홍길동')
   await user.type(screen.getByLabelText('이메일'), 'new@test.com')
   await user.type(screen.getByLabelText('비밀번호'), 'password123456')
   const submitButton = document.querySelector('button[type="submit"]') as HTMLButtonElement
@@ -266,4 +265,93 @@ test('로컬파트에 한글이 포함된 이메일 주소를 브라우저 검�
   await user.click(submitButton)
 
   await waitFor(() => expect(capturedEmail).toBe(email))
+})
+
+// 이슈 #67: 모드를 바꾼 뒤 끝난 이전 요청은 새 모드의 상태를 바꾸지 않는다.
+test.each([
+  ['실패', jsonResponse(401, errorBody('unauthenticated', '늦은 실패'))],
+  [
+    '성공',
+    jsonResponse(200, {
+      user: { id: 'u1', email: 'a@test.com', created_at: '2026-01-01T00:00:00Z' },
+      access_token: 'a',
+      token_type: 'Bearer',
+      expires_in: 900,
+      csrf_token: 'c',
+    }),
+  ],
+])('모드를 바꾼 뒤 끝난 이전 로그인의 %s도 회원가입 모드의 상태를 바꾸지 않는다', async (_name, response) => {
+  const user = userEvent.setup()
+  const onClose = vi.fn()
+  let resolveLogin: (value: Response) => void = () => {}
+
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const url = typeof input === 'string' ? input : input.toString()
+    if (url === '/api/auth/csrf') return jsonResponse(401, errorBody('unauthenticated', '인증 필요'))
+    if (url === '/api/auth/login') {
+      return new Promise<Response>((resolve) => {
+        resolveLogin = resolve
+      })
+    }
+    throw new Error(`예상하지 못한 호출: ${url}`)
+  })
+
+  render(
+    <AuthProvider>
+      <AuthModal onClose={onClose} />
+    </AuthProvider>,
+  )
+
+  await user.type(screen.getByLabelText('이메일'), 'a@test.com')
+  await user.type(screen.getByLabelText('비밀번호'), 'password123456')
+  await user.click(document.querySelector('button[type="submit"]') as HTMLButtonElement)
+  await screen.findByRole('button', { name: '처리 중...' })
+
+  await user.click(screen.getByRole('button', { name: '회원가입' }))
+  const emailInput = screen.getByLabelText('이메일')
+  await user.click(emailInput)
+
+  resolveLogin(response)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+
+  expect(onClose).not.toHaveBeenCalled()
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(screen.getByRole('heading', { name: '회원가입' })).toBeTruthy()
+  expect((document.querySelector('button[type="submit"]') as HTMLButtonElement).disabled).toBe(false)
+  expect(document.activeElement).toBe(emailInput)
+})
+
+test('회원가입은 이름 없이 이메일·비밀번호만 보낸다', async () => {
+  const user = userEvent.setup()
+  let capturedBody: Record<string, unknown> | null = null
+
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const url = typeof input === 'string' ? input : input.toString()
+    if (url === '/api/auth/csrf') return jsonResponse(401, errorBody('unauthenticated', '인증 필요'))
+    if (url === '/api/auth/register') {
+      capturedBody = JSON.parse((init?.body as string) ?? '{}')
+      return jsonResponse(201, {
+        user: { id: 'u1', email: 'new@test.com', created_at: '2026-01-01T00:00:00Z' },
+        access_token: 'a',
+        token_type: 'Bearer',
+        expires_in: 900,
+        csrf_token: 'c',
+      })
+    }
+    throw new Error(`예상하지 못한 호출: ${url}`)
+  })
+
+  render(
+    <AuthProvider>
+      <AuthModal onClose={() => {}} />
+    </AuthProvider>,
+  )
+
+  await user.click(screen.getByRole('button', { name: '회원가입' }))
+  expect(screen.queryByLabelText('이름')).toBeNull()
+  await user.type(screen.getByLabelText('이메일'), 'new@test.com')
+  await user.type(screen.getByLabelText('비밀번호'), 'password123456')
+  await user.click(document.querySelector('button[type="submit"]') as HTMLButtonElement)
+
+  await waitFor(() => expect(capturedBody).toEqual({ email: 'new@test.com', password: 'password123456' }))
 })

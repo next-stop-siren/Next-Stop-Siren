@@ -157,6 +157,12 @@
   outline: none;
 }
 
+/* 입력창 자체의 외곽선 대신 입력 영역 전체에 키보드 초점을 보여준다. */
+.promptArea:has(input:focus-visible) {
+  outline: 3px solid #9bbcff;
+  outline-offset: 2px;
+}
+
 .promptArea input::placeholder {
   color: var(--color-muted);
 }

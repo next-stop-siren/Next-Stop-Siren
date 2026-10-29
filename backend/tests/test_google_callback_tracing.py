@@ -18,6 +18,7 @@ from google_helpers import ACCESS_TOKEN
 PATH = "/api/auth/google/callback"
 RECEIVED = "google_callback_received"
 REJECTED = "google_callback_verification_failed"
+FAILURE = "google_login_failure"
 
 
 def app_events(caplog):
@@ -50,6 +51,7 @@ def assert_safe(caplog, response, flow):
         secrets.append(flow.id_token)
     for secret in secrets:
         assert secret not in caplog.text and secret not in response.text
+        assert secret not in response.headers.get("location", "")
     assert all(record.exc_info is None and record.stack_info is None for record in app_events(caplog))
 
 
@@ -76,12 +78,13 @@ def test_verification_failure_links_received_failed_and_response_ids(google_call
         flow.behavior["exchange_error"] = "invalid_grant"
     with caplog.at_level(logging.INFO), patch("app.api.google_auth.login_session") as opened:
         response = flow.client.get(PATH, params=params, headers={"X-Trace-ID": "fixture-client-trace"})
-    assert response.status_code == 401
+    assert response.status_code == 302
+    assert response.headers["location"] == "/?google_login_error=invalid_request"
     records = app_events(caplog)
-    assert [event(record) for record in records] == [RECEIVED, REJECTED]
-    response_id = response.json()["error"]["trace_id"]
+    assert [event(record) for record in records] == [RECEIVED, REJECTED, FAILURE]
+    response_id = trace_id(records[0])
     assert str(UUID(response_id)) == response_id
-    assert [trace_id(record) for record in records] == [response_id, response_id]
+    assert [trace_id(record) for record in records] == [response_id] * 3
     assert records[0].levelno == logging.INFO and records[1].levelno == logging.WARNING
     opened.assert_not_called()
     assert_safe(caplog, response, flow)
@@ -96,11 +99,11 @@ def test_different_callbacks_get_different_server_ids(google_callback_flow, capl
         for _ in range(2):
             caplog.clear()
             response = flow.client.get(PATH, headers={"X-Trace-ID": "fixture-client-trace"})
-            assert response.status_code == 401
-            current = response.json()["error"]["trace_id"]
+            assert response.status_code == 302
             records = app_events(caplog)
-            assert [event(record) for record in records] == [RECEIVED, REJECTED]
-            assert [trace_id(record) for record in records] == [current, current]
+            current = trace_id(records[0])
+            assert [event(record) for record in records] == [RECEIVED, REJECTED, FAILURE]
+            assert [trace_id(record) for record in records] == [current] * 3
             ids.append(current)
     assert len(set(ids)) == 2 and "fixture-client-trace" not in ids
     opened.assert_not_called()
@@ -128,11 +131,15 @@ def test_service_failure_uses_received_trace_without_claiming_verification_failu
         patch("app.api.google_auth.create_google_login_session", side_effect=failure),
     ):
         response = flow.client.get(PATH, params=flow.params)
-    assert response.status_code == 503
+    assert response.status_code == (503 if kind == "settings" else 302)
     records = app_events(caplog)
-    assert [event(record) for record in records] == [RECEIVED, "authentication_failed"]
-    assert all(trace_id(record) == response.json()["error"]["trace_id"] for record in records)
-    assert f"stage={stage}" in records[-1].getMessage()
+    assert [event(record) for record in records] == [RECEIVED, "authentication_failed", FAILURE]
+    assert len({trace_id(record) for record in records}) == 1
+    if kind == "settings":
+        assert trace_id(records[0]) == response.json()["error"]["trace_id"]
+    else:
+        assert response.headers["location"] == "/?google_login_error=temporarily_unavailable"
+    assert f"stage={stage}" in records[1].getMessage()
     assert_safe(caplog, response, flow)
 
 

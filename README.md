@@ -1,12 +1,21 @@
 # Next-Stop-Siren
 
-[회원 채팅 대기열·한도 정책](docs/04-reference/chat-policy.md)은 승인된 미래 구현 기준이다. 회원당 실행 1개, 새 질문 대기 3개, 별도 재시도 대기 1개와 일일 400회·6시간 100회 한도를 정했다. 예약·정산과 대기열은 아직 구현되지 않았다. 현재 스트리밍(PR #44)과 재시도(PR #51)는 병합됐다.
+Next-Stop-Siren은 교통법 질문을 위한 챗봇 프로젝트다. 일반 앱은 무료 모의 답변을 사용한다. 요청·응답의 단일 계약은 [API 기준](docs/04-reference/api.md), 정책의 의도와 구현 경계는 [회원 채팅 정책](docs/04-reference/chat-policy.md)에 있다.
 
-Next-Stop-Siren은 교통법 질문을 위한 챗봇 프로젝트입니다. 백엔드는 이메일 가입·로그인, 쿠키 세션, Google OIDC, 본인 대화 생성·목록·메시지 저장·재조회를 구현했습니다. 일반 채팅 API는 무료 모의 답변을 반환합니다. 화면은 비회원 소개와 인증 모달까지이며 실제 인증·채팅 API 연결은 후속 작업입니다.
+## 구현 상태 (2026-10-25)
 
-제품 범위와 향후 계획은 [서비스 범위](docs/01-start/service-scope.md), [기술 구성](docs/01-start/stack.md), [API 기준](docs/04-reference/api.md), [DB 설계](docs/04-reference/database.md), [인증 기준](docs/04-reference/authentication.md), [S11 GPT 기준](docs/04-reference/ai.md)을 참고하세요. 팀 작업은 [처음 맡을 작업과 인계](docs/02-team/team-handoff.md), 실행 세부사항은 [온보딩](docs/01-start/onboarding.md)과 [품질·테스트 지침](docs/03-development/quality.md)에 있습니다.
+기준 코드는 [main 병합 커밋 `2d50da5`](https://github.com/next-stop-siren/Next-Stop-Siren/commit/2d50da5976548db7b85c5b0b931b7c43e622fa15)이다. 현재 상태와 요구사항을 구분한다.
 
-제품 ORM 모델은 `users`, `auth_identities`, `refresh_sessions`, `conversations`, `messages` 5개 테이블입니다. GPT 어댑터는 격리 스모크 전용이며 공개 앱 연결·스트리밍·재시도·회원 한도·배포 완료를 뜻하지 않습니다. 이슈 의존 관계는 [공정진행도](docs/02-team/development-flow.md)를 참고하세요.
+| 영역 | 구현·병합된 범위 | 남은 연결·검증 |
+| --- | --- | --- |
+| 서버 | 인증·세션·소유권, 대기열 접수·예약·실행·복구·재시도·건너뛰기·구독 ([PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62)) | 실제 화면 연결, 결함 수정과 #19·#54 통합 검증 |
+| 화면 | 인증 API 연결 ([PR #50](https://github.com/next-stop-siren/Next-Stop-Siren/pull/50)), 대기열·구독·재시도 목업 (PR #58·#60·#61), 회원 채팅의 실제 `202` 접수·구독·재시도·건너뛰기·취소·한도 표시와 사이드바 대화 목록 연결 ([#65](https://github.com/next-stop-siren/Next-Stop-Siren/issues/65)) | #19·#54 독립 통합 검증, 실제 AI `stream` 답변의 화면 확인 |
+| 저장 | 인증·대화 5개, 한도 2개, 대기열 3개로 총 10개 ORM 모델 등록 | 기존 DB의 명시적 스키마 변경과 운영 데이터 백업·복원 검증 |
+| AI·배포 | 무료 모의 제공자, 실제 AI의 격리 `complete` 어댑터와 개발·테스트 DB Compose | 실제 어댑터의 `stream` 연결, 운영 설정·배포·전체 브라우저 검증 |
+
+#18·#20·#21은 목업 범위로 종료됐다. 실제 회원 채팅 연결은 [#65](https://github.com/next-stop-siren/Next-Stop-Siren/issues/65)에서 구현했고, 모의 제공자로 실제 API·DB·브라우저 자체검사를 마쳤다. [2차 마일스톤](https://github.com/next-stop-siren/Next-Stop-Siren/milestone/2)에 구현·운영 작업 12개를 등록했으며, #19·#54의 최종 통합검증은 관련 기능과 자체검사 뒤에 진행한다. Owner `xifoxy-ru`가 #73·#76을 맡고 #74·#75의 운영 역할을 함께 담당한다. 실제 진행 방법은 [담당별 우선순서와 병렬 진행](docs/02-team/development-flow.md#담당별-우선순서와-병렬-진행)을 따른다. #76의 독립 확인은 다른 팀원이 수행한다. 문서 대조는 앱 실행·실제 Google 실패 리다이렉트·AI 호출·운영 검증을 대신하지 않는다.
+
+제품 범위는 [서비스 범위](docs/01-start/service-scope.md), 실행은 [온보딩](docs/01-start/onboarding.md), 담당별 다음 작업은 [팀 인계](docs/02-team/team-handoff.md), 검사 경계는 [품질 지침](docs/03-development/quality.md)을 따른다.
 
 ## 프런트엔드만 준비하고 실행하기
 
@@ -61,7 +70,7 @@ Set-Location Next-Stop-Siren
 
 `setup`은 환경과 의존성을 준비하고 DB 연결 및 기본 검사를 확인한 뒤 끝납니다. 제품 테이블은 만들지 않습니다. 이어서 [인증 키 설정](docs/01-start/onboarding.md#2-1-인증-키-생성과-env-설정) → `db-init` → `dev` 순서로 진행하세요. `db-init`은 누락 테이블만 만들며 기존 스키마를 마이그레이션하지 않습니다. `dev`는 실행 상태로 계속 대기합니다. 첫 터미널에서 `Ctrl+C`를 누르면 `dev`가 시작한 API와 화면 프로세스가 종료됩니다. DB 컨테이너는 별도로 실행 중이므로 필요하면 `stop` 명령으로 중지하세요.
 
-화면은 [http://127.0.0.1:5173](http://127.0.0.1:5173), API 문서는 [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)입니다. 현재 화면은 비회원 소개입니다. API의 `/api/health`는 정상일 때 `{"status":"ok"}`, `/api/ready`는 DB 연결 성공 시 `{"status":"ready"}`를 반환합니다.
+화면은 [http://127.0.0.1:5173](http://127.0.0.1:5173), API 문서는 [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)입니다. 현재 화면에는 인증과 기본 회원 채팅 경로가 있습니다. 대기열 실제 연결의 한계는 위 구현 상태를 확인하세요. API의 `/api/health`는 정상일 때 `{"status":"ok"}`, `/api/ready`는 DB 연결 성공 시 `{"status":"ready"}`를 반환합니다.
 
 인증 개발은 `http://127.0.0.1`을 기준으로 합니다. `.env`의 `AUTH_API_ORIGIN`은 `http://127.0.0.1:8000`, `AUTH_ALLOWED_ORIGINS`는 `http://127.0.0.1:5173,http://127.0.0.1:8000`으로 설정합니다. 화면(5173)과 Swagger UI(8000)의 실제 Origin을 모두 허용하며 `localhost`는 허용 목록에서 제외합니다. Origin에는 `/docs` 경로를 넣지 않습니다. Google 로그인 callback은 `http://127.0.0.1:8000/api/auth/google/callback`을 등록합니다.
 
@@ -69,7 +78,7 @@ Set-Location Next-Stop-Siren
 
 [온보딩의 API 확인 순서](docs/01-start/onboarding.md#3-1-swagger로-가입로그인과-모의-대화-확인)를 따르세요. Swagger에서 가입 `201`, 로그인 `200`, **Authorize → AccessBearer**에 access 토큰 입력, `/api/me`, 대화 생성·메시지 전송·재조회를 확인합니다. 일반 mock 채팅에는 Google·실제 AI 키가 필요하지 않습니다. refresh·logout은 브라우저의 HttpOnly 쿠키와 최신 `X-CSRF-Token`을 함께 사용합니다.
 
-`/api/health`는 프로세스 응답, `/api/ready`는 DB의 `SELECT 1`만 확인합니다. 둘이 성공해도 인증 설정이나 제품 스키마·로그인·채팅이 정상이라는 뜻은 아닙니다. Google callback은 `:8000`을 유지합니다. 성공 후 `:5173`로 이동하려면 기존 `.env`에 `GOOGLE_FRONTEND_ORIGIN=http://127.0.0.1:5173`을 직접 추가하고 API를 재시작하세요([설정 절차](docs/01-start/onboarding.md#2-2-google-로그인용-env-설정)). 설정이 없으면 기존 상대 경로로 돌아옵니다. 화면의 CSRF·refresh·로그인 상태 연결은 [후속 작업](https://github.com/next-stop-siren/Next-Stop-Siren/issues/19)이며 Swagger Execute는 Google 브라우저 이동을 대신하지 않습니다.
+`/api/health`는 프로세스 응답, `/api/ready`는 DB의 `SELECT 1`만 확인합니다. 둘이 성공해도 인증 설정이나 제품 스키마·로그인·채팅이 정상이라는 뜻은 아닙니다. Google callback은 `:8000`을 유지합니다. 성공 후 `:5173`로 이동하려면 기존 `.env`에 `GOOGLE_FRONTEND_ORIGIN=http://127.0.0.1:5173`을 직접 추가하고 API를 재시작하세요([설정 절차](docs/01-start/onboarding.md#2-2-google-로그인용-env-설정)). 설정이 없으면 기존 상대 경로로 돌아옵니다. 화면의 CSRF·refresh·로그인 상태 연결은 구현되어 있습니다. 실제 통합 검증은 [후속 작업](https://github.com/next-stop-siren/Next-Stop-Siren/issues/19)입니다. Swagger Execute는 Google 브라우저 이동을 대신하지 않습니다.
 
 ## 저장소 구조
 
@@ -97,7 +106,7 @@ Set-Location Next-Stop-Siren
 | `test-db` | 전용 테스트 DB의 ORM·인증·대화·메시지 통합 검사; 가짜 데이터·격리 트랜잭션 사용 |
 | `db-init` | 등록된 앱 모델의 누락 테이블만 개발 DB에 생성 |
 | `db-init-test` | 전용 테스트 DB 보호 검사 후 누락 테이블만 생성 |
-| `test-e2e` | Chromium의 API·DB 준비 상태 fetch와 인증 모달 키보드 검사; 실제 가입→채팅 E2E는 미구현 |
+| `test-e2e` | 테스트 DB에 없는 제품 테이블만 만들고(`db-init-test`와 같음) 이번 실행에만 쓰는 인증 키로 API를 띄운 뒤, Chromium으로 API·DB 준비 상태, 인증 모달 키보드, 실제 가입→회원 채팅(모의 제공자) 흐름을 검사. `.env`의 인증 키는 읽지 않는다 |
 | `test` | `test-unit`, `test-db`, `test-e2e` 순서로 실행 |
 | `stop` | 이 프로젝트의 개발·테스트 DB 컨테이너만 중지, 데이터 보존 |
 | `clean` | 프런트엔드 빌드/Vite 캐시와 알려진 Python 캐시 정리 |

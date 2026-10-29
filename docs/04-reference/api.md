@@ -1,14 +1,18 @@
-# 공통 API 형식과 첫 모의 응답
+# API 계약
+
+**Rev 3 · 2026-10-27 (KST)** · 코드 기준: [`1cbf709`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/1cbf709eeef88f6c592c50bfd13b386d43dc8e5c)
+
+변경 근거: [PR #50](https://github.com/next-stop-siren/Next-Stop-Siren/pull/50) · [PR #56](https://github.com/next-stop-siren/Next-Stop-Siren/pull/56) · [PR #57](https://github.com/next-stop-siren/Next-Stop-Siren/pull/57) · [PR #59](https://github.com/next-stop-siren/Next-Stop-Siren/pull/59) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62) · [PR #78](https://github.com/next-stop-siren/Next-Stop-Siren/pull/78) · [PR #79](https://github.com/next-stop-siren/Next-Stop-Siren/pull/79). [#69](https://github.com/next-stop-siren/Next-Stop-Siren/issues/69)의 서버 구현 `8921f8a`와 검증 `1cbf709`를 반영했다. Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
 
 이 문서는 **현재 구현 계약**이다. #53부터 질문·재시도는 [회원 채팅 정책](chat-policy.md)의 대기열로 접수하고, 결과는 회원 단위 구독과 작업 조회로 받는다([회원 채팅 대기열](#회원-채팅-대기열-53)). 이전의 동기 생성(`201`), `409 conversation_busy`, `502`·`504`, `/messages/stream`, D4 재시도와 60초 `pending` 회복은 더 이상 쓰지 않는다. 네 메시지 상태와 공개 메시지 형식은 그대로다.
 
-현재 백엔드는 health/ready, 로컬·Google 인증, 쿠키 세션, 본인 대화·메시지 API와 대기열·구독 API를 등록한다. 일반 채팅은 모의 답변을 저장·재조회하며 실제 AI 키를 요구하지 않는다. 화면의 대기열·구독 실제 연동은 화면 담당(#20, #21)이 이어서 한다. 실행·Swagger 확인은 [온보딩](../01-start/onboarding.md#3-1-swagger로-가입로그인과-모의-대화-확인)을 따른다. 예시 계정·내용·시각은 가짜다.
+현재 백엔드는 health/ready, 로컬·Google 인증, 쿠키 세션, 본인 대화·메시지 API와 대기열·구독 API를 등록한다. 일반 채팅은 모의 답변을 저장·재조회하며 실제 AI 키를 요구하지 않는다. #69의 Google 실패 서버 복귀는 구현·검증했으며 실패 화면 연결과 실제 Google 전체 흐름 확인은 별도다. 가입 접수량·해시 동시 처리 제한은 PR #79에서 구현했다. 회원 화면의 실제 대화·대기열·구독 연결은 #65의 PR #78에 반영됐으며 #19·#54의 독립 통합 검증과 운영 검증은 별도다. #18·#20·#21의 목업 완료 이력은 유지한다. 실행·Swagger 확인은 [온보딩](../01-start/onboarding.md#3-1-swagger로-가입로그인과-모의-대화-확인)을 따른다. 예시 계정·내용·시각은 가짜다.
 
 ## 공통 규칙
 
 이 문서의 **요청·응답 형식**은 현재 백엔드 계약과 후속 화면 연결의 기준이다. **테스트 예시(fixture)**는 실제 계정·토큰 없이 만든 가짜 입력과 예상 결과다. **확인된 사용자 정보(principal)**는 서버가 로그인 자격을 검사해 얻은 사용자 ID다.
 
-- 기본 경로는 기존 앱과 같은 `/api`다. JSON 요청에는 `Content-Type: application/json`, 응답에는 `application/json`을 쓴다.
+- 기본 경로는 기존 앱과 같은 `/api`다. JSON 요청·응답에는 `Content-Type: application/json`을 쓴다. Google의 302 응답은 빈 본문과 Location으로 이동을 지시한다.
 - DB의 `bigint` ID와 이를 참조하는 필드는 JSON **십진 문자열**이다. 화면에서 `Number`로 바꾸지 않는다. 경로와 페이지 기준 ID도 같은 십진 문자열이다.
 - 시각은 UTC ISO 8601 문자열(`2026-01-02T03:04:05Z`)이다. 예시에서 `null`은 값이 아직 없거나 해당 상태에 적용되지 않음을 뜻한다.
 - 보호 경로는 서버가 검증한 principal의 사용자 ID만 신뢰한다. 요청 본문의 `user_id`는 받지 않는다. 비인증은 401, 없는 자원과 다른 사용자 소유 자원은 똑같이 404다.
@@ -50,18 +54,20 @@
 | 409 | `local_email_exists` | 로컬 가입 이메일이 이미 존재함 |
 | 422 | `validation_error` | 경로·본문·페이지 입력 오류 |
 | 429 | `rate_limited` | 로컬 로그인 실패 제한 초과; `Retry-After` 포함 |
+| 429 | `registration_rate_limited` | 서버 전체 가입 접수량 초과; `Retry-After`는 가장 오래된 접수가 시간창을 벗어날 때까지 남은 초를 올림한 정수, 최소 1초 |
 | 429 | `attempt_too_soon`, `quota_exceeded` | 채팅 접수 간격·한도; `Retry-After` 포함 |
-| 503 | `temporarily_unavailable` | 저장 전 서비스·DB 실패 |
+| 503 | `registration_busy` | 가입 처리 자리 부족; `Retry-After`는 설정된 재시도 권고 초, 기본 5초 |
+| 503 | `temporarily_unavailable` | 서비스·DB·인증 설정·쿠키 처리 실패 등; 가입 처리 자리 부족과 구분 |
 
 ## 인증 요청·응답
 
-정책과 브라우저 절차는 [인증 구현 기준](authentication.md)을 따른다. 인증 경로는 백엔드에 구현되어 있으며, 화면의 복구·재시도 연결은 별도 작업이다. 예시 계정·토큰·시각은 가짜 테스트 데이터다.
+정책과 브라우저 절차는 [인증 구현 기준](authentication.md)을 따른다. 인증 경로는 백엔드에 구현되어 있으며, 화면의 세션 복구·제한된 refresh 재시도는 PR #50에 구현됐고 실제 통합 검증은 #19에 남아 있다. 예시 계정·토큰·시각은 가짜 테스트 데이터다.
 
-모든 인증 오류도 위의 `error`/`fields`/`trace_id` 형식을 쓴다. 없는 계정과 틀린 비밀번호는 같은 `401 unauthenticated` 문구다. 로컬 가입·로그인 및 refresh·logout `POST`에는 정확히 허용된 `Origin`(요청을 시작한 화면의 출처)이 필요하다. Google의 top-level 시작·callback `GET`은 state·nonce·PKCE로 검증한다.
+인증의 JSON 오류 응답은 위의 `error`/`fields`/`trace_id` 형식을 쓴다. Google의 처리 가능한 실패는 아래 302 복귀 계약을 사용한다. 없는 계정과 틀린 비밀번호는 같은 `401 unauthenticated` 문구다. 로컬 가입·로그인 및 refresh·logout `POST`에는 정확히 허용된 `Origin`(요청을 시작한 화면의 출처)이 필요하다. Google의 top-level 시작·callback `GET`은 state·nonce·PKCE로 검증한다.
 
 **로컬 계정과 현재 사용자**
 
-- `POST /api/auth/register`: JSON `email`, `password`와 `Origin`을 보낸다. 성공은 `201`, 공개 `user`, 메모리용 `access_token`, `expires_in: 900`, 본문의 `csrf_token`, refresh·CSRF `Set-Cookie`다. 실패는 입력 422, 로컬 이메일 중복 409, Origin 403이다.
+- `POST /api/auth/register`: JSON `email`, `password`와 `Origin`을 보낸다. 성공은 `201`, 공개 `user`, 메모리용 `access_token`, `expires_in: 900`, 본문의 `csrf_token`, refresh·CSRF `Set-Cookie`다. 실패는 입력 422, 로컬 이메일 중복 409, Origin 403, 접수량 초과 `429 registration_rate_limited`, 처리 자리 부족 `503 registration_busy`, 내부 처리·설정 실패 `503 temporarily_unavailable`이다. 가입 제한 응답은 [가입 제한](#가입-제한)을 따른다.
 - `POST /api/auth/login`: 가입과 같은 JSON·`Origin`을 보낸다. 성공은 `200`과 같은 인증 본문·쿠키다. 실패는 동일한 로그인 실패 401, 실패 제한 429, Origin 403이다.
 - `GET /api/me`: `Authorization: Bearer <access>`를 보낸다. 성공은 `200`과 공개 `user`, access 검증 실패는 401이다.
 
@@ -73,8 +79,41 @@
 
 **Google 로그인**
 
-- `GET /api/auth/google/start`: top-level 이동으로 시작한다. 선택 `return_to`는 허용 목록의 상대 경로다. 성공은 Google authorization endpoint로 `302`와 트랜잭션 쿠키다. 복귀 경로 오류는 422, 설정·제공자 실패는 503이다.
-- `GET /api/auth/google/callback`: 제공자의 `code`, `state`와 트랜잭션 쿠키를 받는다. 성공은 `302`와 refresh·CSRF 쿠키다. `GOOGLE_FRONTEND_ORIGIN`이 있으면 검증된 설정 Origin + 허용 상대 경로로 이동하고 없으면 기존 상대 경로를 유지한다. callback URL은 바뀌지 않는다. 검증 실패는 401, 제공자·설정 실패는 503이며 실패 시 세션은 없다.
+- `GET /api/auth/google/start`: top-level 이동으로 시작한다. 선택 `return_to`는 현재 `/`만 허용한다. 성공은 Google authorization endpoint로 `302`와 트랜잭션 쿠키다. 잘못된·중복 복귀 경로는 `422 validation_error`이며 기존 트랜잭션을 변경하지 않는다. 설정이 유효한 상태의 제공자·트랜잭션·쿠키 준비 실패는 아래 302 실패 복귀로 처리한다.
+- `GET /api/auth/google/callback`: 제공자의 `code`, `state`, 선택 `error`·`iss`와 트랜잭션 쿠키를 받는다. 성공은 허용 경로로 `302`와 refresh·CSRF 쿠키, 트랜잭션 쿠키 삭제다. 실패는 아래 계약을 사용하며 기존 401 JSON은 반환하지 않는다. callback URL은 바뀌지 않는다.
+
+### Google 실패 복귀 계약
+
+인증과 Google 설정이 유효하면 start·callback의 처리 가능한 실패는 302로 복귀한다.
+`GOOGLE_FRONTEND_ORIGIN`이 있으면 검증된 Origin + `/?google_login_error=<고정 값>`,
+없으면 동일한 상대 Location을 사용한다. 상대 Location은 API Origin에 남으므로 다른 프런트 포트로 이동하려면 설정을 명시한다.
+실패는 고정 `/`만 사용하며 callback의 return_to query나 Origin·Referer·전달 헤더에서 복귀 주소를 추정하지 않는다.
+
+| `google_login_error` | 분류 |
+| --- | --- |
+| `cancelled` | 유효한 트랜잭션에서 code 없이 `error=access_denied` 수신 |
+| `invalid_request` | 중복·모순 callback, 잘못된 issuer, 쿠키·state·code·신원 검증 실패, 알 수 없는 또는 빈 error |
+| `temporarily_unavailable` | 유효 트랜잭션의 `error=server_error`·`temporarily_unavailable`, 제공자 장애·저장·응답 준비 실패 |
+
+error와 code 동시 존재, code·state·error·iss 중복, 잘못된 선택 issuer는 거부한다.
+제공자의 error를 분류하기 전에 트랜잭션 쿠키·state·만료를 확인한다.
+code 교환 단계의 invalid_grant·access_denied와 재사용 code는 invalid_request이며 취소로 추정하지 않는다.
+시작의 허용 목록 밖 URL·프로토콜 상대 URL·query·fragment·인코딩 우회는 기존 422로 거부한다.
+
+실패 302는 본문이 비어 있고 트랜잭션 쿠키만 삭제한다. refresh·CSRF 쿠키를 새로 발급하거나 기존 값을 삭제하지 않는다.
+커밋 후 응답 준비가 실패하면 부분 응답을 버리고 이번 세션만 보상 취소한다. 보상 실패는 서버 로그에 구분해 기록한다.
+실패 복귀 URL에는 고정 실패 값 외에 code·state·토큰·사용자 식별자·trace ID·예외·제공자 오류 설명을 넣지 않는다.
+
+다음 경우에는 redirect 대신 `503 temporarily_unavailable` 공통 JSON과 트랜잭션 쿠키 삭제를 반환하며 Location은 없다.
+
+- 인증 또는 Google 설정을 사용할 수 없어 안전한 복귀 구성을 확보하지 못한 경우
+- 실패 redirect 또는 쿠키 정리 응답 준비가 실패해 새 JSON 응답으로 대체하는 경우
+
+실패 302와 503 모두 `Cache-Control: no-store`, `Pragma: no-cache`, `Referrer-Policy: no-referrer`를 적용한다.
+실패 값은 화면 안내용이며 인증 상태를 증명하지 않는다. 응답 예시·수동 재현·프런트 담당 범위는
+[Google 실패 복귀 연동 안내](../03-development/google-login-failure.md)를 따른다.
+
+### 로컬 계정 입력과 성공 본문
 
 로컬 이메일은 앞뒤 공백 제거, 유효한 형식과 최대 320자이며 로컬 계정에서만 `lower(email)`로 중복 판정한다. 비밀번호는 정규화 없이 Unicode 코드 포인트 12~128자와 UTF-8 1024바이트 이하를 모두 만족해야 한다. 두 값 모두 필수 문자열이다. 가입 중복의 `409` 코드는 `local_email_exists`이며 Google과 이메일이 같아도 중복이 아니다. 미인증 이메일은 소유 증명이 아니다.
 
@@ -108,6 +147,37 @@
 로그인·가입의 refresh 쿠키는 `HttpOnly; SameSite=Lax; Path=/api/auth`, CSRF도 별도의 같은 속성 쿠키다. 둘 다 호스트 전용(`Domain` 없음)이며 운영에서는 `Secure`다. refresh는 최초 로그인부터 절대 14일로 만료된다. refresh 쿠키의 `Expires`는 그 절대 시각, 교체할 때의 `Max-Age`는 남은 초다.
 
 개발 인증은 API 주소 `http://127.0.0.1:8000`을 사용하고 화면 `http://127.0.0.1:5173`과 Swagger UI `http://127.0.0.1:8000`을 `AUTH_ALLOWED_ORIGINS`에 명시한다. `localhost`는 제외하며 Origin에는 `/docs` 경로를 넣지 않는다. 개발용 HTTP `127.0.0.1`에서만 `Secure=false`를 허용하고 CORS credentials는 허용 목록과 정확히 일치하는 Origin에만 허용한다.
+
+### 가입 제한
+
+`POST /api/auth/register`는 Origin·입력 검사 후 해시 시작 전에 서버 전체 접수량과 처리 자리를 함께 확인한다.
+승인 기본값은 최근 600초에 10건, 가입 전체 처리 동시 1건이며 대기열은 없다.
+설정과 운영 전제는 [인증 기준의 가입 접수와 해시 제한](authentication.md#가입-접수와-해시-제한)을 따른다.
+
+| 거절 조건 | 상태와 `error.code` | `Retry-After`와 안내 |
+| --- | --- | --- |
+| 접수량 상한 도달 | `429 registration_rate_limited` | 가장 오래된 접수 시각 + 시간창 - 현재 경과 시간을 올림한 초, 최소 1초. 기본 시간창에서 1~600초 |
+| 처리 자리 상한 도달 | `503 registration_busy` | `AUTH_REGISTER_BUSY_RETRY_SECONDS`, 기본 5초 |
+
+두 조건에 모두 걸리면 접수량 초과를 우선한다. 거절된 요청은 해시·가입 저장을 시작하지 않고 접수 횟수에도 포함하지 않는다.
+접수 후 중복 이메일·해시·저장·쿠키 실패는 접수 횟수에 유지한다. 내부 실패의 `503 temporarily_unavailable`에는 가입 제한의 재시도 헤더를 붙이지 않는다.
+
+두 제한 응답은 공통 오류 본문을 사용하고 `message`에도 헤더와 같은 재시도 초를 표시한다.
+`Set-Cookie`·토큰 없이 `Cache-Control: no-store`, `Pragma: no-cache`를 반환한다.
+`Retry-After`는 CORS `Access-Control-Expose-Headers`에 포함된다.
+화면은 안내 시간 뒤 사용자가 다시 제출하게 하며 자동 재전송하지 않는다. 재시도 시점에 접수량과 처리 자리를 다시 판정한다.
+
+기본 처리 자리 부족 응답 예시:
+
+```http
+HTTP/1.1 503 Service Unavailable
+Content-Type: application/json
+Retry-After: 5
+Cache-Control: no-store
+Pragma: no-cache
+
+{"error":{"code":"registration_busy","message":"다른 가입 요청을 처리하고 있습니다. 5초 후 다시 시도해 주세요.","fields":{},"trace_id":"trace-demo-register-001"}}
+```
 
 ### 현재 사용자 — `GET /api/me`
 
@@ -149,7 +219,7 @@
 3. 낡은 refresh와 짝 CSRF가 5초 안에 다시 오면 `409 refresh_race`, `Retry-After: 1`, `Set-Cookie` 없음이다. 새 refresh 쿠키에 낡은 CSRF 헤더가 붙으면 `403 csrf_failed`이며 재사용 폐기로 취급하지 않는다. 화면은 잠시 기다려 `/csrf`를 다시 읽고 refresh를 한 번만 재시도한다. 실패하면 재로그인을 안내한다.
 4. `POST /api/auth/logout` 성공은 `204 No Content`와 두 쿠키 만료다. 화면 메모리의 access·CSRF를 지운다. 다른 로그인 계보는 유지되고 이미 발급된 access는 최대 15분 유효할 수 있다.
 
-일반 인증 오류 예시 (`401`; 403·409·429도 같은 JSON 형식에 각각 위 코드를 쓴다):
+일반 인증 오류 예시 (`401`; 403·409·429·503도 같은 JSON 형식에 각각 위 코드를 쓴다):
 
 ```json
 {
@@ -273,7 +343,7 @@ Google 트랜잭션 쿠키는 시작과 callback을 모두 포함하는 `Path=/a
 
 ## 회원 채팅 대기열 (#53)
 
-질문과 재시도는 **접수만 하고 `202`로 바로 응답**한다. 생성은 서버의 실행기가 회원별 대기열 순서대로 하고, 진행·완료는 회원 단위 구독 `GET /api/chat/events`로 알린다. 응답·이벤트 예시 전문과 시나리오는 [대기열 API 상세](chat-queue-api-draft.md), 승인 정책은 [회원 채팅 정책](chat-policy.md)이다. 아래는 구현된 계약이며 예시와 다르면 이 절이 우선한다.
+질문과 재시도는 **접수만 하고 `202`로 바로 응답**한다. 생성은 서버의 실행기가 회원별 대기열 순서대로 하고, 진행·완료는 회원 단위 구독 `GET /api/chat/events`로 알린다. HTTP 경로·요청·응답·오류·이벤트의 단일 계약은 이 절이다. [채팅 시나리오](chat-queue-api-draft.md)는 이를 사용하는 가짜 예시와 화면 확인 목록이며, [회원 채팅 정책](chat-policy.md)은 수량·기간·정산·대기·재시도 정책과 구현 경계를 정한다.
 
 | 바뀐 점 | #53 이전 | 지금 |
 | --- | --- | --- |
@@ -298,16 +368,85 @@ Google 트랜잭션 쿠키는 시작과 callback을 모두 포함하는 `Path=/a
 | `paused` | 같은 대화의 앞 질문 실패로 대기 | 예약 | `["cancel"]` |
 | `running` | 생성 중 또는 저장 여부 확인 중; 회원당 1개 | 예약 유지 | `[]` |
 | `completed` | 답변 저장 확인 | 1회 차감 | `[]` |
-| `failed` | 제공자 실패(`provider_failed`) | 환불 | 아래 규칙 |
-| `interrupted` | 30초 초과·재시작 등, 저장 없음 확인(`outcome_unknown`) | 환불 | 아래 규칙 |
-| `canceled` | 실행 전 취소 | 환불 | `[]` |
-| `expired` | 실행 전 5분 경과 | 환불 | `[]` |
+| `failed` | 제공자 실패(`provider_failed`) | 예약 해제 | 아래 규칙 |
+| `interrupted` | 30초 초과·재시작 등, 저장 없음 확인(`outcome_unknown`) | 예약 해제 | 아래 규칙 |
+| `canceled` | 실행 전 취소 | 예약 해제 | `[]` |
+| `expired` | 실행 전 5분 경과 | 예약 해제 | `[]` |
 
 `failed`·`interrupted` 작업은 답변이 그 질문의 **최신 시도**이고, 그 질문의 다른 시도가 대기·실행 중이 아니며, 같은 대화의 뒤 질문이 실행을 시작하지 않았을 때 `retry`를 허용한다. 그 대화가 이 작업 때문에 정지 중이면 `skip`도 허용한다(`["retry", "skip"]`). 건너뛴 뒤에는 `["retry"]`, 뒤 질문이 시작되면 `[]`다. 화면은 버튼을 `allowed_actions`로만 정하고, 한도·간격은 `limits`로 비활성화한다.
+
+```json
+{
+  "id": "7003",
+  "kind": "question",
+  "conversation_id": "501",
+  "question_message_id": "9005",
+  "answer_message_id": null,
+  "state": "paused",
+  "position": null,
+  "paused_by_message_id": "9003",
+  "error_code": null,
+  "accepted_at": "2026-10-20T03:00:40Z",
+  "started_at": null,
+  "finished_at": null,
+  "expires_at": "2026-10-20T03:05:40Z",
+  "allowed_actions": ["cancel"]
+}
+```
+
+```mermaid
+stateDiagram-v2
+  [*] --> queued: 접수
+  [*] --> paused: 같은 대화 앞 질문이 실패 중
+  queued --> paused: 앞 질문 실패
+  paused --> queued: 앞 질문 재시도 성공 또는 건너뛰기
+  queued --> running: 차례가 됨
+  queued --> canceled: 실행 전 취소
+  paused --> canceled: 실행 전 취소
+  queued --> expired: 접수 후 5분
+  paused --> expired: 접수 후 5분
+  running --> completed: 답변 저장 확인
+  running --> failed: 제공자 실패
+  running --> interrupted: 30초 초과·재시작 뒤 저장 없음 확인
+  completed --> [*]
+  failed --> [*]
+  interrupted --> [*]
+  canceled --> [*]
+  expired --> [*]
+```
 
 ### 한도 — `limits`
 
 `daily`·`six_hour`는 `limit`, `used`(정산), `reserved`(미종결), `remaining`(= `limit` − `used` − `reserved`), `resets_at`(KST 00:00 / 00·06·12·18시를 UTC로)이다. `queue`는 `running`, `questions_waiting`(`queued`·`paused` 새 질문), `questions_max: 3`, `retries_waiting`(`queued` 재시도), `retries_max: 1`이다. `next_attempt_at`은 직전 접수 + 10초이며 지금 접수할 수 있으면 `null`이다.
+
+```json
+{
+  "daily": {
+    "limit": 400,
+    "used": 12,
+    "reserved": 2,
+    "remaining": 386,
+    "resets_at": "2026-10-20T15:00:00Z"
+  },
+  "six_hour": {
+    "limit": 100,
+    "used": 5,
+    "reserved": 2,
+    "remaining": 93,
+    "resets_at": "2026-10-20T09:00:00Z"
+  },
+  "queue": {
+    "running": 1,
+    "questions_waiting": 1,
+    "questions_max": 3,
+    "retries_waiting": 0,
+    "retries_max": 1
+  },
+  "next_attempt_at": "2026-10-20T03:00:50Z"
+}
+```
+
+수량·초기화·정산·대기·FIFO·재시도 정책은 [회원 채팅 정책](chat-policy.md)을 따른다. 위 객체는 그 정책을 화면에 전달하는 응답 형식이다. 새 질문 대기와 재시도 대기는 별도 필드로 표현하고 실행 중 작업을 포함하지 않는다.
 
 ### 질문 접수 — `POST /api/conversations/501/messages`
 
@@ -344,7 +483,7 @@ Google 트랜잭션 쿠키는 시작과 callback을 모두 포함하는 `Path=/a
 
 ### 실행 전 취소 — `POST /api/chat/jobs/7003/cancel`
 
-본문은 `{}`다. `queued`·`paused`만 취소하고 예약을 환불한다. `200`, `{job, limits}`다. 이미 `canceled`면 같은 결과를 `200`으로 돌려준다. `running`과 다른 종결 상태는 `409 job_not_cancelable`이다. 실행 시작·만료와 겹치면 먼저 반영된 하나만 결과가 된다. 실행 중 취소는 없다.
+본문은 `{}`다. `queued`·`paused`만 취소하고 예약을 해제한다. `200`, `{job, limits}`다. 이미 `canceled`면 같은 결과를 `200`으로 돌려준다. `running`과 다른 종결 상태는 `409 job_not_cancelable`이다. 실행 시작·만료와 겹치면 먼저 반영된 하나만 결과가 된다. 실행 중 취소는 없다.
 
 ### 한도 조회 — `GET /api/chat/limits`
 
@@ -352,14 +491,14 @@ Google 트랜잭션 쿠키는 시작과 callback을 모두 포함하는 `Path=/a
 
 ### 구독 — `GET /api/chat/events?since=2026-10-20T03:00:52Z`
 
-회원 단위 SSE(`text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`)다. `Authorization` 헤더가 필요하므로 화면은 `fetch` 스트림으로 읽는다. `since`는 시간대가 있는 ISO 시각이어야 하며 없으면 `422`다.
+회원 단위 SSE(`text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`)다. `Authorization` 헤더가 필요하므로 화면은 `fetch` 스트림으로 읽는다. `since`는 생략할 수 있다. 제공한 값에 시간대가 없거나 ISO 시각이 아니면 `422`다.
 
 | 이벤트 | 보내는 시점 | `data` |
 | --- | --- | --- |
 | `snapshot` | 연결 직후 1회, 다른 이벤트보다 먼저 | `{items: [{job, question, answer}...], limits, server_time}` |
 | `job` | 작업 상태·순번·`allowed_actions`가 바뀐 변경이 **커밋된 뒤** | `{job, question, answer}` |
 | `delta` | 실행 중 답변 조각 | `{job_id, text}` |
-| `limits` | 예약·정산·환불 뒤, 한도 기간이 초기화된 뒤 | `limits` |
+| `limits` | 예약·정산·예약 해제 뒤, 한도 기간이 초기화된 뒤 | `limits` |
 
 - `snapshot.items`: 종결 전 작업 전체. `since`가 있으면 그 시각(서버가 30초 여유를 둠) 이후 끝난 작업과, 같은 대화의 변경으로 버튼이 바뀌었을 수 있는 실패 작업도 넣는다. 이 실패 작업은 `since` 시점에 그 대화에서 마지막으로 실행된 질문과 그 뒤 질문들의 것이라서, 끊긴 동안 질문이 몇 개 실행됐든 빠지지 않는다. 같은 작업이 겹쳐 오면 `job.id`로 덮어쓴다.
 - 한 변경이 다른 작업의 버튼·순번을 바꾸면 그 작업들의 `job` 이벤트도 보낸다. 한 회원의 이벤트는 읽은 순서대로 도착한다.
@@ -375,9 +514,9 @@ Google 트랜잭션 쿠키는 시작과 callback을 모두 포함하는 `Path=/a
 | 보장 | 동작 |
 | --- | --- |
 | 원자적 입장 | 질문·작업·두 기간 예약을 한 트랜잭션으로 저장. 회원 행 → 대화 → 한도 행 순으로 잠가 동시 탭·기기에서도 대기 3개·재시도 1개·10초 간격을 넘지 않는다. |
-| 실행 시 문맥 | 실행 시작 때 그 질문 이전의 `completed` 질문+답변 쌍을 순서대로 읽고 현재 질문을 한 번 붙인다. 실패·중단·진행 중 답변과 `delta`는 넣지 않는다. |
+| 실행 시 문맥 | 실행 시작 때 이전 완료 질문·답변만 읽고 현재 질문을 한 번 붙인다. 실패·중단·진행·`delta`는 제외한다. **쌍 순서는 아래 알려진 차이를 확인한다.** |
 | 저장 뒤 완료 알림 | 답변 저장과 정산이 커밋된 뒤에만 `completed` 이벤트를 보낸다. 커밋이 실패하면 알리지 않고 작업은 `running`으로 남아 복구가 종결한다. |
-| 한 번만 정산 | 작업마다 차감 또는 환불은 정확히 한 번이다. 결과 불명 동안 예약을 유지한다. 초기화를 넘긴 환불은 새 기간 잔량을 늘리지 않는다. |
+| 한 번만 정산 | 작업마다 차감 또는 예약 해제는 정확히 한 번이다. 결과 불명 동안 예약을 유지한다. 초기화를 넘긴 예약 해제는 새 기간 잔량을 늘리지 않는다. |
 | 자동 재시도 없음 | 실패·중단 뒤나 재시작 복구에서 제공자를 다시 부르지 않는다. 기한 + 15초가 지난 `running`은 저장된 완료 답변이 있으면 완료, 아니면 `interrupted`로 종결한다. |
 | 늦은 결과 무시 | 결과는 시작 때 발급한 실행 토큰이 일치하는 `running` 작업에만 저장한다. 종결 상태·새 시도·완료 답변은 덮어쓰지 않는다. |
 | 재시작 | 서버가 다시 뜨면 실행기가 만료 전 대기 작업을 이어서 실행한다. #53 이전 동기 API가 남긴 작업 없는 `pending` 답변은 그 대화의 다음 실행 시작 때 `interrupted`로 닫는다. |
@@ -396,13 +535,11 @@ Google 트랜잭션 쿠키는 시작과 callback을 모두 포함하는 `Path=/a
 
 `Retry-After`는 1 이상의 정수 초(올림)이며 CORS `Access-Control-Expose-Headers`에 포함된다.
 
-## 의존 관계와 인수 확인
+## 알려진 구현 차이와 인수 확인
 
-다음은 작업 ID의 의존 관계이며 현재 미구현 목록이 아니다. 기존 소스·테스트와 실제 이슈 상태를 함께 확인한다.
+완료 쌍을 `Q1 → A1 → Q2 → A2`로 구성하는 것이 정책이다. 현재 `app.repositories.chat_jobs.context_before()`는 메시지 ID로 정렬한다. Q1·Q2가 답변보다 먼저 접수되면 `Q1 → Q2 → A1 → A2`가 될 수 있어 **정책과 구현에 차이가 있다**. 완료 쌍 필터링의 존재를 순서 보장 완료로 표시하지 않는다. 이 문서는 결함을 수정하지 않는다.
 
-1. PM이 이 형식과 미정 항목을 공유한다. #2 인증 담당은 재사용 가능한 pytest 인증 fixture와 401 검사를 만든다. #9 뒤 #8 채팅 담당은 사용자 `101`·`202`의 분리된 이력을 조회 함수와 pytest로 검증한다.
-2. #10 채팅 담당은 #8의 소유권 조회 함수를 API에 연결하고, #11에서 짧은 트랜잭션에 질문+`pending` 답변을 만든 뒤 트랜잭션 밖에서 모의 제공자를 호출한다. 완료 결과만 저장한다.
-3. #18 화면 담당은 이 형식으로 목록·전송·새로고침 재조회를 연결한다. 실제 인증 통합은 위 인증 기준에 따라 별도로 검증한다.
+아래는 구현 변경과 실제 화면 통합 때 유지할 인수 목록이다. 체크박스는 이 문서 작업에서 테스트를 재실행했다는 표시가 아니다.
 
 - [ ] 두 사용자에게 대화·메시지가 섞이지 않고, 비인증 401과 타인 대화 404가 구분된다.
 - [ ] `bigint` ID를 문자열로 유지하고 목록 페이지에 누락·중복이 없다.
@@ -411,6 +548,14 @@ Google 트랜잭션 쿠키는 시작과 callback을 모두 포함하는 `Path=/a
 - [ ] 제공자 호출 중 DB 트랜잭션·잠금을 열어 두지 않고 30초 기한을 실행기가 강제한다. 기한 + 15초가 지난 `running`은 복구가 종결하고 늦은 결과가 덮어쓰지 못한다.
 - [ ] 접수와 두 기간 예약이 함께 저장되거나 함께 거부되고, 같은 키는 한도 0·10초 전에도 기존 작업을 돌려준다.
 - [ ] 실패는 같은 대화의 뒤 질문만 정지하고, 재시도 성공이나 건너뛰기만 재개한다. 뒤 질문이 시작되면 앞 질문 재시도는 `409 retry_not_latest`다.
-- [ ] `completed` 이벤트는 저장·정산 커밋 뒤에만 오고, 작업마다 차감 또는 환불은 한 번이다. 연결 끊김·로그아웃은 작업을 멈추지 않고 재연결 `snapshot`이 저장 결과를 준다.
+- [ ] `completed` 이벤트는 저장·정산 커밋 뒤에만 오고, 작업마다 차감 또는 예약 해제는 한 번이다. 연결 끊김·로그아웃은 작업을 멈추지 않고 재연결 `snapshot`이 저장 결과를 준다.
 
-백엔드 라우트·ORM 모델·인증/채팅 검사는 존재하지만 실제 화면 가입→채팅 E2E나 운영 준비 완료를 뜻하지 않는다. 실제 GPT 어댑터·격리 시험 경계는 [S11 기준](ai.md)을 따른다. 대기열 실행기는 제공자의 `stream`을 쓰는데 실제 Codyssey 어댑터에는 아직 `complete`만 있으므로, 공개 서비스는 모의 제공자를 유지하고 실제 AI 연결은 별도 작업에서 `stream`을 더해 검증한다. 화면의 대기열·구독 실제 연동(#20, #21)과 독립 검증(#54)이 뒤따른다.
+백엔드 라우트·ORM 모델·인증/채팅 검사와 PR #78의 회원 화면 연결이 있으며, 가입 제한은 PR #79에서 구현했다. 이것이 #19·#54의 독립 통합 검증이나 운영 준비 완료를 뜻하지는 않는다. 실제 GPT 어댑터·격리 시험 경계는 [S11 기준](ai.md)을 따른다. 대기열 실행기는 제공자의 `stream`을 쓰는데 실제 Codyssey 어댑터에는 아직 `complete`만 있으므로, 공개 서비스는 모의 제공자를 유지하고 실제 AI 연결은 별도 작업에서 `stream`을 더해 검증한다. 기존 #20·#21의 목업 완료 이력은 유지한다.
+
+## 변경 이력
+
+| Rev | 일자 (KST) | 변경과 근거 |
+| --- | --- | --- |
+| 1 | 2026-10-25 | PR #62 이후 단일 API 계약, 구독 복구, 당시 실제 화면 미연동과 문맥 순서 차이를 정리했다. 당시 기준 코드는 `2d50da5`다. |
+| 2 | 2026-10-27 | PR #79의 가입 429·503 코드와 재시도 시간·접수 횟수·거절 응답을 반영했다. PR #78 이후 회원 화면을 미연동으로 읽게 하는 설명도 수정했다. 코드 기준 `1566e8b`, 정책 근거는 #71의 승인 댓글이다. |
+| 3 | 2026-10-27 | #69의 Google start·callback 실패를 302 고정 코드 복귀와 503 JSON 대체 응답으로 갱신했다. 422 경계·쿠키 정리·안전한 복귀와 프런트 인계 조건을 명시했다. 구현 `8921f8a`, 검증 `1cbf709`. |

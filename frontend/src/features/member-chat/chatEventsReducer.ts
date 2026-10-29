@@ -1,6 +1,6 @@
 /**
  * 구독 이벤트를 화면 상태로 모으는 reducer와 답변 표시 selector.
- * 기준: docs/04-reference/chat-queue-api-draft.md (PR #56)
+ * 기준: docs/04-reference/api.md Rev 1 "구독"
  *
  * 핵심 규칙
  * - delta는 임시 출력이다. 저장이 확인된 `completed` 작업의 answer만 확정 답변으로 표시한다.

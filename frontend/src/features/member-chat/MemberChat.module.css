@@ -5,7 +5,7 @@
   width: 100%;
   max-width: 960px;
   min-height: 100%;
-  padding: 40px 32px 24px;
+  padding: 40px 32px 0;
   color: #202b38;
 }
 
@@ -48,62 +48,27 @@
   font-weight: 600;
 }
 
-.queuePanel {
-  padding: 22px;
-  border: 1px solid #e4e9ed;
-  border-radius: 16px;
-  background: #fff;
-}
-
-.queuePanel h2 {
-  margin: 0;
-  font-size: 17px;
-}
-
-.queuePanel p {
-  margin: 7px 0 0;
-  color: #697586;
-  font-size: 13px;
-}
-
-.queueStats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 20px;
-}
-
-.queueStats > div {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 14px;
-  border-radius: 10px;
-  background: #f6f8fa;
-}
-
-.queueStats span {
-  color: #697586;
-  font-size: 13px;
-}
-
-.queueStats strong {
-  font-size: 20px;
-}
-
-.quota {
-  margin: 16px 0 0;
-  color: #697586;
-  font-size: 12px;
-}
-
+/* 본문 높이보다 대화가 길어도 줄어들지 않는다. flex-basis 0에 min-height만 두면 화면 높이에 맞춰 줄어든 상자 밖으로
+   메시지가 넘쳐, 입력창이 메시지 사이에 그려지고 뒤 메시지가 입력창 아래로 이어졌다(PR #63 제보). */
 .chatArea {
   display: flex;
-  flex: 1;
+  flex: 1 0 auto;
   flex-direction: column;
   gap: 20px;
   min-height: 240px;
-  padding: 32px 0;
+  padding: 24px 0 32px;
+}
+
+.limits {
+  margin: 0;
+  color: #697586;
+  font-size: 13px;
+}
+
+.thread {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .emptyState {
@@ -157,38 +122,54 @@
   background: #fff;
 }
 
-.statusCard > strong {
-  font-size: 16px;
-}
-
-.chatArea .statusCard > p {
-  margin: 10px 0 0;
-  color: #697586;
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-.answer {
-  margin-top: 18px;
-  padding: 16px;
-  border-radius: 10px;
-  background: #f6f8fa;
-  font-size: 14px;
-  line-height: 1.8;
-}
-
-.statusCard button {
+.attempt + .attempt {
   margin-top: 16px;
-  padding: 9px 14px;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  background: #fff;
-  color: #334155;
+  padding-top: 16px;
+  border-top: 1px dashed #e4e9ed;
+}
+
+.chatArea .attemptLabel {
+  margin: 0 0 8px;
+  color: #697586;
+  font-size: 13px;
   font-weight: 600;
 }
 
-.statusCard button:hover {
-  background: #f6f8fa;
+.error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 14px;
+}
+
+.errorText {
+  margin: 0;
+}
+
+.error button {
+  padding: 6px 12px;
+  border: 1px solid #fca5a5;
+  border-radius: 8px;
+  background: #fff;
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+/* 입력창은 본문 스크롤 영역의 아래에 붙는다. 메시지는 입력창 뒤로 지나가며 겹쳐 보이지 않는다. */
+.composerDock {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  padding-bottom: 24px;
+  background: #fff;
 }
 
 .composer {
@@ -254,42 +235,13 @@
   opacity: 0.45;
 }
 
-.devControls {
-  margin-top: 16px;
-  color: #697586;
-  font-size: 13px;
-}
-
-.devControls summary {
-  width: fit-content;
-  cursor: pointer;
-}
-
-.devControls > div {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 12px 0;
-}
-
-.devControls button {
-  padding: 7px 10px;
-  border: 1px solid #e4e9ed;
-  border-radius: 8px;
-  background: #fff;
-  color: #334155;
-  font-size: 12px;
-}
-
-.devControls button[aria-pressed='true'] {
-  border-color: #2563eb;
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-
 @media (max-width: 760px) {
   .page {
-    padding: 24px 16px;
+    padding: 24px 16px 0;
+  }
+
+  .composerDock {
+    padding-bottom: 16px;
   }
 
   .header {
@@ -297,25 +249,7 @@
     gap: 12px;
   }
 
-  .queuePanel {
-    padding: 16px;
-  }
 
-  .queueStats {
-    gap: 8px;
-  }
-
-  .queueStats > div {
-    padding: 10px;
-  }
-
-  .queueStats span {
-    font-size: 11px;
-  }
-
-  .queueStats strong {
-    font-size: 17px;
-  }
 
   .composer {
     padding: 14px;

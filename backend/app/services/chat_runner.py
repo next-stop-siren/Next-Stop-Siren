@@ -12,7 +12,8 @@ member's. The database lock decides who runs; the worker's own bookkeeping only 
 asking twice. The app starts the worker (#53) and turns its `notify` and `on_delta`,
 which also receive the member's ID, into subscription events. `notify` is called only
 after a commit, so a stored outcome that failed to commit is never announced. Log
-entries carry row IDs only, never a question or an answer.
+entries carry row IDs only, never a question or an answer, and a failure is logged as
+its `SafeError` classification, never its exception text or traceback (#70).
 """
 
 import logging
@@ -26,6 +27,7 @@ from functools import partial
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.integrations.provider import AnswerProvider, ContextMessage, ProviderFailed, ProviderTimeout
+from app.observability import SafeError
 from app.services import chat_queue
 from app.services.chat import ANSWER_TIME_LIMIT_SECONDS
 from app.services.chat_queue import OUTCOME_UNKNOWN, PROVIDER_FAILED, Outcome, QuotaLedger
@@ -132,9 +134,19 @@ def run_next(
         outcome.error_code or outcome.status,
         round((time.monotonic() - called_at) * 1000),
     )
-    with session_factory() as session:
-        finished = chat_queue.finish(session, ledger, claimed.job_id, claimed.run_token, outcome)
-        session.commit()
+    try:
+        with session_factory() as session:
+            finished = chat_queue.finish(session, ledger, claimed.job_id, claimed.run_token, outcome)
+            session.commit()
+    except Exception as error:
+        # The outcome is not stored: the job stays running and recovery interrupts it later.
+        logger.error(
+            "Job outcome not stored, job_id=%s, outcome=%s, %s",
+            claimed.job_id,
+            outcome.error_code or outcome.status,
+            SafeError.of(error),
+        )
+        raise
     if notify is not None and finished is not None:
         notify(finished.job_ids)
     return True
@@ -214,8 +226,9 @@ class ChatJobWorker:
                     on_delta=on_delta,
                 ):
                     break
-        except Exception:
-            logger.exception("Chat job run failed, user_id=%s", user_id)
+        except Exception as error:
+            # Never the exception text or traceback: a database error carries its SQL and bound values.
+            logger.error("Chat job run failed, user_id=%s, %s", user_id, SafeError.of(error))
         finally:
             with self._busy_lock:
                 self._busy.discard(user_id)
@@ -224,7 +237,7 @@ class ChatJobWorker:
         while not self._stopping.is_set():
             try:
                 self.tick()
-            except Exception:
-                logger.exception("Chat job poll failed")
+            except Exception as error:
+                logger.error("Chat job poll failed, %s", SafeError.of(error))
             self._wake.wait(self._poll_seconds)
             self._wake.clear()

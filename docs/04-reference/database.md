@@ -1,10 +1,12 @@
 # 데이터베이스 설계
 
-아래 다섯 테이블, 네 상태, 대화별 pending 유일성, 60초 회복과 D4는 **현재 모델** 설명이다.
+**Rev 1 · 2026-10-25 (KST)** · 코드 기준: [`2d50da5`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/2d50da5976548db7b85c5b0b931b7c43e622fa15)
 
-[회원 채팅 목표](chat-policy.md)의 영속 작업, 회원 실행권, 접수 기간별 예약과 단일 정산·환불, 5분 기한, 정지 상태와 재시작 조정은 #52·#15의 설계 대상이다. 구체적인 테이블·컬럼·인덱스, 적용·되돌림과 기존 데이터 영향은 개발자가 제안하고 검토한다. #15 제안은 아래 [회원 한도](#회원-한도-예약정산-15-제안), #52 제안은 [영속 대기열](#영속-대기열실행권복구-52-제안)에 있다. 현재 `create_all()`은 기존 스키마를 바꾸지 않는다.
+변경 근거: [PR #57](https://github.com/next-stop-siren/Next-Stop-Siren/pull/57) · [PR #59](https://github.com/next-stop-siren/Next-Stop-Siren/pull/59) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62). Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
 
-현재 앱은 아래 **5개 제품 테이블의 ORM 모델**과 인증·대화 저장 경로를 구현한다. 이 문서는 PostgreSQL 17의 데이터 계약이다. ORM(테이블과 Python 클래스를 연결하는 모델)인 SQLAlchemy 2.x로 초기 스키마를 정의하며, [DDL 참고안](database-reference.sql)은 제약의 참고 자료이지 실행된 스키마나 필수 수기 DDL이 아니다. `app.models.register_models()`가 인증·대화 모델을 등록하며 `db-init`·`db-init-test`로 해당 DB의 누락 테이블을 생성한다. 등록 여부가 현재 로컬 DB에 이미 생성됐다는 뜻은 아니다. [기술 구성](../01-start/stack.md)에 구현 경계를 정리했다.
+현재 등록 모델은 **10개**다. 인증·대화 기반 5개, 한도 2개, 대기열 3개가 `app.models.register_models()`에 등록됐고 PR #62에서 API와 연결됐다. 아래 기반 테이블 그림과 상세 뒤에 한도·대기열 모델을 설명한다. 모델 등록은 실제 DB 생성·기존 스키마 변경·운영 데이터 복원 검증 완료를 뜻하지 않는다.
+
+PostgreSQL 17과 SQLAlchemy 2.x ORM을 사용한다. `db-init`·`db-init-test`의 `create_all()`은 누락 테이블만 생성하고 기존 스키마를 바꾸지 않는다. [DDL 참고안](database-reference.sql)은 대기열 도입 전 기반 제약 참고 자료이며 10개 현재 모델의 완전한 실행 DDL이 아니다. 현재 계약은 [API](api.md), 정책 의도는 [회원 채팅 정책](chat-policy.md)을 따른다.
 
 ```mermaid
 erDiagram
@@ -111,54 +113,54 @@ ORDER BY m.id;
 ```
 
 1. 인증 미들웨어가 확인한 사용자 정보의 `user_id`로 `conversations.id`와 소유자를 함께 조회한다. 모든 대화 읽기·쓰기에 이 조건을 적용한다. `messages` FK만으로 사용자 격리를 보장하지 않는다.
-2. 질문은 공백을 포함한 Unicode 코드 포인트 최대 4000자이며 공백만이면 거부한다. `request_key`는 1~200자이고 별도 공백 제한을 추가하지 않으며 화면에서는 UUID를 권장한다. 두 필드의 NUL(`U+0000`)은 저장 전 HTTP 422로 거부한다. 질문과 키의 원문을 보존하며 질문과 첫 `pending` 답변을 짧은 트랜잭션에서 생성한다. 같은 요청 키의 다른 본문은 충돌로 처리하고, 동일 재전송은 기존 결과를 조회한다.
+2. 질문은 공백을 포함한 Unicode 코드 포인트 최대 4000자이며 공백만이면 거부한다. `request_key`는 1~200자이고 별도 공백 제한을 추가하지 않으며 화면에서는 UUID를 권장한다. 두 필드의 NUL(`U+0000`)은 저장 전 HTTP 422로 거부한다. 질문과 키의 원문을 보존하며 접수 때는 질문·작업·예약을 짧은 트랜잭션에서 저장한다. 첫 `pending` 답변은 작업의 실행 시작 때 생성한다. 같은 요청 키의 다른 본문은 충돌로 처리하고, 동일 재전송은 기존 결과를 조회한다.
 3. 완료된 답변만 다음 AI 문맥에 넣는다. 실패·중단 답변의 `content`는 NULL이다. S11의 승인된 [GPT 기준](ai.md)에 따라 과거 완성 질문+답변 쌍 뒤 현재 질문을 추가한다. 실패·중단·진행 쌍은 AI 문맥에서 제외하고 DB·UI 이력은 유지한다. 상태 전이와 `updated_at` 갱신은 서비스가 담당한다.
 
-완성 쌍 필터링은 현재 저장소의 조회 함수와 관련 테스트에 구현되어 있다. 실패·중단·진행 쌍은 문맥에서만 제외하며 이력은 유지한다.
+완료 쌍 필터링은 있으나 실행 경로의 `chat_jobs.context_before()`는 ID 순서다. 연속 접수하면 Q1·Q2·A1·A2가 되어 정책의 쌍 순서와 다를 수 있다. [API의 알려진 차이](api.md#알려진-구현-차이와-인수-확인)를 확인한다. 실패·중단·진행 쌍은 문맥에서만 제외하며 이력은 유지한다.
 
 #53부터 질문은 짧은 트랜잭션에서 질문·작업·예약만 저장하고, 답변 `pending` 행은 작업이 실행을 시작할 때 만든다. 제공자 호출은 트랜잭션 밖에서 수행하고 실행기가 30초 기한을 강제한다. 결과 저장은 `pending`인 행에만 조건부로 적용하므로 늦게 도착한 결과가 종결 상태·새 시도·완료 답변을 덮어쓰지 못한다. 수동 재시도는 같은 질문에 `attempt_no`를 1 올린 새 답변 행을 실행 시작 때 `retry_key`와 함께 만들고 이전 시도 행은 바꾸지 않는다. `messages_retry_key_uq`·`messages_attempt_uq`·`messages_one_pending_uq`가 중복 시도를 DB에서도 막는다. 이전의 60초 `pending` 회복과 D4(가장 최근 생성 질문) 규칙은 대기열의 복구와 “가장 최근 실행된 질문” 규칙으로 바뀌었다. 아래 대기열 절을 본다.
 
-## 회원 한도 예약·정산 (#15 제안)
+## 회원 한도 예약·정산 (#15 구현)
 
 [회원 채팅 정책](chat-policy.md)의 한도 값을 `app.services.quota`가 예약·정산한다. #53부터 질문·재시도 접수가 대기열 입장과 같은 트랜잭션에서 예약한다(`quota.MemberQuota`). 기존 5개 테이블은 바꾸지 않는다.
 
 | 테이블 | 역할 |
 | --- | --- |
 | `chat_quotas` | 회원당 한 행(`user_id` PK·`users` FK). 접수가 이 행을 `FOR UPDATE`로 잠가 같은 회원의 모든 탭·기기·대화의 예약을 하나씩 처리한다. `last_reserved_at`은 10초 간격 기준이다. |
-| `chat_quota_reservations` | 예약 원장. 접수 당시 KST 일 시작 `day_start`와 6시간 시작 `six_hour_start`, `state`(`reserved`·`settled`·`refunded`), 환불 사유 `refund_reason`(`failed`·`interrupted`·`canceled`·`expired`, 작업 상태와 같은 철자), `created_at`, `resolved_at`. |
+| `chat_quota_reservations` | 예약 원장. 접수 당시 KST 일 시작 `day_start`와 6시간 시작 `six_hour_start`, `state`(`reserved`·`settled`·`refunded`), 예약 해제 사유 `refund_reason`(`failed`·`interrupted`·`canceled`·`expired`, 작업 상태와 같은 철자), `created_at`, `resolved_at`. |
 
 - 기간 사용량은 그 기간의 `refunded`가 아닌 예약 수다. 별도 카운터가 없어 원장과 어긋나지 않는다. 기간별 부분 인덱스 `state <> 'refunded'`로 센다.
-- 예약은 대기열 API 초안(PR #56)의 판정 순서대로 마지막 예약 후 10초(`attempt_too_soon`), 그다음 일일 400·6시간 100(`quota_exceeded`)을 검사한다. 대기 자리(`queue_full`)는 그 앞에서 #52가 검사한다. 거부는 사유 코드와 `Retry-After`용 남은 초를 함께 알린다. `quota_exceeded`는 잔량이 0인 기간 중 더 늦은 초기화까지이며, 그 전에 환불로 자리가 생길 수 있다.
-- `limits(...)`는 초안 `limits`의 `daily`·`six_hour`(`limit`, `used`=정산, `reserved`=미종결, `remaining`=`limit`−`used`−`reserved`, `resets_at`)와 `next_attempt_at`을 계산한다. `queue`는 #52가 채운다.
-- 정산·환불은 `state = 'reserved'`인 행만 조건부로 바꾸므로 한 예약은 한 번만 종결된다. 행에 접수 기간이 저장되어 있어 초기화 뒤 옛 예약을 환불해도 새 기간의 잔량은 늘지 않는다.
-- 결과가 불명인 동안 예약은 `reserved`로 남는다. `canceled`·`expired` 환불만 제공자 호출 전 종결이다. 성공·실패·중단·미종결은 회원 차감과 별개로 제공자 과금 가능성이 있다(`provider_may_have_charged`).
+- 예약은 [API 계약](api.md#회원-채팅-대기열-53)의 판정 순서대로 마지막 예약 후 10초(`attempt_too_soon`), 그다음 일일 400·6시간 100(`quota_exceeded`)을 검사한다. 대기 자리(`queue_full`)는 그 앞에서 #52가 검사한다. 거부는 사유 코드와 `Retry-After`용 남은 초를 함께 알린다. `quota_exceeded`는 잔량이 0인 기간 중 더 늦은 초기화까지이며, 그 전에 예약 해제로 자리가 생길 수 있다.
+- `limits(...)`는 API의 `limits`의 `daily`·`six_hour`(`limit`, `used`=정산, `reserved`=미종결, `remaining`=`limit`−`used`−`reserved`, `resets_at`)와 `next_attempt_at`을 계산한다. `queue`는 #52가 채운다.
+- 정산·예약 해제는 `state = 'reserved'`인 행만 조건부로 바꾸므로 한 예약은 한 번만 종결된다. 행에 접수 기간이 저장되어 있어 초기화 뒤 옛 예약을 해제해도 새 기간의 잔량은 늘지 않는다.
+- 결과가 불명인 동안 예약은 `reserved`로 남는다. `canceled`·`expired` 예약 해제만 제공자 호출 전 종결이다. 성공·실패·중단·미종결은 회원 차감과 별개로 제공자 과금 가능성이 있다(`provider_may_have_charged`).
 - 같은 키의 재전송·재조회에는 예약을 다시 호출하지 않는다. 이는 호출하는 쪽이 지킨다.
 
-## 영속 대기열·실행권·복구 (#52 제안)
+## 영속 대기열·실행권·복구 (#52 구현)
 
 [회원 채팅 정책](chat-policy.md)의 작업 저장·실행권·복구를 `app.services.chat_queue`·`app.services.chat_runner`가 처리한다. #53부터 질문·재시도·건너뛰기·취소 API가 이 모듈을 쓰고, 앱이 시작될 때 `ChatJobWorker`가 함께 시작된다(`CHAT_WORKER=off`면 시작하지 않음, 테스트 전용). 동기 생성과 60초 `pending` 회복은 제거했다. 기존 5개 테이블의 컬럼·제약은 바꾸지 않는다.
 
 | 테이블 | 역할 |
 | --- | --- |
 | `chat_queue_members` | 회원당 한 행(`user_id` PK·`users` FK). 접수·실행 시작·결과 저장·취소·만료·건너뛰기가 **가장 먼저** 이 행을 `FOR UPDATE`로 잠근다. 회원의 실행권이며 잠금 순서는 회원 → 대화 → 메시지·작업이다. |
-| `chat_jobs` | 질문 1회 또는 수동 재시도 1회. `kind`(`question`·`retry`), `state`(초안의 8개 상태), `retry_key`, #15 예약 ID `reservation_id`, `paused_by_message_id`, 실행 시작 때 만드는 `answer_message_id`, 실행 토큰 `run_token`, `accepted_at`·`expires_at`(+5분)·`started_at`·`deadline_at`(+30초)·`finished_at`·`skipped_at`. |
+| `chat_jobs` | 질문 1회 또는 수동 재시도 1회. `kind`(`question`·`retry`), `state`(API의 8개 작업 상태), `retry_key`, #15 예약 ID `reservation_id`, `paused_by_message_id`, 실행 시작 때 만드는 `answer_message_id`, 실행 토큰 `run_token`, `accepted_at`·`expires_at`(+5분)·`started_at`·`deadline_at`(+30초)·`finished_at`·`skipped_at`. |
 | `chat_conversation_holds` | 가장 최근 실행된 질문이 실패·중단된 대화(`conversation_id` PK). 그 질문과 가장 최근 실패 작업을 가리킨다. 재시도 성공이나 건너뛰기로 지운다. |
 
 - `chat_jobs_shape_ck`가 상태별 필수·금지 필드, 접수 +5분 만료, 시작 +30초 기한을 DB에서도 강제한다. 질문·답변 FK는 `(id, conversation_id)` 복합 키로 같은 대화만 가리킨다.
 - 부분 유일 인덱스: 회원당 `running` 1개(`chat_jobs_one_running_uq`), 질문당 진행 중 작업 1개, 질문당 새 질문 작업 1개, 질문별 `retry_key` 1개, 답변 행당 작업 1개.
-- 새 질문 대기(`queued`·`paused`) 3개와 재시도 대기(`queued`) 1개는 회원 잠금 아래 센다. 실행 중 작업은 세지 않는다. 판정 순서는 초안대로 소유권 → 같은 키 → 키 충돌 → `queue_full`/`retry_queue_full` → #15 예약(`attempt_too_soon`, `quota_exceeded`)이고 예약 거부 시 질문·작업을 저장하지 않는다.
+- 새 질문 대기(`queued`·`paused`) 3개와 재시도 대기(`queued`) 1개는 회원 잠금 아래 센다. 실행 중 작업은 세지 않는다. 판정 순서는 API 계약대로 소유권 → 같은 키 → 키 충돌 → `queue_full`/`retry_queue_full` → #15 예약(`attempt_too_soon`, `quota_exceeded`)이고 예약 거부 시 질문·작업을 저장하지 않는다.
 - 실행 선택은 회원 잠금 아래 `queued`·미만료 작업의 ID 순(FIFO)이다. 같은 대화에 `queued` 재시도가 있으면 그 대화의 새 질문은 뒤로 미루지만 다른 대화의 앞선 작업과 실행 중 작업은 앞지르지 않는다. `paused`는 실행하지 않는다.
 - 시작 트랜잭션에서 `pending` 답변 행·새 `run_token`·30초 기한을 저장하고 그 질문 이전의 완료 쌍으로 문맥을 읽은 뒤 커밋한다. 제공자 호출 중에는 세션·잠금을 갖지 않는다. 결과 저장은 `state = 'running'`이고 `run_token`이 같을 때만 반영하므로 늦은 결과는 종결 상태·새 시도·완료 답변을 바꾸지 못한다.
-- 작업 종결과 예약 정산·환불은 한 트랜잭션이다. 완료는 정산, 실패·중단·취소·만료는 같은 이름으로 환불한다. 결과 불명인 `running` 동안 예약은 유지된다.
+- 작업 종결과 예약 정산·예약 해제는 한 트랜잭션이다. 완료는 정산, 실패·중단·취소·만료는 같은 이름으로 예약 해제한다. 결과 불명인 `running` 동안 예약은 유지된다.
 - 실패·중단은 대화 정지를 만들고 그 대화의 `queued` 새 질문을 `paused`로 바꾼다. 정지 중 접수한 새 질문도 `paused`다. 재시도 성공·건너뛰기만 정지를 풀고, 재시도의 실패는 정지를 새 실패 작업으로 옮기며, 취소·만료는 그대로 둔다.
 - 취소는 `queued`·`paused`만, 만료는 접수 5분 뒤의 `queued`·`paused`에 적용한다. 정지나 재접속으로 연장하지 않는다. 시작·취소·만료는 같은 회원 잠금과 조건부 상태 변경으로 하나만 반영된다.
-- 복구: 기한 + 15초(`RECOVERY_GRACE_SECONDS`)가 지난 `running`만 조정한다. 저장된 완료 답변이 있으면 완료·정산, 그 밖에는 답변과 작업을 `interrupted`/`outcome_unknown`으로 종결·환불한다. 제공자를 다시 부르지 않는다. 미만료 대기는 DB에 남아 재시작 뒤 `ChatJobWorker`가 이어서 실행한다.
+- 복구: 기한 + 15초(`RECOVERY_GRACE_SECONDS`)가 지난 `running`만 조정한다. 저장된 완료 답변이 있으면 완료·정산, 그 밖에는 답변과 작업을 `interrupted`/`outcome_unknown`으로 종결·예약 해제한다. 제공자를 다시 부르지 않는다. 미만료 대기는 DB에 남아 재시작 뒤 `ChatJobWorker`가 이어서 실행한다.
 - 회원 한도와 10초 간격은 `QuotaLedger` 프로토콜로 호출해 대기열이 한도 모듈을 직접 가져오지 않는다. #53은 `quota.MemberQuota`로 실제 `quota` 모듈을 연결하고 `chat_jobs.reservation_id` → `chat_quota_reservations.id` FK(`chat_jobs_reservation_fk`, `ON DELETE RESTRICT`)를 더했다.
 - 같은 회원의 접수는 `chat_queue_members`를 먼저, #15 예약 안에서 `chat_quotas`를 나중에 잠근다.
 - 허용 동작(`allowed_actions`)은 저장하지 않고 조회할 때 행에서 계산한다. 구독의 `since`는 작업의 `accepted_at`·`started_at`·`finished_at`·`skipped_at`으로 바뀐 대화를 찾으므로 별도 변경 시각 컬럼이 없다.
 - #53 이전 동기 API가 남긴 작업 없는 `pending` 답변은 그 대화의 다음 실행 시작 트랜잭션에서 `interrupted`/`outcome_unknown`으로 닫아 `messages_one_pending_uq`가 실행을 막지 않게 한다.
 
-적용과 되돌림: 새 테이블은 `db-init`·`db-init-test`의 `create_all()`이 누락분을 만든다. **`create_all()`은 기존 테이블을 바꾸지 않으므로** #52 때 이미 `chat_jobs`를 만든 개발·테스트 DB에는 아래 FK를 수동으로 더하거나 그 DB를 다시 초기화한다(CI는 빈 DB라 해당 없음). 기존 행은 바뀌지 않고, #53 이전에 만든 질문에는 작업 행이 없다. 되돌림은 아래 순서로 세 테이블을 지우며 기존 5개 테이블의 데이터에는 영향이 없다. 공유 DB에는 검토 전에 수동 적용하지 않는다.
+적용과 되돌림: 새 테이블은 `db-init`·`db-init-test`의 `create_all()`이 누락분을 만든다. **`create_all()`은 기존 테이블을 바꾸지 않으므로** #52 때 이미 `chat_jobs`를 만든 개발·테스트 DB에는 아래 FK의 적용 여부를 점검하고 백업·적용·복원 계획을 검토한다(CI는 빈 DB라 해당 없음). 기존 행은 바뀌지 않고, #53 이전에 만든 질문에는 작업 행이 없다. 아래 되돌림 SQL은 세 대기열 테이블을 지우므로 그 작업·실행권·정지 기록이 사라진다. 기반 5개 테이블을 직접 지우지는 않지만 운영 데이터의 안전한 복원을 증명하지 않는다. 공유 DB에는 검토 전에 수동 적용하지 않는다.
 
 ```sql
 -- #52 테이블이 이미 있는 DB에 #53 FK를 더할 때
@@ -187,4 +189,10 @@ DROP TABLE chat_queue_members;
 - [ ] 타인 대화의 읽기·쓰기가 거부된다.
 - [ ] 완료 답변만 재조회·문맥에 포함되고 실패·중단 답변은 문맥에서 빠진다.
 
-D1 인증과 S10 입력·30초 제한·60초 초과 회복, D4 수동 재시도에 대한 단위·DB 검사는 존재한다. 실제 화면 통합·운영 검증은 [품질 기준](../03-development/quality.md)에 따라 별도 확인한다. 수동 재시도 횟수 무제한은 승인됐으며 대기열·한도와의 결합은 후속 구현이다. 이 문서 작업에서는 **SQL을 실행하지 않았다**.
+인증과 대기열 입장·정산·실행·복구·재시도·구독에 대한 단위·DB 검사가 존재한다. 60초 pending 회복과 D4는 현재 API 계약이 아니다. 실제 화면 통합·운영 검증은 [품질 기준](../03-development/quality.md)에 따라 별도 확인한다. 수동 재시도·대기열·한도 결합은 PR #62에서 구현됐다. 운영 데이터의 백업·적용·복원 검증과 자동 마이그레이션 도구 선택은 남아 있다. 이 문서 작업에서는 **SQL을 실행하지 않았다**.
+
+## 변경 이력
+
+| Rev | 일자 (KST) | 변경과 근거 |
+| --- | --- | --- |
+| 1 | 2026-10-25 | 등록 모델 10개, 한도·대기열 연결과 기존 DB 변경의 한계를 정리했다. 기준 코드는 위 고정 SHA이며 근거 PR은 문서 상단에 있다. |

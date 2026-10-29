@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { expect, test, vi } from 'vitest'
 import { act, render, screen, fireEvent } from '@testing-library/react'
-import { jsonResponse, errorBody, deferred, regressionSession, strictFetch } from './authTestFixtures'
+import { jsonResponse, errorBody, deferred, hangUntilAborted, regressionSession, strictFetch } from './authTestFixtures'
 import App from '../../App'
 
 function submitAppLogin(email: string) {
@@ -38,6 +38,8 @@ test.each([false, true])(
           next_cursor: null,
         })
       }
+      // 회원 화면은 구독을 연다. 이 검사는 로그아웃만 다루므로 구독은 끊길 때까지 열어 둔다.
+      if (url === '/api/chat/events') return hangUntilAborted(init?.signal)
       return undefined
     })
 
@@ -79,7 +81,7 @@ test('regression: actual App keeps disabled retry banner until response; failed 
   let csrfCalls = 0
   let logoutCalls = 0
   let gate = deferred<Response>()
-  strictFetch((url) => {
+  strictFetch((url, init) => {
     if (url === '/api/auth/csrf')
       return ++csrfCalls === 1
         ? jsonResponse(401, errorBody('unauthenticated'))
@@ -93,6 +95,7 @@ test('regression: actual App keeps disabled retry banner until response; failed 
         next_cursor: null,
       })
     }
+    if (url === '/api/chat/events') return hangUntilAborted(init?.signal)
     return undefined
   })
   render(<App />)
