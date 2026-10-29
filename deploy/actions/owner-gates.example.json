@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "source_sha": "__REQUIRED_EXACT_RELEASE_SHA__",
+  "readiness": {"status": "NOT_APPROVED", "evidence_ref": "__REQUIRED_ISSUE_72_EVIDENCE__", "sha256": "__REQUIRED_EVIDENCE_HASH__"},
+  "trusted_proxy": {"status": "NOT_APPROVED", "evidence_ref": "__REQUIRED_ISSUE_74_EVIDENCE__", "sha256": "__REQUIRED_EVIDENCE_HASH__"},
+  "data_recovery": {"status": "NOT_APPROVED", "evidence_ref": "__REQUIRED_ISSUE_75_EVIDENCE__", "sha256": "__REQUIRED_EVIDENCE_HASH__"},
+  "functional_check_sha256": "__REQUIRED_OWNER_PROVISIONED_CHECK_HASH__",
+  "certbot_image": "__REQUIRED_REVIEWED_CERTBOT_IMAGE_DIGEST__"
+}
