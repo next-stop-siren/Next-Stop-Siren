@@ -26,7 +26,7 @@ from app.models.conversation import Conversation, Message
 from app.models.quota import ChatQuota, QuotaReservation
 from app.models.user import User
 from app.repositories import quotas as quota_repository
-from app.services import chat_queue, chat_runner, quota
+from app.services import chat_context, chat_queue, chat_runner, quota
 from app.services.chat import NotLatestQuestion, RetryNotAllowed
 from app.services.chat_queue import (
     OUTCOME_UNKNOWN,
@@ -239,6 +239,38 @@ def test_jobs_run_first_in_first_out_and_a_failure_pauses_only_its_conversation(
         select(Message.attempt_no).where(Message.reply_to_message_id == failed.question_message_id)
     ).all()
     assert sorted(answers) == [1, 2]
+
+
+def test_the_context_is_in_pair_order_and_leaves_out_the_oldest_pairs_over_the_budget(orm_test_session, monkeypatch):
+    """Q2 and Q3 are stored before A1, so ID order would mix them; each answer follows its question (#66, #68)."""
+    session, ledger = orm_test_session, FakeLedger()
+    user_id = add_user(session)
+    a = add_conversation(session, user_id)
+    for number, key in enumerate(("q1", "q2", "q3")):
+        ask(session, ledger, user_id, a, key, at(number * 11))
+    run(session, ledger, user_id, Outcome("completed", text="답 q1"), at(40))
+    ask(session, ledger, user_id, a, "q4", at(45))
+    run(session, ledger, user_id, Outcome("completed", text="답 q2"), at(51))
+    third = run(session, ledger, user_id, Outcome("completed", text="답 q3"), at(52))
+    assert third.context == [
+        ContextMessage("user", "질문 q1"),
+        ContextMessage("assistant", "답 q1"),
+        ContextMessage("user", "질문 q2"),
+        ContextMessage("assistant", "답 q2"),
+        ContextMessage("user", "질문 q3"),
+    ]
+    # Each pair here is 9 characters and the question 5: room for the two newest pairs only.
+    monkeypatch.setattr(chat_context, "CONTEXT_CHAR_BUDGET", 23)
+    fourth = run(session, ledger, user_id, ANSWERED, at(53))
+    assert fourth.context == [
+        ContextMessage("user", "질문 q2"),
+        ContextMessage("assistant", "답 q2"),
+        ContextMessage("user", "질문 q3"),
+        ContextMessage("assistant", "답 q3"),
+        ContextMessage("user", "질문 q4"),
+    ]
+    # The left-out pair stays in the history.
+    assert session.scalar(select(func.count()).select_from(Message).where(Message.conversation_id == a)) == 8
 
 
 def test_skip_resumes_and_a_retry_still_goes_first_and_pauses_again_on_failure(orm_test_session):
