@@ -1,8 +1,8 @@
 # 데이터베이스 설계
 
-**Rev 1 · 2026-10-25 (KST)** · 코드 기준: [`2d50da5`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/2d50da5976548db7b85c5b0b931b7c43e622fa15)
+**Rev 2 · 2026-10-29 (KST)** · 코드 기준: [`308fbba`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/308fbba83acce02adfd19449b0740d4a99bf9c19)
 
-변경 근거: [PR #57](https://github.com/next-stop-siren/Next-Stop-Siren/pull/57) · [PR #59](https://github.com/next-stop-siren/Next-Stop-Siren/pull/59) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62). Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
+변경 근거: [PR #57](https://github.com/next-stop-siren/Next-Stop-Siren/pull/57) · [PR #59](https://github.com/next-stop-siren/Next-Stop-Siren/pull/59) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62) · [#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66). Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
 
 현재 등록 모델은 **10개**다. 인증·대화 기반 5개, 한도 2개, 대기열 3개가 `app.models.register_models()`에 등록됐고 PR #62에서 API와 연결됐다. 아래 기반 테이블 그림과 상세 뒤에 한도·대기열 모델을 설명한다. 모델 등록은 실제 DB 생성·기존 스키마 변경·운영 데이터 복원 검증 완료를 뜻하지 않는다.
 
@@ -116,7 +116,7 @@ ORDER BY m.id;
 2. 질문은 공백을 포함한 Unicode 코드 포인트 최대 4000자이며 공백만이면 거부한다. `request_key`는 1~200자이고 별도 공백 제한을 추가하지 않으며 화면에서는 UUID를 권장한다. 두 필드의 NUL(`U+0000`)은 저장 전 HTTP 422로 거부한다. 질문과 키의 원문을 보존하며 접수 때는 질문·작업·예약을 짧은 트랜잭션에서 저장한다. 첫 `pending` 답변은 작업의 실행 시작 때 생성한다. 같은 요청 키의 다른 본문은 충돌로 처리하고, 동일 재전송은 기존 결과를 조회한다.
 3. 완료된 답변만 다음 AI 문맥에 넣는다. 실패·중단 답변의 `content`는 NULL이다. S11의 승인된 [GPT 기준](ai.md)에 따라 과거 완성 질문+답변 쌍 뒤 현재 질문을 추가한다. 실패·중단·진행 쌍은 AI 문맥에서 제외하고 DB·UI 이력은 유지한다. 상태 전이와 `updated_at` 갱신은 서비스가 담당한다.
 
-완료 쌍 필터링은 있으나 실행 경로의 `chat_jobs.context_before()`는 ID 순서다. 연속 접수하면 Q1·Q2·A1·A2가 되어 정책의 쌍 순서와 다를 수 있다. [API의 알려진 차이](api.md#알려진-구현-차이와-인수-확인)를 확인한다. 실패·중단·진행 쌍은 문맥에서만 제외하며 이력은 유지한다.
+실행 경로의 `chat_jobs.context_before()`는 `COALESCE(reply_to_message_id, id), id`로 정렬해 연속 접수해도 Q1·A1·Q2·A2 쌍 순서다([#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66), [API의 알려진 차이](api.md#알려진-구현-차이와-인수-확인)). 추가 인덱스는 없으며 대화 하나의 완료 행만 정렬한다. 실패·중단·진행 쌍은 문맥에서만 제외하며 이력은 유지한다.
 
 #53부터 질문은 짧은 트랜잭션에서 질문·작업·예약만 저장하고, 답변 `pending` 행은 작업이 실행을 시작할 때 만든다. 제공자 호출은 트랜잭션 밖에서 수행하고 실행기가 30초 기한을 강제한다. 결과 저장은 `pending`인 행에만 조건부로 적용하므로 늦게 도착한 결과가 종결 상태·새 시도·완료 답변을 덮어쓰지 못한다. 수동 재시도는 같은 질문에 `attempt_no`를 1 올린 새 답변 행을 실행 시작 때 `retry_key`와 함께 만들고 이전 시도 행은 바꾸지 않는다. `messages_retry_key_uq`·`messages_attempt_uq`·`messages_one_pending_uq`가 중복 시도를 DB에서도 막는다. 이전의 60초 `pending` 회복과 D4(가장 최근 생성 질문) 규칙은 대기열의 복구와 “가장 최근 실행된 질문” 규칙으로 바뀌었다. 아래 대기열 절을 본다.
 
@@ -195,4 +195,5 @@ DROP TABLE chat_queue_members;
 
 | Rev | 일자 (KST) | 변경과 근거 |
 | --- | --- | --- |
-| 1 | 2026-10-25 | 등록 모델 10개, 한도·대기열 연결과 기존 DB 변경의 한계를 정리했다. 기준 코드는 위 고정 SHA이며 근거 PR은 문서 상단에 있다. |
+| 1 | 2026-10-25 | 등록 모델 10개, 한도·대기열 연결과 기존 DB 변경의 한계를 정리했다. 당시 기준 코드는 `2d50da5`다. |
+| 2 | 2026-10-29 | #66에서 `context_before()` 정렬을 `COALESCE(reply_to_message_id, id), id`로 바꿔 문맥 쌍 순서 차이를 해결된 상태로 갱신했다. 스키마·인덱스 변경은 없다. 구현 `308fbba`. |
