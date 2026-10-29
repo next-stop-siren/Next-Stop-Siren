@@ -101,7 +101,8 @@ input:focus-visible {
   min-height: 0;
 }
 
-.logout-error-banner {
+.logout-error-banner,
+.google-failure-banner {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
@@ -114,7 +115,8 @@ input:focus-visible {
   font-size: 0.9rem;
 }
 
-.logout-error-banner button {
+.logout-error-banner button,
+.google-failure-banner button {
   flex-shrink: 0;
   padding: 6px 12px;
   border: 1px solid var(--color-primary);
@@ -124,7 +126,8 @@ input:focus-visible {
   font-weight: 600;
 }
 
-.logout-error-banner button:hover {
+.logout-error-banner button:hover,
+.google-failure-banner button:hover {
   background: var(--color-primary);
   color: #ffffff;
 }

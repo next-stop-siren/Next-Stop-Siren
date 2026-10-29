@@ -62,6 +62,24 @@ Location의 고정 값은 cancelled·invalid_request·temporarily_unavailable �
 | `invalid_request` | Google 로그인에 실패했어요 | 로그인 요청을 확인할 수 없어요. 다시 시작하거나 이메일로 로그인해 주세요. |
 | `temporarily_unavailable` | Google 로그인에 실패했어요 | 지금은 Google 로그인을 완료할 수 없어요. 잠시 후 다시 시도하거나 이메일로 로그인해 주세요. |
 
+## 화면 연결
+
+gittul-123 담당 화면은 위 인계 조건을 다음과 같이 구현했다.
+
+| 동작 | 구현 |
+| --- | --- |
+| 값 해석 | `frontend/src/features/auth/googleLoginFailure.ts`가 고정 코드 세 가지만 해석한다. 빈·알 수 없는·중복 값은 원문 없이 일반 안내로 묶는다. |
+| URL 값 소비 | 첫 화면에서 값을 읽은 뒤 `history.replaceState`로 실패 파라미터만 지운다. 다른 query·hash·history state는 유지한다. |
+| 세션 구분 | csrf→refresh→me 복구가 끝난 뒤 비회원이면 실패 모달, 기존 회원이면 회원 화면을 유지한 채 닫을 수 있는 배너를 보여준다. 실패 값으로 로그인·로그아웃 요청을 보내지 않는다. |
+| Google 다시 시도 | 실패 모달의 `Google로 다시 시도하기`는 `/api/auth/google/start`로 가는 링크라 전체 페이지 이동한다. |
+| 이메일 로그인 | `이메일로 로그인`은 같은 모달의 로그인 폼으로 바꾸고 이메일 입력에 초점을 옮긴다. 모달을 닫았다 다시 열면 일반 로그인 화면이다. |
+| 접근성 | 모달은 제목·설명을 `aria-labelledby`·`aria-describedby`로 연결하고 다시 시도 링크에 첫 초점을 둔다. 기존 Tab 순환·Escape 닫기·초점 복원을 그대로 쓴다. 배너는 `role="status"`다. |
+| 개발용 미리보기 | 개발 모드에서만 버튼이 보이며 미리보기 화면에는 실제 복귀가 아니라는 표시가 붙는다. 미리보기 확인은 연동 완료 증거가 아니다. |
+
+화면 자동 검사는 `googleLoginFailure.test.ts`·`googleLoginFailure.app.test.tsx`(단위)와
+`e2e/google-login-failure.spec.ts`(브라우저, csrf만 가짜 401)로 수행한다.
+이 검사는 서버가 돌려준 Location을 직접 연 화면 확인이며 대체 제공자 서버 검사나 실제 Google 실행을 대신하지 않는다.
+
 ## 로컬 브라우저에서 확인
 
 API와 프런트를 실행하고, 유효한 Google 설정과 허용된 `GOOGLE_FRONTEND_ORIGIN`을 준비한다.
@@ -78,7 +96,7 @@ http://127.0.0.1:8000/api/auth/google/callback?state=wrong
 
 callback 요청의 상태는 302, Location의 고정 값은 invalid_request여야 한다.
 삭제 쿠키의 Max-Age=0·Path=/api/auth와 캐시·referrer 응답 헤더를 확인한다.
-새 refresh·CSRF 쿠키가 없어야 한다. 화면에 실패 모달이 뜨는지는 프런트 연결 후 별도로 확인한다.
+새 refresh·CSRF 쿠키가 없어야 한다. 프런트로 복귀한 뒤 실패 모달이 뜨고 주소에서 실패 값이 사라지는지도 확인한다.
 
 ```text
 http://127.0.0.1:8000/api/auth/google/start?return_to=https://example.com
@@ -140,6 +158,6 @@ TEST_DATABASE_URL에 실제 계정 정보를 문서나 메시지로 복사하지
 테스트 대상은 전용 로컬 db-test이며 개발·운영 DB로 바꾸지 않는다.
 
 화면 미리보기, 대체 제공자 서버 검사, 실제 Google 실행은 별도 증거로 기록한다.
-실패 안내·재시도 버튼·URL 소비와 브라우저 통합은 프런트 연결 후 공동 확인하고,
+실패 안내·재시도 버튼·URL 소비는 위 [화면 연결](#화면-연결)에 반영했다. 실제 API와의 브라우저 통합은 공동 확인하고,
 인증 변경을 구현하지 않은 davekim-dev의 독립 검토를 거쳐 #19에 인계한다.
 이 문서는 #69·#19 완료나 담당자 간 합의·검토 완료를 대신하지 않는다.

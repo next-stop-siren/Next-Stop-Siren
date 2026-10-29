@@ -2,14 +2,102 @@
 
 from dataclasses import dataclass
 import logging
+from pathlib import Path
+import traceback
 from typing import Literal
 from urllib.parse import unquote, urlsplit, urlunsplit
 from uuid import uuid4
 
 from fastapi import Request
+import psycopg
+from sqlalchemy.exc import IntegrityError, InterfaceError, OperationalError, SQLAlchemyError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
+
+_APP_DIR = Path(__file__).resolve().parent
+
+ErrorCause = Literal["database_unavailable", "database_conflict", "database_error", "unexpected"]
+
+
+def error_types(exc: BaseException) -> str:
+    """SQL·입력값 없이 예외 클래스와 SQLSTATE만 기록한다."""
+    names = [type(exc).__name__]
+    cause = getattr(exc, "orig", None)
+    if cause is not None:
+        names.append(type(cause).__name__)
+        sqlstate = getattr(cause, "sqlstate", None)
+        if isinstance(sqlstate, str):
+            names.append(sqlstate)
+    return "/".join(names)
+
+
+def _cause(exc: BaseException) -> ErrorCause:
+    if isinstance(exc, (OperationalError, InterfaceError, PoolTimeoutError, psycopg.OperationalError)):
+        return "database_unavailable"
+    if isinstance(exc, (IntegrityError, psycopg.IntegrityError)):
+        return "database_conflict"
+    if isinstance(exc, (SQLAlchemyError, psycopg.Error)):
+        return "database_error"
+    return "unexpected"
+
+
+def _where(exc: BaseException) -> str:
+    """앱 코드에서 예외가 지나간 가장 안쪽 위치(파일:줄)만 남긴다. 값과 메시지는 담지 않는다."""
+    found = "unknown"
+    for frame in traceback.extract_tb(exc.__traceback__):
+        try:
+            relative = Path(frame.filename).resolve().relative_to(_APP_DIR)
+        except ValueError:
+            continue
+        found = f"{relative.as_posix()}:{frame.lineno}"
+    return found
+
+
+@dataclass(frozen=True, slots=True)
+class SafeError:
+    """예외 원문·traceback 대신 남기는 원인 분류. SQL 본문·파라미터·질문·토큰·연결 문자열을 담지 않는다."""
+
+    cause: ErrorCause
+    error_type: str
+    where: str
+
+    @classmethod
+    def of(cls, exc: BaseException) -> "SafeError":
+        return cls(cause=_cause(exc), error_type=error_types(exc), where=_where(exc))
+
+    def __str__(self) -> str:
+        return f"cause={self.cause}, error_type={self.error_type}, where={self.where}"
+
+
+class SafeExceptionLogFilter(logging.Filter):
+    """서버가 기록하는 미처리 예외의 원문·traceback을 원인 분류로 바꾼다.
+
+    Uvicorn은 요청 처리 중 놓친 예외를 `exc_info`와 함께 기록하며, DB 예외의 원문에는
+    SQL 본문과 파라미터가 들어 있다. 고정 메시지는 유지하고 예외 정보만 교체한다.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not record.exc_info:
+            return True
+        exc = record.exc_info[1]
+        message = record.getMessage().rstrip()
+        if exc is not None:
+            message = f"{message} {SafeError.of(exc)}"
+        record.msg = message
+        record.args = None
+        record.exc_info = None
+        record.exc_text = None
+        record.stack_info = None
+        return True
+
+
+def protect_exception_logs() -> None:
+    """Uvicorn 서버 로그의 미처리 예외 기록에 안전 필터를 한 번만 붙인다."""
+    target = logging.getLogger("uvicorn.error")
+    if not any(isinstance(item, SafeExceptionLogFilter) for item in target.filters):
+        target.addFilter(SafeExceptionLogFilter())
 
 
 class GoogleCallbackQueryFilter(logging.Filter):

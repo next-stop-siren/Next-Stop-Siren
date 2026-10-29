@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session
 
 from app.api.chat_payloads import item_out, limits_out
 from app.api.schemas import AnswerDelta, Snapshot
+from app.observability import SafeError
 from app.repositories import chat_jobs as repository
 from app.services import chat_views
 from app.services.chat_runner import ChatJobWorker
@@ -211,9 +212,9 @@ class ChatEvents:
                 for subscription in self._current(user_id):
                     for frame in frames:
                         subscription.put(frame)
-        except Exception:
+        except Exception as error:
             # The change is stored; ending the connections makes each reconnect and read it.
-            logger.exception("Chat event publish failed, user_id=%s", user_id)
+            logger.error("Chat event publish failed, user_id=%s, %s", user_id, SafeError.of(error))
             self._end_member(user_id)
 
     def notify(self, user_id: int, job_ids: Sequence[int]) -> None:
@@ -224,8 +225,8 @@ class ChatEvents:
             with self._sessions() as session:
                 self.publish(session, user_id, job_ids)
                 session.rollback()
-        except Exception:
-            logger.exception("Chat event session failed, user_id=%s", user_id)
+        except Exception as error:
+            logger.error("Chat event session failed, user_id=%s, %s", user_id, SafeError.of(error))
             self._end_member(user_id)
 
     def delta(self, user_id: int, job_id: int, text: str) -> None:

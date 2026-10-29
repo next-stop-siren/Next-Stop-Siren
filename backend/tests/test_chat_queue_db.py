@@ -6,6 +6,7 @@ that is dropped afterwards. The quota ledger is a fake that records its calls; e
 user, question and answer is fake and no real provider is called.
 """
 
+import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -14,7 +15,7 @@ from threading import Barrier
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import func, select, text
+from sqlalchemy import func, make_url, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.schema import CreateSchema, DropSchema
@@ -606,3 +607,39 @@ def test_after_a_restart_waiting_jobs_run_and_a_cut_off_execution_is_interrupted
         resumed = reader.get(ChatJob, waiting)
         assert resumed.state == "completed"
         assert reader.get(Message, resumed.answer_message_id).content == "모의 답변입니다."
+
+
+def test_a_real_database_error_in_the_runner_logs_no_sql_values_question_or_connection(
+    committed_queue_sessions, monkeypatch, caplog
+):
+    """PostgreSQL repeats a refused bound value in its own error text; the runner's log must not (#70)."""
+    sessions = committed_queue_sessions
+    ledger, user_id, _, (job_id,) = setup_member(sessions, questions=1)
+    marks = {"sql": "sql_marker_70", "value": "value-marker-70", "token": "token-marker-70"}
+
+    def broken_finish(session, _ledger, _job_id, _run_token, _outcome):
+        session.execute(
+            text("SELECT /* sql_marker_70 */ CAST(:value AS integer), :token"),
+            {"value": marks["value"], "token": marks["token"]},
+        )
+
+    monkeypatch.setattr(chat_queue, "finish", broken_finish)
+    from app.integrations.provider import MockProvider
+
+    worker = chat_runner.ChatJobWorker(sessions, MockProvider(), ledger)
+    with caplog.at_level(logging.INFO):
+        worker._drain(user_id)
+    worker.stop(timeout=10)
+
+    password = make_url(guarded_live_url()).password
+    secrets = [*marks.values(), "질문 k0", "모의 답변입니다.", *([password] if password else [])]
+    assert all(record.exc_info is None for record in caplog.records)
+    assert not any(secret in caplog.text for secret in secrets)
+    assert (
+        f"Job outcome not stored, job_id={job_id}, outcome=completed, cause=database_error, "
+        "error_type=DataError/InvalidTextRepresentation/22P02"
+    ) in caplog.text
+    assert f"Chat job run failed, user_id={user_id}, cause=database_error" in caplog.text
+    # Not stored is never reported as stored: the job is still running, for recovery to interrupt.
+    with sessions() as reader:
+        assert reader.get(ChatJob, job_id).state == "running"
