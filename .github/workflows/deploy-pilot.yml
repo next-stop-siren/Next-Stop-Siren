@@ -1,0 +1,55 @@
+name: Deploy pilot release manually
+on:
+  workflow_dispatch:
+    inputs:
+      publication_run_id:
+        description: Successful trusted manual publication run ID
+        required: true
+        type: string
+permissions: {}
+concurrency:
+  group: pilot-deployment
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: >-
+      github.repository == 'next-stop-siren/Next-Stop-Siren' &&
+      github.ref == 'refs/heads/main' && github.actor == 'xifoxy-ru' &&
+      github.triggering_actor == 'xifoxy-ru'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: pilot
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      PUBLICATION_RUN_ID: ${{ inputs.publication_run_id }}
+      PILOT_AWS_ACCOUNT_ID: ${{ vars.PILOT_AWS_ACCOUNT_ID }}
+      PILOT_AWS_ROLE_ARN: ${{ vars.PILOT_AWS_ROLE_ARN }}
+      PILOT_AWS_REGION: ${{ vars.PILOT_AWS_REGION }}
+      PILOT_INSTANCE_ID: ${{ vars.PILOT_INSTANCE_ID }}
+      PILOT_SSM_DOCUMENT_NAME: ${{ vars.PILOT_SSM_DOCUMENT_NAME }}
+      PILOT_SSM_DOCUMENT_VERSION: ${{ vars.PILOT_SSM_DOCUMENT_VERSION }}
+      PILOT_SSM_DOCUMENT_SHA256: ${{ vars.PILOT_SSM_DOCUMENT_SHA256 }}
+      PILOT_GATES_SHA256: ${{ vars.PILOT_GATES_SHA256 }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify publication and artifact before requesting AWS credentials
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 deploy/actions/cli.py prepare --execute
+      - name: Obtain short-lived credentials
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          role-to-assume: ${{ vars.PILOT_AWS_ROLE_ARN }}
+          aws-region: ${{ vars.PILOT_AWS_REGION }}
+          allowed-account-ids: ${{ vars.PILOT_AWS_ACCOUNT_ID }}
+          role-duration-seconds: 1800
+          unset-current-credentials: true
+          mask-aws-account-id: true
+      - name: Dispatch pinned SSM command once and poll actual result
+        run: python3 deploy/actions/cli.py dispatch --execute
