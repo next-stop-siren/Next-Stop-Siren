@@ -4,10 +4,11 @@ import base64
 from copy import deepcopy
 import json
 import importlib.util
+from io import StringIO
 from pathlib import Path
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
@@ -17,6 +18,9 @@ spec.loader.exec_module(entrypoint)
 smoke_spec = importlib.util.spec_from_file_location("local_smoke", ROOT / "deploy/local-smoke.py")
 smoke = importlib.util.module_from_spec(smoke_spec)
 smoke_spec.loader.exec_module(smoke)
+client_spec = importlib.util.spec_from_file_location("proxy_client", ROOT / "deploy/login-proxy-client.py")
+proxy_client = importlib.util.module_from_spec(client_spec)
+client_spec.loader.exec_module(proxy_client)
 
 
 def synthetic_values() -> dict[str, str]:
@@ -171,6 +175,34 @@ class ProductionGuardChecks(unittest.TestCase):
 
 class SmokeCompletionChecks(unittest.TestCase):
     """Offline acceptance probes: failed/nonterminal/wrong answers cannot PASS."""
+
+    def test_proxy_probe_preserves_duplicate_headers_without_exporting_credentials(self):
+        task = {
+            "body": {"email": "fixture@example.test", "password": "synthetic-private-password"},
+            "headers": [["X-Forwarded-For", ""], ["X-Forwarded-For", "invalid-canary"]],
+        }
+        response = Mock(status=200)
+        response.read.return_value = b'{"access_token":"synthetic-private-token"}'
+        response.getheaders.return_value = [("Set-Cookie", "refresh_token=synthetic-private-cookie; Secure; HttpOnly")]
+        response.getheader.return_value = None
+        connection = Mock()
+        connection.getresponse.return_value = response
+        output = StringIO()
+        with (
+            patch.object(proxy_client.http.client, "HTTPSConnection", return_value=connection),
+            patch.object(proxy_client.sys, "stdin", StringIO(json.dumps({"tasks": [task]}))),
+            patch.object(proxy_client.sys, "stdout", output),
+        ):
+            proxy_client.main()
+        connection.putheader.assert_any_call("X-Forwarded-For", "")
+        connection.putheader.assert_any_call("X-Forwarded-For", "invalid-canary")
+        connection.close.assert_called_once()
+        result = json.loads(output.getvalue())[0]
+        self.assertEqual(result["status"], 200)
+        self.assertTrue(result["secure_cookies"] and result["access_token_present"])
+        self.assertFalse(result["password_echo"])
+        self.assertNotIn("synthetic-private", output.getvalue())
+        self.assertNotIn("fixture@example.test", output.getvalue())
 
     def test_smoke_trust_is_bound_to_its_new_project_network(self):
         network = {
