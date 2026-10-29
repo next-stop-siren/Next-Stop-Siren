@@ -6,6 +6,7 @@ from collections.abc import Callable
 import http.client
 import hashlib
 import hmac
+from ipaddress import ip_network
 import json
 from pathlib import Path
 import secrets
@@ -19,6 +20,19 @@ from uuid import uuid4
 ROOT = Path(__file__).resolve().parents[1]
 DOMAIN = "next-stop-siren.duckdns.org"
 ORIGIN = "https://" + DOMAIN
+
+
+def smoke_proxy_networks(network: dict, project: str) -> str:
+    """Trust only this disposable project's network; never a production default."""
+    if (
+        network.get("Name") != project + "_default"
+        or network.get("Labels", {}).get("com.docker.compose.project") != project
+    ):
+        raise ValueError("owned_smoke_network_required")
+    subnets = [ip_network(item["Subnet"]) for item in network["IPAM"]["Config"]]
+    if not subnets or any(subnet.prefixlen == 0 for subnet in subnets):
+        raise ValueError("bounded_smoke_network_required")
+    return ",".join(str(subnet) for subnet in subnets)
 
 
 def short_access_token(values: dict[str, str], user_id: str) -> str:
@@ -249,6 +263,9 @@ def main() -> int:
         passed("compose_private_api_db_loopback_nginx")
         owned = True  # Only this freshly verified, unoccupied nonce project can be changed below.
         run(compose + ["up", "-d", "--wait", "db"], timeout=240)
+        network = json.loads(run(docker + ["network", "inspect", project + "_default"]))[0]
+        values["FORWARDED_ALLOW_IPS"] = smoke_proxy_networks(network, project)
+        runtime.write_text("\n".join(f"{key}={value}" for key, value in values.items()) + "\n")
         # Explicitly initialize ONLY this disposable, newly created DB. Never production startup DDL.
         run(
             compose

@@ -1,6 +1,7 @@
 """Fail closed before serving production; no schema mutation or external calls."""
 
 from collections.abc import Mapping
+from ipaddress import ip_network
 import os
 import sys
 from urllib.parse import unquote, urlsplit
@@ -19,6 +20,12 @@ def validate(values: Mapping[str, str]) -> None:
     RegistrationLimitSettings.from_env(values)
     if values.get("CHAT_WORKER", "on") != "on":
         raise ValueError("worker_required")
+    for entry in values.get("FORWARDED_ALLOW_IPS", "").split(","):
+        try:
+            if "%" in entry or ip_network(entry.strip()).prefixlen == 0:
+                raise ValueError
+        except ValueError:
+            raise ValueError("explicit_proxy_addresses_required") from None
     parsed = urlsplit(values.get("DATABASE_URL", ""))
     if (
         parsed.scheme != "postgresql"
