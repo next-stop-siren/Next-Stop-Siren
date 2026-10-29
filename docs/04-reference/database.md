@@ -1,8 +1,8 @@
 # 데이터베이스 설계
 
-**Rev 1 · 2026-10-25 (KST)** · 코드 기준: [`2d50da5`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/2d50da5976548db7b85c5b0b931b7c43e622fa15)
+**Rev 2 · 2026-10-29 (KST)** · 코드 기준: [`308fbba`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/308fbba83acce02adfd19449b0740d4a99bf9c19)
 
-변경 근거: [PR #57](https://github.com/next-stop-siren/Next-Stop-Siren/pull/57) · [PR #59](https://github.com/next-stop-siren/Next-Stop-Siren/pull/59) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62). Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
+변경 근거: [PR #57](https://github.com/next-stop-siren/Next-Stop-Siren/pull/57) · [PR #59](https://github.com/next-stop-siren/Next-Stop-Siren/pull/59) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62) · [#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66). Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
 
 현재 등록 모델은 **10개**다. 인증·대화 기반 5개, 한도 2개, 대기열 3개가 `app.models.register_models()`에 등록됐고 PR #62에서 API와 연결됐다. 아래 기반 테이블 그림과 상세 뒤에 한도·대기열 모델을 설명한다. 모델 등록은 실제 DB 생성·기존 스키마 변경·운영 데이터 복원 검증 완료를 뜻하지 않는다.
 
@@ -195,4 +195,5 @@ DROP TABLE chat_queue_members;
 
 | Rev | 일자 (KST) | 변경과 근거 |
 | --- | --- | --- |
-| 1 | 2026-10-25 | 등록 모델 10개, 한도·대기열 연결과 기존 DB 변경의 한계를 정리했다. 기준 코드는 위 고정 SHA이며 근거 PR은 문서 상단에 있다. |
+| 1 | 2026-10-25 | 등록 모델 10개, 한도·대기열 연결과 기존 DB 변경의 한계를 정리했다. 당시 기준 코드는 `2d50da5`다. |
+| 2 | 2026-10-29 | #66에서 `context_before()` 정렬을 `COALESCE(reply_to_message_id, id), id`로 바꿔 문맥 쌍 순서 차이를 해결된 상태로 갱신했다. 스키마·인덱스 변경은 없다. 구현 `308fbba`. |

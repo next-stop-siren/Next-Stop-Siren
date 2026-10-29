@@ -1,8 +1,8 @@
 # API 계약
 
-**Rev 3 · 2026-10-27 (KST)** · 코드 기준: [`1cbf709`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/1cbf709eeef88f6c592c50bfd13b386d43dc8e5c)
+**Rev 4 · 2026-10-29 (KST)** · 코드 기준: [`308fbba`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/308fbba83acce02adfd19449b0740d4a99bf9c19)
 
-변경 근거: [PR #50](https://github.com/next-stop-siren/Next-Stop-Siren/pull/50) · [PR #56](https://github.com/next-stop-siren/Next-Stop-Siren/pull/56) · [PR #57](https://github.com/next-stop-siren/Next-Stop-Siren/pull/57) · [PR #59](https://github.com/next-stop-siren/Next-Stop-Siren/pull/59) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62) · [PR #78](https://github.com/next-stop-siren/Next-Stop-Siren/pull/78) · [PR #79](https://github.com/next-stop-siren/Next-Stop-Siren/pull/79). [#69](https://github.com/next-stop-siren/Next-Stop-Siren/issues/69)의 서버 구현 `8921f8a`와 검증 `1cbf709`를 반영했다. Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
+변경 근거: [PR #50](https://github.com/next-stop-siren/Next-Stop-Siren/pull/50) · [PR #56](https://github.com/next-stop-siren/Next-Stop-Siren/pull/56) · [PR #57](https://github.com/next-stop-siren/Next-Stop-Siren/pull/57) · [PR #59](https://github.com/next-stop-siren/Next-Stop-Siren/pull/59) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62) · [PR #78](https://github.com/next-stop-siren/Next-Stop-Siren/pull/78) · [PR #79](https://github.com/next-stop-siren/Next-Stop-Siren/pull/79). [#69](https://github.com/next-stop-siren/Next-Stop-Siren/issues/69)의 서버 구현 `8921f8a`와 검증 `1cbf709`, [#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66)의 문맥 쌍 순서 구현 `308fbba`를 반영했다. Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
 
 이 문서는 **현재 구현 계약**이다. #53부터 질문·재시도는 [회원 채팅 정책](chat-policy.md)의 대기열로 접수하고, 결과는 회원 단위 구독과 작업 조회로 받는다([회원 채팅 대기열](#회원-채팅-대기열-53)). 이전의 동기 생성(`201`), `409 conversation_busy`, `502`·`504`, `/messages/stream`, D4 재시도와 60초 `pending` 회복은 더 이상 쓰지 않는다. 네 메시지 상태와 공개 메시지 형식은 그대로다.
 
@@ -559,3 +559,4 @@ stateDiagram-v2
 | 1 | 2026-10-25 | PR #62 이후 단일 API 계약, 구독 복구, 당시 실제 화면 미연동과 문맥 순서 차이를 정리했다. 당시 기준 코드는 `2d50da5`다. |
 | 2 | 2026-10-27 | PR #79의 가입 429·503 코드와 재시도 시간·접수 횟수·거절 응답을 반영했다. PR #78 이후 회원 화면을 미연동으로 읽게 하는 설명도 수정했다. 코드 기준 `1566e8b`, 정책 근거는 #71의 승인 댓글이다. |
 | 3 | 2026-10-27 | #69의 Google start·callback 실패를 302 고정 코드 복귀와 503 JSON 대체 응답으로 갱신했다. 422 경계·쿠키 정리·안전한 복귀와 프런트 인계 조건을 명시했다. 구현 `8921f8a`, 검증 `1cbf709`. |
+| 4 | 2026-10-29 | #66에서 실행 문맥이 질문·완료 답변 쌍 순서(`Q1 → A1 → Q2 → A2`)로 구성되도록 고쳐, 서버 보장의 실행 시 문맥과 알려진 구현 차이를 해결된 상태로 갱신했다. 구현 `308fbba`. |

@@ -1,8 +1,8 @@
 # 회원 채팅 대기열·한도 정책
 
-**Rev 1 · 2026-10-25 (KST)** · 코드 기준: [`2d50da5`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/2d50da5976548db7b85c5b0b931b7c43e622fa15)
+**Rev 2 · 2026-10-29 (KST)** · 코드 기준: [`308fbba`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/308fbba83acce02adfd19449b0740d4a99bf9c19)
 
-변경 근거: [PR #55](https://github.com/next-stop-siren/Next-Stop-Siren/pull/55) · [PR #56](https://github.com/next-stop-siren/Next-Stop-Siren/pull/56) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62). Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
+변경 근거: [PR #55](https://github.com/next-stop-siren/Next-Stop-Siren/pull/55) · [PR #56](https://github.com/next-stop-siren/Next-Stop-Siren/pull/56) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62) · [#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66). Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
 
 이 문서는 승인된 **수량·기간·정산·대기·재시도 정책의 기준**이다. HTTP 경로·응답·오류·이벤트는 [API 기준](api.md), 저장 구조는 [DB 설계](database.md)를 따른다. 각 정책 변경은 이 파일에서 먼저 검토하고 API의 필드·예시를 함께 대조한다.
 
@@ -61,4 +61,5 @@ PR #55에서 정책을 정하고 PR #56에서 API를 제안했다. PR #57·#59�
 
 | Rev | 일자 (KST) | 변경과 근거 |
 | --- | --- | --- |
-| 1 | 2026-10-25 | 승인된 수량·기간·정산·대기·재시도 정책을 유지하고 구현 상태와 알려진 차이를 갱신했다. 기준 코드는 위 고정 SHA이며 근거 PR은 문서 상단에 있다. |
+| 1 | 2026-10-25 | 승인된 수량·기간·정산·대기·재시도 정책을 유지하고 구현 상태와 알려진 차이를 갱신했다. 당시 기준 코드는 `2d50da5`다. |
+| 2 | 2026-10-29 | 정책은 그대로 두고, #66에서 실행 문맥이 쌍 순서로 구성되도록 고쳐 문맥 순서 차이를 해결된 상태로 갱신했다. 구현 `308fbba`. |

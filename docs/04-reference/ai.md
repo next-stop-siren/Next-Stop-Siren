@@ -1,8 +1,8 @@
 # S11 GPT 연결 기준
 
-**Rev 1 · 2026-10-25 (KST)** · 코드 기준: [`2d50da5`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/2d50da5976548db7b85c5b0b931b7c43e622fa15)
+**Rev 2 · 2026-10-29 (KST)** · 코드 기준: [`308fbba`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/308fbba83acce02adfd19449b0740d4a99bf9c19)
 
-변경 근거: [PR #45](https://github.com/next-stop-siren/Next-Stop-Siren/pull/45) · [PR #46](https://github.com/next-stop-siren/Next-Stop-Siren/pull/46) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62). Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
+변경 근거: [PR #45](https://github.com/next-stop-siren/Next-Stop-Siren/pull/45) · [PR #46](https://github.com/next-stop-siren/Next-Stop-Siren/pull/46) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62) · [#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66). Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
 
 [회원 채팅 정책](chat-policy.md)은 실행 시 문맥과 연결 상태에 의존하지 않는 작업의 의도를 설명한다. 현재 경로·상태 계약은 [API](api.md)로 통합한다. 완료 쌍 필터링, 고정 제공자·모델, 30초 기한과 자동 재시도 금지는 유지한다.
 
@@ -54,4 +54,5 @@
 
 | Rev | 일자 (KST) | 변경과 근거 |
 | --- | --- | --- |
-| 1 | 2026-10-25 | 격리 complete 어댑터와 공개 mock·실제 stream 미연결, 문맥 순서 차이를 구분했다. 기준 코드는 위 고정 SHA이며 근거 PR은 문서 상단에 있다. |
+| 1 | 2026-10-25 | 격리 complete 어댑터와 공개 mock·실제 stream 미연결, 문맥 순서 차이를 구분했다. 당시 기준 코드는 `2d50da5`다. |
+| 2 | 2026-10-29 | #66에서 실행 경로 `context_before()`가 완료 쌍을 Q1·A1·Q2·A2 순서로 읽도록 고쳐, 문맥 순서 차이를 해결된 상태로 갱신했다. 구현 `308fbba`. |
