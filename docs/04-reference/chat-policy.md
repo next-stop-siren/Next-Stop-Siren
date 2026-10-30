@@ -1,8 +1,8 @@
 # 회원 채팅 대기열·한도 정책
 
-**Rev 1 · 2026-10-25 (KST)** · 코드 기준: [`2d50da5`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/2d50da5976548db7b85c5b0b931b7c43e622fa15)
+**Rev 2 · 2026-10-29 (KST)** · 코드 기준: [`308fbba`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/308fbba83acce02adfd19449b0740d4a99bf9c19)
 
-변경 근거: [PR #55](https://github.com/next-stop-siren/Next-Stop-Siren/pull/55) · [PR #56](https://github.com/next-stop-siren/Next-Stop-Siren/pull/56) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62). Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
+변경 근거: [PR #55](https://github.com/next-stop-siren/Next-Stop-Siren/pull/55) · [PR #56](https://github.com/next-stop-siren/Next-Stop-Siren/pull/56) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62) · [#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66). Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
 
 이 문서는 승인된 **수량·기간·정산·대기·재시도 정책의 기준**이다. HTTP 경로·응답·오류·이벤트는 [API 기준](api.md), 저장 구조는 [DB 설계](database.md)를 따른다. 각 정책 변경은 이 파일에서 먼저 검토하고 API의 필드·예시를 함께 대조한다.
 
@@ -12,7 +12,7 @@ PR #55에서 정책을 정하고 PR #56에서 API를 제안했다. PR #57·#59�
 
 서버 대기열은 구현됐지만 실제 MemberChat의 `202`·작업·SSE·재시도·건너뛰기·취소·서버 시각 연결은 남았다. #18·#20·#21은 목업 범위로 종료됐다. 실제 연결 후속 이슈는 등록 필요하며 #19·#54 통합 검증이 열려 있다. 공개 AI는 무료 mock을 유지하고 실제 제공자 스트리밍과 운영 배포는 별도 작업이다.
 
-정책이 요구하는 문맥 쌍 순서와 현재 ID 정렬 사이에는 차이가 있다. [API의 알려진 차이](api.md#알려진-구현-차이와-인수-확인)를 확인하며, 필터링의 존재를 순서 보장 완료로 표시하지 않는다.
+정책이 요구하는 문맥 쌍 순서와 ID 정렬 사이의 차이는 [#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66)에서 고쳤다. 실행 문맥은 질문 기준 쌍 순서로 읽는다([API의 알려진 차이](api.md#알려진-구현-차이와-인수-확인)).
 
 ## 회원 한도와 정산
 
@@ -61,4 +61,5 @@ PR #55에서 정책을 정하고 PR #56에서 API를 제안했다. PR #57·#59�
 
 | Rev | 일자 (KST) | 변경과 근거 |
 | --- | --- | --- |
-| 1 | 2026-10-25 | 승인된 수량·기간·정산·대기·재시도 정책을 유지하고 구현 상태와 알려진 차이를 갱신했다. 기준 코드는 위 고정 SHA이며 근거 PR은 문서 상단에 있다. |
+| 1 | 2026-10-25 | 승인된 수량·기간·정산·대기·재시도 정책을 유지하고 구현 상태와 알려진 차이를 갱신했다. 당시 기준 코드는 `2d50da5`다. |
+| 2 | 2026-10-29 | 정책은 그대로 두고, #66에서 실행 문맥이 쌍 순서로 구성되도록 고쳐 문맥 순서 차이를 해결된 상태로 갱신했다. 구현 `308fbba`. |

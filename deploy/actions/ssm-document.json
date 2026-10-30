@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "2.2",
+  "description": "Pinned pilot deployment; public validated manifest, no application secrets",
+  "parameters": {
+    "ReleaseManifest": {
+      "type": "String",
+      "description": "Base64 closed release envelope, at most 4096 characters",
+      "allowedPattern": "^[A-Za-z0-9+/=]{1,4096}$",
+      "interpolationType": "ENV_VAR"
+    }
+  },
+  "mainSteps": [{
+    "action": "aws:runShellScript",
+    "name": "DeployPinnedRelease",
+    "precondition": {"StringEquals": ["platformType", "Linux"]},
+    "inputs": {
+      "timeoutSeconds": "1200",
+      "runCommand": ["set -eu", "exec /usr/bin/python3 /usr/local/lib/next-stop-siren/server_deploy.py --execute --manifest-base64 \"$SSM_ReleaseManifest\""]
+    }
+  }]
+}

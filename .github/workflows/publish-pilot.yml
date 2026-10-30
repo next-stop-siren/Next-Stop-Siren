@@ -1,0 +1,46 @@
+name: Publish pilot images manually
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact current trusted main SHA with successful main-push CI
+        required: true
+        type: string
+permissions: {}
+concurrency:
+  group: pilot-publication
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: >-
+      github.repository == 'next-stop-siren/Next-Stop-Siren' &&
+      github.ref == 'refs/heads/main' && github.actor == 'xifoxy-ru' &&
+      github.triggering_actor == 'xifoxy-ru'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    environment: pilot-publication
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate exact source and CI, then publish digest pair
+        id: release
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          PILOT_FRONTEND_REPOSITORY: ${{ vars.PILOT_FRONTEND_REPOSITORY }}
+          PILOT_BACKEND_REPOSITORY: ${{ vars.PILOT_BACKEND_REPOSITORY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 deploy/actions/cli.py publish --execute
+      - name: Preserve immutable release bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.release.outputs.artifact_name }}
+          path: ${{ runner.temp }}/pilot-release/*
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 14

@@ -151,3 +151,48 @@ def test_the_context_is_only_the_completed_pairs_in_order(session, seeded):
     assert ids(history) == [*seeded.first_messages, *pending, *later]
     # Another user's completed pair never enters this context.
     assert not set(seeded.other_messages) & set(ids(context))
+
+
+def add_question(session, conversation_id, request_key, content):
+    return save(
+        session,
+        Message(
+            conversation_id=conversation_id,
+            role="user",
+            status="completed",
+            content=content,
+            request_key=request_key,
+            completed_at=NOW,
+        ),
+    )
+
+
+def add_answer(session, question_id, conversation_id, attempt_no=1, status="completed", retry_key=None):
+    values = dict(content="답", completed_at=NOW) if status == "completed" else dict(error_code=ERROR_CODES[status])
+    return save(
+        session,
+        Message(
+            conversation_id=conversation_id,
+            role="assistant",
+            status=status,
+            reply_to_message_id=question_id,
+            attempt_no=attempt_no,
+            retry_key=retry_key,
+            **values,
+        ),
+    )
+
+
+def test_the_context_follows_the_pairs_when_questions_were_stored_before_their_answers(session, seeded):
+    """#66: rows stored as Q1·Q2·A1(failed)·A2·A1(retry) are read as Q1·A1(retry)·Q2·A2."""
+    q1 = add_question(session, seeded.last, "q-order-1", "첫 질문")
+    q2 = add_question(session, seeded.last, "q-order-2", "둘째 질문")
+    failed = add_answer(session, q1, seeded.last, status="failed")
+    a2 = add_answer(session, q2, seeded.last)
+    a1 = add_answer(session, q1, seeded.last, attempt_no=2, retry_key="r-order-1")
+    before = repository.list_context_messages(session, seeded.local, seeded.last)
+    assert before is not None
+    # The conversation's first pair was seeded before these rows.
+    assert ids(before)[2:] == [q1, a1, q2, a2]
+    history = repository.list_messages(session, seeded.local, seeded.last, limit=20, after_id=None)
+    assert ids(history)[2:] == [q1, q2, failed, a2, a1]

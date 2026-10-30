@@ -189,6 +189,103 @@ def test_the_context_is_read_when_the_job_starts_from_completed_pairs_only(sessi
     ]
 
 
+def pairs_of(claimed):
+    return [(item.role, item.content) for item in claimed.context]
+
+
+def test_the_context_is_in_pair_order_when_questions_are_stored_before_their_answers(session, seeded):
+    """#66: Q1·Q2·Q3 are stored first and A1·A2 later; Q3 still gets Q1·A1·Q2·A2 and itself once."""
+    for key in ("a1", "a2", "a3"):
+        ask(session, seeded, seeded.a, key)
+    # Another member's completed pair, stored between, never enters the context.
+    theirs = save(
+        session,
+        Message(
+            conversation_id=seeded.theirs,
+            role="user",
+            status="completed",
+            content="남의 질문",
+            request_key="t1",
+            completed_at=func.now(),
+        ),
+    )
+    save(
+        session,
+        Message(
+            conversation_id=seeded.theirs,
+            role="assistant",
+            status="completed",
+            content="남의 답",
+            reply_to_message_id=theirs,
+            attempt_no=1,
+            completed_at=func.now(),
+        ),
+    )
+    session.commit()
+    run(session, seeded.user_a, Outcome("completed", text="답 a1"))
+    a2 = run(session, seeded.user_a, Outcome("completed", text="답 a2"))
+    assert pairs_of(a2) == [("user", "질문 a1"), ("assistant", "답 a1"), ("user", "질문 a2")]
+    a3 = run(session, seeded.user_a, Outcome("completed", text="답 a3"))
+    assert pairs_of(a3) == [
+        ("user", "질문 a1"),
+        ("assistant", "답 a1"),
+        ("user", "질문 a2"),
+        ("assistant", "답 a2"),
+        ("user", "질문 a3"),
+    ]
+    # The rows themselves are in ID order, so the query's order is what made the pairs.
+    rows = session.scalars(select(Message.role).where(Message.conversation_id == seeded.a).order_by(Message.id)).all()
+    assert rows[:4] == ["user", "user", "user", "assistant"]
+
+
+def test_a_completed_retry_is_the_pair_answer_and_the_failed_attempt_stays_in_the_history(session, seeded):
+    """#66: the retry answer is stored after the later questions but still follows its own question."""
+    first_id = int(ask(session, seeded, seeded.a, "a1").json()["job"]["id"])
+    ask(session, seeded, seeded.a, "a2")
+    ask(session, seeded, seeded.a, "a3")
+    run(session, seeded.user_a, PROVIDER_FAILED)
+    question_id = job_of(first_id)["question_message_id"]
+    assert retry(session, seeded, seeded.a, question_id, "r1").status_code == 202
+    retried = run(session, seeded.user_a, Outcome("completed", text="답 a1 재시도"))
+    # The question's own failed attempt is not context, and the question is not added twice.
+    assert pairs_of(retried) == [("user", "질문 a1")]
+    a2 = run(session, seeded.user_a, Outcome("completed", text="답 a2"))
+    assert pairs_of(a2) == [("user", "질문 a1"), ("assistant", "답 a1 재시도"), ("user", "질문 a2")]
+    a3 = run(session, seeded.user_a, PROVIDER_FAILED)
+    # Stored as Q1·Q2·Q3·A1(failed)·A1(retry)·A2; ID order would put Q2 before the retry answer.
+    assert pairs_of(a3) == [
+        ("user", "질문 a1"),
+        ("assistant", "답 a1 재시도"),
+        ("user", "질문 a2"),
+        ("assistant", "답 a2"),
+        ("user", "질문 a3"),
+    ]
+    # a3 failed and is skipped: its whole pair stays out of a4's context, not out of the history.
+    a3_question = session.get(ChatJob, a3.job_id).question_message_id
+    assert call("POST", f"/api/conversations/{seeded.a}/messages/{a3_question}/skip", json={}).status_code == 200
+    ask(session, seeded, seeded.a, "a4")
+    a4 = run(session, seeded.user_a, Outcome("completed", text="답 a4"))
+    assert pairs_of(a4) == [
+        ("user", "질문 a1"),
+        ("assistant", "답 a1 재시도"),
+        ("user", "질문 a2"),
+        ("assistant", "답 a2"),
+        ("user", "질문 a4"),
+    ]
+    history = call("GET", f"/api/conversations/{seeded.a}/messages").json()["items"]
+    assert [(item["role"], item["status"]) for item in history] == [
+        ("user", "completed"),
+        ("user", "completed"),
+        ("user", "completed"),
+        ("assistant", "failed"),
+        ("assistant", "completed"),
+        ("assistant", "completed"),
+        ("assistant", "failed"),
+        ("user", "completed"),
+        ("assistant", "completed"),
+    ]
+
+
 def test_a_failure_holds_only_its_conversation_until_a_retry_succeeds(session, seeded):
     failed_id = int(ask(session, seeded, seeded.a, "a1").json()["job"]["id"])
     run(session, seeded.user_a, PROVIDER_FAILED)
