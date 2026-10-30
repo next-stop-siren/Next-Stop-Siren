@@ -1,8 +1,9 @@
 """The answer provider that the chat service calls, and its free mock.
 
 The mock makes no network call and costs nothing, and it stays the public service's
-provider. The real adapter in `codyssey.py` keeps this interface and its two
-failures and is used only in the isolated S11 smoke test.
+provider. The real adapter in `codyssey.py` keeps this interface, `complete` and
+`stream`, and its two failures; it is used only by the stand-in server checks and
+the isolated smoke test until switching the public service is approved (#68).
 """
 
 from collections.abc import Iterator, Sequence

@@ -48,21 +48,21 @@ Python 모듈·함수·변수는 `snake_case`, 클래스는 `PascalCase`를 쓴�
 
 ## 채팅과 오류
 
-채팅에는 필요한 이전 문맥을 전달하고 질문·응답을 사용자별로 저장·조회한다. S11 실제 연결의 고정 모델·30초 기한·자동 재시도 금지·완성 쌍 문맥은 [GPT 기준](../04-reference/ai.md)을 따른다. 실행 경로는 완료 쌍만 질문 기준 쌍 순서로 읽는다([#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66), [API의 알려진 차이](../04-reference/api.md#알려진-구현-차이와-인수-확인)). DB 이력은 유지하며 실제 화면의 작업·구독 연결은 남아 있다. 예상 가능한 실패는 명시적인 예외·결과로 처리하며 모든 오류를 잡아 성공 응답으로 바꾸지 않는다. 외부 서비스·DB 오류의 세부 정보나 비밀값은 클라이언트에 노출하지 않고 서버 기록과 사용자 응답을 분리한다.
+채팅에는 필요한 이전 문맥을 전달하고 질문·응답을 사용자별로 저장·조회한다. S11 실제 연결의 고정 모델·30초 기한·자동 재시도 금지·완성 쌍 문맥은 [GPT 기준](../04-reference/ai.md)을 따른다. 실행 경로는 완료 쌍만 질문 기준 쌍 순서로 읽는다([#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66), [API의 알려진 차이](../04-reference/api.md#알려진-구현-차이와-인수-확인)). `app/services/chat_context.py`는 그 순서를 그대로 쌍으로 묶고 입력 길이 상한(과거 대화 + 현재 질문 16,000자, #68 승인) 안에서 가장 최근 쌍만 보낸다. DB 이력은 유지하며 실제 화면의 작업·구독 연결은 남아 있다. 예상 가능한 실패는 명시적인 예외·결과로 처리하며 모든 오류를 잡아 성공 응답으로 바꾸지 않는다. 외부 서비스·DB 오류의 세부 정보나 비밀값은 클라이언트에 노출하지 않고 서버 기록과 사용자 응답을 분리한다.
 
 저장과 응답의 순서를 정해 부분 실패가 성공으로 보이지 않게 한다.
 
 ### S11 GPT 어댑터와 격리 스모크 시험
 
-`app/integrations/codyssey.py`의 `CodysseyGptProvider`가 [GPT 기준](../04-reference/ai.md)의 실제 어댑터다. 공개 서비스의 `get_provider()`는 실제 `stream` 어댑터·화면 통합·배포 검증 전까지 모의 제공자를 유지하며, 실제 어댑터는 격리 스모크 시험에서만 연결한다.
+`app/integrations/codyssey.py`의 `CodysseyGptProvider`가 [GPT 기준](../04-reference/ai.md)의 실제 어댑터다. `complete`와 대기열 실행기가 쓰는 `stream`(#68)이 있다. 공개 서비스의 `get_provider()`는 별도 승인·화면 통합·배포 검증 전까지 모의 제공자를 유지하며, 실제 어댑터는 대체 서버 검사와 격리 스모크 시험에서만 연결한다.
 
 - **설정:** 서버 `.env`의 `CODYSSEY_API_KEY`(본인 키)·`CODYSSEY_BASE_URL`·`CODYSSEY_MODEL`을 읽는다. URL·모델이 승인값과 다르면 거부한다.
 - **호출:** 표준 라이브러리 `http.client`로 한 번만 요청한다. 자동 재시도·모델 대체가 없고 429·할당 부족을 포함한 비정상 응답은 `ProviderFailed`(기존 502)다.
-- **완성 판정:** `finish_reason`이 `stop`인 답변만 완성이다. 길이 제한(`length`)·필터링(`content_filter`)·이유 없음·문자열이 아닌 값(배열·객체 등)은 `ProviderFailed`로 `failed` 저장하며 `completed`로 저장하지 않는다.
+- **완성 판정:** `finish_reason`이 `stop`인 답변만 완성이다. 길이 제한(`length`)·필터링(`content_filter`)·이유 없음·문자열이 아닌 값(배열·객체 등)은 `ProviderFailed`로 `failed` 저장하며 `completed`로 저장하지 않는다. `stream`은 `stop` 뒤 `data: [DONE]`이 와야 완성이고, `[DONE]` 없이 끝나거나 오류·잘못된 조각이 오면 이미 보낸 조각이 있어도 `ProviderFailed`다. 부분 출력은 저장하지 않는다.
 - **30초 기한·취소:** 기한이 지나면 연결을 닫아 대기를 끝내고 `ProviderTimeout`(기존 504)을 낸다. 연결 대기 중에 기한이 지나면 연결이 열린 뒤에도 요청을 보내지 않는다. 취소는 전송 완료를 기다리지 않으며, 지연된 전송은 닫힌 소켓에서 실패한다. 늦은 결과는 버린다. 제공자 쪽 생성·차감 중단은 보장하지 않는다.
-- **기록:** 어댑터는 HTTP 상태·소요 시간만, 정상 이벤트는 결과·소요 시간 등 메타데이터를 남긴다. 다만 실행기의 `logger.exception`은 DB 예외의 SQL 파라미터를 포함할 수 있어 안전한 기록 요구사항이 모두 충족됐다고 보지 않는다.
+- **기록:** 어댑터는 모드·결과·HTTP 상태·종료 이유 분류·조각 수·소요 시간만 남기고, 문맥 구성은 보낸·제외한 쌍 수와 문자 수만 남긴다. 실행기의 예외는 #70의 `SafeError` 분류로만 기록하며 예외 원문·traceback을 남기지 않는다.
 
-모의 검사는 `tests/test_codyssey_provider.py`가 로컬 대체 서버로 수행한다. 실제 스모크는 `live` 표시가 있어 `--run-live` 없이는 CI·`-m db`에서도 건너뛴다. 대시보드에서 남은 할당을 확인한 뒤 합성 질문 1회로 실행하고, 출력된 상태·소요 시간만 증거로 남긴다. 테스트 DB를 쓰므로 실행 전에 `db-test`를 켜고 [온보딩](../01-start/onboarding.md)대로 `TEST_DATABASE_URL`을 지정한다.
+모의 검사는 `tests/test_codyssey_provider.py`(`complete`)와 `tests/test_codyssey_stream.py`(`stream`과 실행기 연결)가 로컬 대체 서버로 수행한다. 실제 스모크는 질문을 대기열에 접수하고 실행기로 실제 어댑터를 1회 부른 뒤 이력을 다시 읽는다. 실제 호출은 별도 승인 뒤에만 실행한다. 실제 스모크는 `live` 표시가 있어 `--run-live` 없이는 CI·`-m db`에서도 건너뛴다. 대시보드에서 남은 할당을 확인한 뒤 합성 질문 1회로 실행하고, 출력된 상태·소요 시간만 증거로 남긴다. 테스트 DB를 쓰므로 실행 전에 `db-test`를 켜고 [온보딩](../01-start/onboarding.md)대로 `TEST_DATABASE_URL`을 지정한다.
 
 ```bash
 cd backend

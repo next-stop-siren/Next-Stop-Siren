@@ -1,6 +1,6 @@
 # API 계약
 
-**Rev 4 · 2026-10-29 (KST)** · 코드 기준: [`308fbba`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/308fbba83acce02adfd19449b0740d4a99bf9c19)
+**Rev 5 · 2026-10-30 (KST)** · 코드 기준: [`308fbba`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/308fbba83acce02adfd19449b0740d4a99bf9c19)
 
 변경 근거: [PR #50](https://github.com/next-stop-siren/Next-Stop-Siren/pull/50) · [PR #56](https://github.com/next-stop-siren/Next-Stop-Siren/pull/56) · [PR #57](https://github.com/next-stop-siren/Next-Stop-Siren/pull/57) · [PR #59](https://github.com/next-stop-siren/Next-Stop-Siren/pull/59) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62) · [PR #78](https://github.com/next-stop-siren/Next-Stop-Siren/pull/78) · [PR #79](https://github.com/next-stop-siren/Next-Stop-Siren/pull/79). [#69](https://github.com/next-stop-siren/Next-Stop-Siren/issues/69)의 서버 구현 `8921f8a`와 검증 `1cbf709`, [#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66)의 문맥 쌍 순서 구현 `308fbba`를 반영했다. Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
 
@@ -514,7 +514,7 @@ stateDiagram-v2
 | 보장 | 동작 |
 | --- | --- |
 | 원자적 입장 | 질문·작업·두 기간 예약을 한 트랜잭션으로 저장. 회원 행 → 대화 → 한도 행 순으로 잠가 동시 탭·기기에서도 대기 3개·재시도 1개·10초 간격을 넘지 않는다. |
-| 실행 시 문맥 | 실행 시작 때 이전 완료 질문·답변만 `Q1 → A1 → Q2 → A2` 쌍 순서로 읽고 현재 질문을 한 번 붙인다. 실패·중단·진행·`delta`는 제외한다. |
+| 실행 시 문맥 | 실행 시작 때 이전 완료 질문·답변만 `Q1 → A1 → Q2 → A2` 쌍 순서로 읽고 현재 질문을 한 번 붙인다. 실패·중단·진행·`delta`는 제외한다. 과거 쌍과 현재 질문이 합계 16,000자를 넘으면 가장 오래된 쌍부터 쌍 단위로 빼고, 현재 질문과 저장된 이력은 유지한다([GPT 기준](ai.md#ai에-보낼-입력-길이-68)). |
 | 저장 뒤 완료 알림 | 답변 저장과 정산이 커밋된 뒤에만 `completed` 이벤트를 보낸다. 커밋이 실패하면 알리지 않고 작업은 `running`으로 남아 복구가 종결한다. |
 | 한 번만 정산 | 작업마다 차감 또는 예약 해제는 정확히 한 번이다. 결과 불명 동안 예약을 유지한다. 초기화를 넘긴 예약 해제는 새 기간 잔량을 늘리지 않는다. |
 | 자동 재시도 없음 | 실패·중단 뒤나 재시작 복구에서 제공자를 다시 부르지 않는다. 기한 + 15초가 지난 `running`은 저장된 완료 답변이 있으면 완료, 아니면 `interrupted`로 종결한다. |
@@ -537,7 +537,7 @@ stateDiagram-v2
 
 ## 알려진 구현 차이와 인수 확인
 
-완료 쌍을 `Q1 → A1 → Q2 → A2`로 구성하는 것이 정책이다. [#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66) 전에는 `app.repositories.chat_jobs.context_before()`가 메시지 ID로 정렬해 Q1·Q2가 답변보다 먼저 접수되면 `Q1 → Q2 → A1 → A2`가 됐다. 지금은 질문은 자기 ID, 답변은 `reply_to_message_id`를 쌍 키로 정렬하므로(`conversations.context_order()`) 접수·답변 생성 순서와 관계없이 쌍 순서다. 완료 재시도 답변은 그 질문 뒤에 들어가고 실패한 시도는 이력에만 남는다. 검사는 `test_chat_api_db.py`·`test_conversation_queries_db.py`의 #66 사례다.
+완료 쌍을 `Q1 → A1 → Q2 → A2`로 구성하는 것이 정책이다. [#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66) 전에는 `app.repositories.chat_jobs.context_before()`가 메시지 ID로 정렬해 Q1·Q2가 답변보다 먼저 접수되면 `Q1 → Q2 → A1 → A2`가 됐다. 지금은 질문은 자기 ID, 답변은 `reply_to_message_id`를 쌍 키로 정렬하므로(`conversations.context_order()`) 접수·답변 생성 순서와 관계없이 쌍 순서다. 완료 재시도 답변은 그 질문 뒤에 들어가고 실패한 시도는 이력에만 남는다. 검사는 `test_chat_api_db.py`·`test_conversation_queries_db.py`의 #66 사례다. #68의 `app.services.chat_context`는 이 순서를 그대로 받아 쌍으로 묶고 입력 길이 상한만 적용한다.
 
 아래는 구현 변경과 실제 화면 통합 때 유지할 인수 목록이다. 체크박스는 이 문서 작업에서 테스트를 재실행했다는 표시가 아니다.
 
@@ -550,7 +550,7 @@ stateDiagram-v2
 - [ ] 실패는 같은 대화의 뒤 질문만 정지하고, 재시도 성공이나 건너뛰기만 재개한다. 뒤 질문이 시작되면 앞 질문 재시도는 `409 retry_not_latest`다.
 - [ ] `completed` 이벤트는 저장·정산 커밋 뒤에만 오고, 작업마다 차감 또는 예약 해제는 한 번이다. 연결 끊김·로그아웃은 작업을 멈추지 않고 재연결 `snapshot`이 저장 결과를 준다.
 
-백엔드 라우트·ORM 모델·인증/채팅 검사와 PR #78의 회원 화면 연결이 있으며, 가입 제한은 PR #79에서 구현했다. 이것이 #19·#54의 독립 통합 검증이나 운영 준비 완료를 뜻하지는 않는다. 실제 GPT 어댑터·격리 시험 경계는 [S11 기준](ai.md)을 따른다. 대기열 실행기는 제공자의 `stream`을 쓰는데 실제 Codyssey 어댑터에는 아직 `complete`만 있으므로, 공개 서비스는 모의 제공자를 유지하고 실제 AI 연결은 별도 작업에서 `stream`을 더해 검증한다. 기존 #20·#21의 목업 완료 이력은 유지한다.
+백엔드 라우트·ORM 모델·인증/채팅 검사와 PR #78의 회원 화면 연결이 있으며, 가입 제한은 PR #79에서 구현했다. 이것이 #19·#54의 독립 통합 검증이나 운영 준비 완료를 뜻하지는 않는다. 실제 GPT 어댑터·격리 시험 경계는 [S11 기준](ai.md)을 따른다. #68에서 실제 Codyssey 어댑터에 대기열 실행기가 쓰는 `stream`을 더하고 대체 서버로만 검사했다. 공개 서비스는 별도 승인 전까지 모의 제공자를 유지한다. 기존 #20·#21의 목업 완료 이력은 유지한다.
 
 ## 변경 이력
 
@@ -560,3 +560,4 @@ stateDiagram-v2
 | 2 | 2026-10-27 | PR #79의 가입 429·503 코드와 재시도 시간·접수 횟수·거절 응답을 반영했다. PR #78 이후 회원 화면을 미연동으로 읽게 하는 설명도 수정했다. 코드 기준 `1566e8b`, 정책 근거는 #71의 승인 댓글이다. |
 | 3 | 2026-10-27 | #69의 Google start·callback 실패를 302 고정 코드 복귀와 503 JSON 대체 응답으로 갱신했다. 422 경계·쿠키 정리·안전한 복귀와 프런트 인계 조건을 명시했다. 구현 `8921f8a`, 검증 `1cbf709`. |
 | 4 | 2026-10-29 | #66에서 실행 문맥이 질문·완료 답변 쌍 순서(`Q1 → A1 → Q2 → A2`)로 구성되도록 고쳐, 서버 보장의 실행 시 문맥과 알려진 구현 차이를 해결된 상태로 갱신했다. 구현 `308fbba`. |
+| 5 | 2026-10-30 | #68: 실행 시 문맥에 PR 리뷰에서 승인된 16,000자 입력 길이 상한을 더하고, 실제 어댑터 `stream` 추가와 공개 mock 유지를 반영했다. API 형식·상태·오류 코드는 바뀌지 않았다. |
