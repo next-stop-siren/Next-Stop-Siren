@@ -157,6 +157,22 @@ class LocalAutomationTest(unittest.TestCase):
         self.assertEqual(api_env["AUTH_COOKIE_SECURE"], "false")
         self.assertNotEqual(local.e2e_auth_env()["AUTH_ACCESS_KEY"], local.e2e_auth_env()["AUTH_ACCESS_KEY"])
 
+    def test_setup_accepts_database_reached_before_auth_keys_and_db_init(self):
+        self.assertEqual(local.setup_readiness(200, b'{"status":"ready"}'), "API readiness passed")
+        pending = json.dumps({"code": "not_ready", "message": "x", "checks": {
+            "database": "ok", "auth": "not_configured", "schema": "missing_tables", "worker": "starting"}}).encode()
+        message = local.setup_readiness(503, pending)
+        self.assertIn("API database connection passed", message)
+        self.assertIn("auth=not_configured, schema=missing_tables, worker=starting", message)
+
+    def test_setup_keeps_waiting_while_the_database_is_unreachable(self):
+        down = json.dumps({"code": "database_unavailable", "message": "x",
+                           "checks": {"database": "unavailable"}}).encode()
+        for status, body in ((503, down), (503, b'{"code":"database_unavailable"}'), (503, b"not-json"),
+                             (502, b"{}"), (200, b'{"status":"other"}')):
+            with self.subTest(status=status, body=body):
+                self.assertIsNone(local.setup_readiness(status, body))
+
     def test_dev_schema_initialization_refuses_foreign_container_before_sql(self):
         settings = {"DATABASE_URL": "postgresql://dev:secret@127.0.0.1:55432/dev",
                     "DEV_DB_USER": "dev", "DEV_DB_PASSWORD": "secret", "DEV_DB_NAME": "dev"}

@@ -5,12 +5,12 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-import psycopg
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app import readiness
 from app.api import chat, conversations, cookie_sessions, google_auth, me
 from app.api.auth import router as auth_router
 from app.api.chat_events import ChatEvents
@@ -45,8 +45,10 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     """Run the member chat queue's worker while the app serves; waiting jobs resume after a restart."""
     events: ChatEvents = application.state.chat_events
     worker = None
+    if not chat_worker_enabled():
+        application.state.chat_worker_issue = "disabled"
     # A second start of the same app, as two test clients do, shares the first one's worker.
-    if chat_worker_enabled() and not events.attached:
+    elif not events.attached:
         try:
             sessions = get_session_factory()
         except RuntimeError:
@@ -57,6 +59,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
             )
             events.attach(sessions, worker)
             worker.start()
+            application.state.chat_worker = worker
     try:
         yield
     finally:
@@ -66,31 +69,38 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
 
 def health() -> dict[str, str]:
-    """API 프로세스가 요청에 응답할 수 있는지 확인한다."""
+    """API 프로세스가 요청에 응답할 수 있는지 확인한다. 의존성은 보지 않는다."""
     return {"status": "ok"}
 
 
-def _check_database() -> None:
-    database_url = os.environ.get("DATABASE_URL")
-    if not database_url:
-        raise RuntimeError("DATABASE_URL is missing")
-    with psycopg.connect(database_url, connect_timeout=2, options="-c statement_timeout=2000") as connection:
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT 1")
-            if cursor.fetchone() != (1,):
-                raise RuntimeError("Database readiness query returned an unexpected result")
+def _auth_status(application: FastAPI) -> str:
+    state = application.state
+    if state.auth_settings is None or state.registration_limit_settings is None:
+        return "not_configured"
+    return readiness.OK
 
 
-def ready() -> dict[str, str] | JSONResponse:
-    """제한 시간 안에 실제 PostgreSQL 조회가 성공해야 준비 완료로 응답한다."""
-    try:
-        _check_database()
-    except (psycopg.Error, OSError, RuntimeError):
-        return JSONResponse(
-            status_code=503,
-            content={"code": "database_unavailable", "message": "데이터베이스에 연결할 수 없습니다."},
-        )
-    return {"status": "ready"}
+def _worker_status(application: FastAPI) -> str:
+    worker: ChatJobWorker | None = application.state.chat_worker
+    if worker is None:
+        return str(application.state.chat_worker_issue)
+    return worker.status(stale_after=readiness.WORKER_STALE_SECONDS)
+
+
+def ready(request: Request) -> dict[str, str] | JSONResponse:
+    """DB·인증 설정·제품 스키마·대기열 실행기가 모두 준비돼야 준비 완료로 응답한다 (#72)."""
+    application = request.app
+    result = readiness.evaluate(auth=_auth_status(application), worker=_worker_status(application))
+    readiness.log_change(application.state.last_readiness, result)
+    application.state.last_readiness = result
+    if result.ready:
+        return {"status": "ready"}
+    if result.database != readiness.OK:
+        # 기존 화면·스크립트가 쓰는 코드와 문구를 유지한다.
+        code, message = "database_unavailable", "데이터베이스에 연결할 수 없습니다."
+    else:
+        code, message = "not_ready", "서비스가 아직 요청을 받을 준비가 되지 않았습니다."
+    return JSONResponse(status_code=503, content={"code": code, "message": message, "checks": result.checks()})
 
 
 def create_app(
@@ -130,6 +140,10 @@ def create_app(
     )
     application.state.login_failure_limiter = LoginFailureLimiter()
     application.state.chat_events = ChatEvents()
+    # The lifespan sets the worker, or why there is none; readiness reads both.
+    application.state.chat_worker = None
+    application.state.chat_worker_issue = "not_started"
+    application.state.last_readiness = None
     register_error_handlers(application)
     application.add_middleware(RegistrationTraceMiddleware)
     application.add_middleware(
