@@ -1,4 +1,4 @@
-"""What one execution sends to the AI: completed pairs in order, then the question once (#66, #68).
+"""What one execution sends to the AI: #66's completed pairs within a budget, then the question once (#68).
 
 The unit is characters (`len`, code points), not provider tokens: counting tokens
 exactly needs a tokenizer, which is a new runtime dependency that is not approved.
@@ -43,23 +43,26 @@ class BuiltContext:
 
 
 def pair_messages(messages: Iterable[Message]) -> list[ContextPair]:
-    """Group completed questions and answers into pairs, in the order of their questions.
+    """Pair the rows of `chat_jobs.context_before()`, which come as Q1·A1·Q2·A2 (#66).
 
-    The answers are matched by `reply_to_message_id`, so the result is Q1·A1·Q2·A2
-    even when Q2 was stored before A1. A question without a completed answer and an
-    answer without its question are left out. A question has at most one completed
-    answer, since a retry is allowed only after a failure.
+    The order is taken as it is and never sorted again here. Each completed answer is
+    paired with the question right before it when it answers that question. A row out
+    of that order, such as a question with no answer after it or an answer to another
+    question, is left out rather than guessed at.
     """
-    questions: dict[int, str] = {}
-    answers: dict[int, str] = {}
+    pairs: list[ContextPair] = []
+    question: Message | None = None
     for message in messages:
         if message.status != "completed" or not message.content:
-            continue
-        if message.role == "user":
-            questions[message.id] = message.content
-        elif message.role == "assistant" and message.reply_to_message_id is not None:
-            answers[message.reply_to_message_id] = message.content
-    return [ContextPair(questions[key], answers[key]) for key in sorted(questions) if key in answers]
+            question = None
+        elif message.role == "user":
+            question = message
+        elif question is not None and message.reply_to_message_id == question.id:
+            pairs.append(ContextPair(question.content or "", message.content))
+            question = None
+        else:
+            question = None
+    return pairs
 
 
 def build_context(pairs: Sequence[ContextPair], question: str, *, budget: int | None = None) -> BuiltContext:

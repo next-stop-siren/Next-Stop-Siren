@@ -28,10 +28,16 @@ def roles_and_text(built):
     return [(item.role, item.content) for item in built.messages]
 
 
-def test_pairs_follow_their_questions_even_when_both_questions_were_stored_first():
-    # Q2 was admitted before A1 was stored, so ID order alone would be Q1·Q2·A1·A2.
-    messages = [question(1, "Q1"), question(2, "Q2"), answer(3, 1, "A1"), answer(4, 2, "A2")]
+def test_rows_in_the_pair_order_of_66_become_pairs_as_they_come():
+    # Q2 was admitted before A1 was stored; #66's query already puts A1 right after Q1.
+    messages = [question(1, "Q1"), answer(3, 1, "A1"), question(2, "Q2"), answer(4, 2, "A2")]
     assert pair_messages(messages) == [ContextPair("Q1", "A1"), ContextPair("Q2", "A2")]
+
+
+def test_rows_out_of_pair_order_are_not_sorted_again_but_left_out():
+    # In plain ID order no answer comes right after its own question, so nothing is paired.
+    messages = [question(1, "Q1"), question(2, "Q2"), answer(3, 1, "A1"), answer(4, 2, "A2")]
+    assert pair_messages(messages) == []
 
 
 def test_a_question_without_a_completed_answer_and_an_answer_without_its_question_are_left_out():

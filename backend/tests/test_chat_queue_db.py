@@ -243,7 +243,7 @@ def test_jobs_run_first_in_first_out_and_a_failure_pauses_only_its_conversation(
 
 
 def test_the_context_is_in_pair_order_and_leaves_out_the_oldest_pairs_over_the_budget(orm_test_session, monkeypatch):
-    """Q2 and Q3 are stored before A1, so ID order would mix them; each answer follows its question (#66, #68)."""
+    """#68 on top of #66: Q2 and Q3 are stored before A1, and the budget drops whole pairs from the oldest."""
     session, ledger = orm_test_session, FakeLedger()
     user_id = add_user(session)
     a = add_conversation(session, user_id)
