@@ -5,7 +5,8 @@
     "ReleaseManifest": {
       "type": "String",
       "description": "Base64 closed release envelope, at most 4096 characters",
-      "allowedPattern": "^[A-Za-z0-9+/=]{1,4096}$",
+      "allowedPattern": "^[A-Za-z0-9+/=]+$",
+      "maxChars": 4096,
       "interpolationType": "ENV_VAR"
     }
   },
