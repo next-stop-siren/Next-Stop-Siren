@@ -12,5 +12,5 @@ ENV PATH="/app/.venv/bin:$PATH" PYTHONPATH="/app"
 USER 10001:10001
 EXPOSE 8000
 ENTRYPOINT ["python", "/usr/local/bin/backend-entrypoint.py"]
-# Do not trust arbitrary forwarded headers; #74 remains a separate acceptance gate.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-proxy-headers", "--no-access-log", "--timeout-graceful-shutdown", "10"]
+# The entrypoint requires explicit proxy addresses; actual #74 acceptance remains separate.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--proxy-headers", "--no-access-log", "--timeout-graceful-shutdown", "10"]
