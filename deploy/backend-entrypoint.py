@@ -26,6 +26,9 @@ def validate(values: Mapping[str, str]) -> None:
                 raise ValueError
         except ValueError:
             raise ValueError("explicit_proxy_addresses_required") from None
+    override = values.get("UVICORN_FORWARDED_ALLOW_IPS")
+    if override is not None and override != values["FORWARDED_ALLOW_IPS"]:
+        raise ValueError("proxy_addresses_conflict")
     parsed = urlsplit(values.get("DATABASE_URL", ""))
     if (
         parsed.scheme != "postgresql"

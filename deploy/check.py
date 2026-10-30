@@ -46,6 +46,77 @@ def synthetic_values() -> dict[str, str]:
 
 
 class ProductionGuardChecks(unittest.TestCase):
+    def test_conflicting_proxy_environments_stop_preflight_and_exec(self):
+        for override in ("*", "127.0.0.1", "192.0.2.11", ""):
+            for command in (["--validate-only"], ["uvicorn", "app.main:app"]):
+                with (
+                    self.subTest(override=override, command=command),
+                    patch.dict(
+                        entrypoint.os.environ,
+                        {**synthetic_values(), "UVICORN_FORWARDED_ALLOW_IPS": override},
+                        clear=True,
+                    ),
+                    patch.object(entrypoint.sys, "argv", ["backend-entrypoint.py", *command]),
+                    patch.object(entrypoint.os, "execvp") as execute,
+                    patch("builtins.print") as output,
+                ):
+                    self.assertEqual(entrypoint.main(), 2)
+                    execute.assert_not_called()
+                    self.assertEqual(output.call_args.args, ("Production configuration rejected (values hidden).",))
+
+    def test_matching_proxy_environments_reach_uvicorn_unchanged(self):
+        from click.testing import CliRunner
+        from uvicorn import Config
+        from uvicorn.main import main as uvicorn_cli
+
+        command = json.loads(
+            next(
+                line[4:]
+                for line in (ROOT / "deploy/backend.Dockerfile").read_text().splitlines()
+                if line.startswith("CMD ")
+            )
+        )
+        for trusted in ("192.0.2.10", "192.0.2.0/28, 2001:db8::/64"):
+            for prefixed in (False, True):
+                values = {**synthetic_values(), "FORWARDED_ALLOW_IPS": trusted}
+                if prefixed:
+                    values["UVICORN_FORWARDED_ALLOW_IPS"] = trusted
+                with (
+                    self.subTest(trusted=trusted, prefixed=prefixed),
+                    patch.dict(entrypoint.os.environ, values, clear=True),
+                ):
+                    for arguments in (["--validate-only"], command):
+                        with (
+                            patch.object(entrypoint.sys, "argv", ["backend-entrypoint.py", *arguments]),
+                            patch.object(entrypoint.os, "execvp") as execute,
+                            patch("builtins.print"),
+                        ):
+                            if arguments == ["--validate-only"]:
+                                self.assertEqual(entrypoint.main(), 0)
+                                execute.assert_not_called()
+                            else:
+                                entrypoint.main()
+                                execute.assert_called_once_with(command[0], command)
+                    with patch("uvicorn.main.run") as run:
+                        result = CliRunner().invoke(uvicorn_cli, command[1:])
+                        self.assertEqual(result.exit_code, 0, result.output)
+                    options = dict(run.call_args.kwargs)
+                    options.pop("app_dir")
+                    config = Config(*run.call_args.args, **options)
+                    self.assertEqual(config.forwarded_allow_ips, trusted)
+                    self.assertTrue(config.proxy_headers)
+                    self.assertEqual(config.workers, 1)
+
+    def test_matching_invalid_proxy_environments_are_still_rejected(self):
+        for trusted in ("", "*", "0.0.0.0/0", "::/0", "nginx"):
+            with (
+                self.subTest(trusted=trusted),
+                self.assertRaisesRegex(ValueError, "^explicit_proxy_addresses_required$"),
+            ):
+                entrypoint.validate(
+                    {**synthetic_values(), "FORWARDED_ALLOW_IPS": trusted, "UVICORN_FORWARDED_ALLOW_IPS": trusted}
+                )
+
     def test_proxy_addresses_require_explicit_bounded_ips(self):
         for address in ("192.0.2.10", "2001:db8::1", "192.0.2.0/28, 2001:db8::/64"):
             with self.subTest(address=address):
