@@ -1,12 +1,12 @@
 # API 계약
 
-**Rev 5 · 2026-10-30 (KST)** · 코드 기준: [`308fbba`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/308fbba83acce02adfd19449b0740d4a99bf9c19)
+**Rev 6 · 2026-11-02 (KST)** · 코드 기준: [`308fbba`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/308fbba83acce02adfd19449b0740d4a99bf9c19)
 
 변경 근거: [PR #50](https://github.com/next-stop-siren/Next-Stop-Siren/pull/50) · [PR #56](https://github.com/next-stop-siren/Next-Stop-Siren/pull/56) · [PR #57](https://github.com/next-stop-siren/Next-Stop-Siren/pull/57) · [PR #59](https://github.com/next-stop-siren/Next-Stop-Siren/pull/59) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62) · [PR #78](https://github.com/next-stop-siren/Next-Stop-Siren/pull/78) · [PR #79](https://github.com/next-stop-siren/Next-Stop-Siren/pull/79). [#69](https://github.com/next-stop-siren/Next-Stop-Siren/issues/69)의 서버 구현 `8921f8a`와 검증 `1cbf709`, [#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66)의 문맥 쌍 순서 구현 `308fbba`를 반영했다. Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
 
 이 문서는 **현재 구현 계약**이다. #53부터 질문·재시도는 [회원 채팅 정책](chat-policy.md)의 대기열로 접수하고, 결과는 회원 단위 구독과 작업 조회로 받는다([회원 채팅 대기열](#회원-채팅-대기열-53)). 이전의 동기 생성(`201`), `409 conversation_busy`, `502`·`504`, `/messages/stream`, D4 재시도와 60초 `pending` 회복은 더 이상 쓰지 않는다. 네 메시지 상태와 공개 메시지 형식은 그대로다.
 
-현재 백엔드는 health/ready, 로컬·Google 인증, 쿠키 세션, 본인 대화·메시지 API와 대기열·구독 API를 등록한다. 일반 채팅은 모의 답변을 저장·재조회하며 실제 AI 키를 요구하지 않는다. #69의 Google 실패 서버 복귀는 구현·검증했으며 실패 화면 연결과 실제 Google 전체 흐름 확인은 별도다. 가입 접수량·해시 동시 처리 제한은 PR #79에서 구현했다. 회원 화면의 실제 대화·대기열·구독 연결은 #65의 PR #78에 반영됐으며 #19·#54의 독립 통합 검증과 운영 검증은 별도다. #18·#20·#21의 목업 완료 이력은 유지한다. 실행·Swagger 확인은 [온보딩](../01-start/onboarding.md#3-1-swagger로-가입로그인과-모의-대화-확인)을 따른다. 예시 계정·내용·시각은 가짜다.
+현재 백엔드는 health/ready([상태 확인](#상태-확인-72)), 로컬·Google 인증, 쿠키 세션, 본인 대화·메시지 API와 대기열·구독 API를 등록한다. 일반 채팅은 모의 답변을 저장·재조회하며 실제 AI 키를 요구하지 않는다. #69의 Google 실패 서버 복귀는 구현·검증했으며 실패 화면 연결과 실제 Google 전체 흐름 확인은 별도다. 가입 접수량·해시 동시 처리 제한은 PR #79에서 구현했다. 회원 화면의 실제 대화·대기열·구독 연결은 #65의 PR #78에 반영됐으며 #19·#54의 독립 통합 검증과 운영 검증은 별도다. #18·#20·#21의 목업 완료 이력은 유지한다. 실행·Swagger 확인은 [온보딩](../01-start/onboarding.md#3-1-swagger로-가입로그인과-모의-대화-확인)을 따른다. 예시 계정·내용·시각은 가짜다.
 
 ## 공통 규칙
 
@@ -58,6 +58,38 @@
 | 429 | `attempt_too_soon`, `quota_exceeded` | 채팅 접수 간격·한도; `Retry-After` 포함 |
 | 503 | `registration_busy` | 가입 처리 자리 부족; `Retry-After`는 설정된 재시도 권고 초, 기본 5초 |
 | 503 | `temporarily_unavailable` | 서비스·DB·인증 설정·쿠키 처리 실패 등; 가입 처리 자리 부족과 구분 |
+
+## 상태 확인 (#72)
+
+두 경로는 인증 없이 `GET`으로 부르며 위 `error` 감싸기 형식을 쓰지 않는다.
+
+| 경로 | 확인 범위 | 쓰는 곳 |
+| --- | --- | --- |
+| `GET /api/health` | API 프로세스 응답만. 의존성을 보지 않는다. 항상 `200 {"status":"ok"}` | 프로세스 생존 확인, 재시작 판단 |
+| `GET /api/ready` | 아래 네 항목이 모두 `ok`일 때만 `200 {"status":"ready"}` | 배포 직후·재시작 뒤 트래픽 투입 판단(`local-smoke.py`, `test-e2e`), `setup`의 DB 연결 확인 |
+
+| 항목 | 확인 내용 | 값 |
+| --- | --- | --- |
+| `database` | `DATABASE_URL`로 2초 안에 `SELECT 1` | `ok`, `not_configured`, `unavailable` |
+| `auth` | 앱 생성 때 읽은 인증 설정과 가입 제한 설정. Google 설정은 선택이라 보지 않는다 | `ok`, `not_configured` |
+| `schema` | 등록 제품 모델 10개 테이블과 그 컬럼이 현재 스키마에 있는지 `information_schema`로 비교. 타입·제약·인덱스는 비교하지 않으며, 추가 테이블·컬럼은 허용 | `ok`, `missing_tables`, `missing_columns`, `unknown`(DB 실패·조회 실패) |
+| `worker` | 이 프로세스의 `ChatJobWorker` poll이 30초 안에 성공했는지 | `ok`, `disabled`(`CHAT_WORKER=off`, 테스트 전용), `not_started`(DB 설정 없음 등으로 시작 못 함), `starting`(성공한 poll 없음), `stalled`(마지막 성공 30초 초과), `stopped`(poll 스레드 종료) |
+
+준비되지 않으면 `503`이며 `code`는 DB가 `ok`가 아닐 때 기존 `database_unavailable`, 그 밖에는 `not_ready`다. 기존 화면이 쓰는 `code`·`message`는 유지하고 `checks`를 더했다.
+
+```json
+{
+  "code": "not_ready",
+  "message": "서비스가 아직 요청을 받을 준비가 되지 않았습니다.",
+  "checks": { "database": "ok", "auth": "not_configured", "schema": "missing_tables", "worker": "ok" }
+}
+```
+
+- 검사 연결은 `default_transaction_read_only=on`과 2초 문장 제한으로 열어 데이터·스키마를 바꾸지 않는다. 테이블을 만들거나 고치지 않는다.
+- 응답에는 위 고정 값만 담는다. 키·연결 문자열·SQL·예외 원문은 응답과 로그 모두에 넣지 않는다.
+- 서버 로그는 결과가 바뀔 때만 남긴다. 준비 안 됨은 `WARNING Service not ready, database=…, auth=…, schema=…, worker=…`에 빠진 테이블·컬럼 이름(`missing=`)과 DB 실패의 `SafeError` 분류를 붙이고, 회복은 `INFO Service ready again`이다.
+- 원인을 고친 뒤 다시 부르면 회복한다. 인증 설정은 앱 생성 때 읽으므로 `.env` 수정 뒤에는 프로세스를 다시 시작해야 한다.
+- 스키마 버전 표는 아직 없다. 마이그레이션 도구가 정해지면(#75) 버전 비교로 바꿀지 검토한다.
 
 ## 인증 요청·응답
 
@@ -561,3 +593,4 @@ stateDiagram-v2
 | 3 | 2026-10-27 | #69의 Google start·callback 실패를 302 고정 코드 복귀와 503 JSON 대체 응답으로 갱신했다. 422 경계·쿠키 정리·안전한 복귀와 프런트 인계 조건을 명시했다. 구현 `8921f8a`, 검증 `1cbf709`. |
 | 4 | 2026-10-29 | #66에서 실행 문맥이 질문·완료 답변 쌍 순서(`Q1 → A1 → Q2 → A2`)로 구성되도록 고쳐, 서버 보장의 실행 시 문맥과 알려진 구현 차이를 해결된 상태로 갱신했다. 구현 `308fbba`. |
 | 5 | 2026-10-30 | #68: 실행 시 문맥에 PR 리뷰에서 승인된 16,000자 입력 길이 상한을 더하고, 실제 어댑터 `stream` 추가와 공개 mock 유지를 반영했다. API 형식·상태·오류 코드는 바뀌지 않았다. |
+| 6 | 2026-11-02 | #72: `/api/ready`가 DB `SELECT 1`에 더해 인증 설정·제품 스키마·대기열 실행기를 확인하도록 상태 확인 절을 추가했다. 200 본문과 `database_unavailable`은 유지하고 503에 `not_ready`·`checks`를 더했다. |

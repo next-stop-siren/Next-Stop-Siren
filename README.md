@@ -70,7 +70,7 @@ Set-Location Next-Stop-Siren
 
 `setup`은 환경과 의존성을 준비하고 DB 연결 및 기본 검사를 확인한 뒤 끝납니다. 제품 테이블은 만들지 않습니다. 이어서 [인증 키 설정](docs/01-start/onboarding.md#2-1-인증-키-생성과-env-설정) → `db-init` → `dev` 순서로 진행하세요. `db-init`은 누락 테이블만 만들며 기존 스키마를 마이그레이션하지 않습니다. `dev`는 실행 상태로 계속 대기합니다. 첫 터미널에서 `Ctrl+C`를 누르면 `dev`가 시작한 API와 화면 프로세스가 종료됩니다. DB 컨테이너는 별도로 실행 중이므로 필요하면 `stop` 명령으로 중지하세요.
 
-화면은 [http://127.0.0.1:5173](http://127.0.0.1:5173), API 문서는 [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)입니다. 현재 화면에는 인증과 기본 회원 채팅 경로가 있습니다. 대기열 실제 연결의 한계는 위 구현 상태를 확인하세요. API의 `/api/health`는 정상일 때 `{"status":"ok"}`, `/api/ready`는 DB 연결 성공 시 `{"status":"ready"}`를 반환합니다.
+화면은 [http://127.0.0.1:5173](http://127.0.0.1:5173), API 문서는 [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)입니다. 현재 화면에는 인증과 기본 회원 채팅 경로가 있습니다. 대기열 실제 연결의 한계는 위 구현 상태를 확인하세요. API의 `/api/health`는 정상일 때 `{"status":"ok"}`, `/api/ready`는 DB·인증 설정·제품 스키마·대기열 실행기가 모두 준비됐을 때 `{"status":"ready"}`를 반환합니다.
 
 인증 개발은 `http://127.0.0.1`을 기준으로 합니다. `.env`의 `AUTH_API_ORIGIN`은 `http://127.0.0.1:8000`, `AUTH_ALLOWED_ORIGINS`는 `http://127.0.0.1:5173,http://127.0.0.1:8000`으로 설정합니다. 화면(5173)과 Swagger UI(8000)의 실제 Origin을 모두 허용하며 `localhost`는 허용 목록에서 제외합니다. Origin에는 `/docs` 경로를 넣지 않습니다. Google 로그인 callback은 `http://127.0.0.1:8000/api/auth/google/callback`을 등록합니다.
 
@@ -78,7 +78,7 @@ Set-Location Next-Stop-Siren
 
 [온보딩의 API 확인 순서](docs/01-start/onboarding.md#3-1-swagger로-가입로그인과-모의-대화-확인)를 따르세요. Swagger에서 가입 `201`, 로그인 `200`, **Authorize → AccessBearer**에 access 토큰 입력, `/api/me`, 대화 생성·메시지 전송·재조회를 확인합니다. 일반 mock 채팅에는 Google·실제 AI 키가 필요하지 않습니다. refresh·logout은 브라우저의 HttpOnly 쿠키와 최신 `X-CSRF-Token`을 함께 사용합니다.
 
-`/api/health`는 프로세스 응답, `/api/ready`는 DB의 `SELECT 1`만 확인합니다. 둘이 성공해도 인증 설정이나 제품 스키마·로그인·채팅이 정상이라는 뜻은 아닙니다. Google callback은 `:8000`을 유지합니다. 성공 후 `:5173`로 이동하려면 기존 `.env`에 `GOOGLE_FRONTEND_ORIGIN=http://127.0.0.1:5173`을 직접 추가하고 API를 재시작하세요([설정 절차](docs/01-start/onboarding.md#2-2-google-로그인용-env-설정)). 설정이 없으면 기존 상대 경로로 돌아옵니다. 화면의 CSRF·refresh·로그인 상태 연결은 구현되어 있습니다. 실제 통합 검증은 [후속 작업](https://github.com/next-stop-siren/Next-Stop-Siren/issues/19)입니다. Swagger Execute는 Google 브라우저 이동을 대신하지 않습니다.
+`/api/health`는 프로세스 응답만, `/api/ready`는 DB `SELECT 1`·인증 설정·10개 제품 테이블과 컬럼·대기열 실행기를 확인합니다([상태 확인](docs/04-reference/api.md#상태-확인-72)). 준비되지 않으면 503의 `checks`에 원인이 나옵니다. `ready`가 성공해도 컬럼 타입·제약 호환성이나 로그인·채팅 동작까지 확인한 것은 아니므로 아래 절차도 필요합니다. Google callback은 `:8000`을 유지합니다. 성공 후 `:5173`로 이동하려면 기존 `.env`에 `GOOGLE_FRONTEND_ORIGIN=http://127.0.0.1:5173`을 직접 추가하고 API를 재시작하세요([설정 절차](docs/01-start/onboarding.md#2-2-google-로그인용-env-설정)). 설정이 없으면 기존 상대 경로로 돌아옵니다. 화면의 CSRF·refresh·로그인 상태 연결은 구현되어 있습니다. 실제 통합 검증은 [후속 작업](https://github.com/next-stop-siren/Next-Stop-Siren/issues/19)입니다. Swagger Execute는 Google 브라우저 이동을 대신하지 않습니다.
 
 ## 저장소 구조
 

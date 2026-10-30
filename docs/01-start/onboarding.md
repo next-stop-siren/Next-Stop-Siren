@@ -53,7 +53,7 @@ git --version
 ./local.sh setup
 ```
 
-`setup`은 `.env`가 없을 때만 예시를 복사한다. 잠금 파일로 프런트엔드·백엔드 의존성과 프로젝트 Playwright Chromium을 설치하고, 개발·테스트 PostgreSQL을 시작한다. 각 DB의 `SELECT 1`, API 준비 상태, 기본 검사를 확인한다. 완료 출력에는 `SELECT 1 passed`, `API readiness passed`, 프런트엔드 타입 검사와 백엔드 단위 검사 성공이 나타난다.
+`setup`은 `.env`가 없을 때만 예시를 복사한다. 잠금 파일로 프런트엔드·백엔드 의존성과 프로젝트 Playwright Chromium을 설치하고, 개발·테스트 PostgreSQL을 시작한다. 각 DB의 `SELECT 1`, API의 DB 연결, 기본 검사를 확인한다. 완료 출력에는 `SELECT 1 passed`, `API database connection passed; not ready until auth keys and db-init are done (…)`(인증 키·`db-init`을 이미 마쳤다면 `API readiness passed`), 프런트엔드 타입 검사와 백엔드 단위 검사 성공이 나타난다. 괄호 안은 아직 `ok`가 아닌 [준비 항목](../04-reference/api.md#상태-확인-72)이다.
 
 ### 2-1. 인증 키 생성과 .env 설정
 
@@ -238,7 +238,7 @@ PowerShell 명령은 Windows에서 실제 실행하지 않았다.
 
 Windows는 `.\local.ps1 db-init`이다. 현재 등록된 `users`, `auth_identities`, `refresh_sessions`, `conversations`, `messages`, `chat_quotas`, `chat_quota_reservations` 7개 테이블과 #52 대기열 3개 테이블(`chat_queue_members`, `chat_jobs`, `chat_conversation_holds`), 모두 10개를 확인하고 없는 테이블만 만든다. 출력의 개수는 이번에 새로 만든 수가 아니라 등록 모델 수다. `setup`은 이 작업을 대신하지 않는다.
 
-`create_all()`은 기존 테이블의 컬럼·제약을 바꾸지 않으며 데이터도 삭제하지 않는다. 오래된 스키마가 있으면 `db-init` 성공만으로 호환성을 보장할 수 없다. 삭제·재생성으로 해결하지 말고 백업·적용·복구 계획을 먼저 검토한다. 마이그레이션과 운영 준비 상태 검사는 별도 후속 작업이다.
+`create_all()`은 기존 테이블의 컬럼·제약을 바꾸지 않으며 데이터도 삭제하지 않는다. 오래된 스키마가 있으면 `db-init` 성공만으로 호환성을 보장할 수 없다. 삭제·재생성으로 해결하지 말고 백업·적용·복구 계획을 먼저 검토한다. `/api/ready`는 빠진 테이블·컬럼만 알려 주며(#72), 마이그레이션은 별도 후속 작업이다.
 
 ### 3. 화면과 API 실행
 
@@ -251,7 +251,7 @@ curl -f http://127.0.0.1:5173/api/ready    # {"status":"ready"}
 curl -f http://127.0.0.1:8000/api/ready    # {"status":"ready"}
 ```
 
-모두 HTTP 200이어야 한다. `health`는 API 프로세스 응답, `ready`는 DB의 `SELECT 1` 성공만 뜻한다. 인증 키·Google 설정·10개 등록 모델에 해당하는 테이블의 존재와 스키마 호환성을 확인하지 않으므로 아래 실제 API 절차도 필요하다. 현재 화면에는 인증 API와 기본 HTTP 채팅 경로가 있지만, PR #62의 `202` 접수·작업·구독 계약을 MemberChat에 연결하는 작업은 남아 있다. 아래 실제 API 확인까지 마친 뒤 첫 터미널에서 `Ctrl+C`로 `dev`가 시작한 프로세스를 종료한다.
+모두 HTTP 200이어야 한다. `health`는 API 프로세스 응답만 뜻한다. `ready`는 DB `SELECT 1`, 인증 키 설정, 10개 등록 모델의 테이블·컬럼 존재, 대기열 실행기 poll을 확인한다([상태 확인](../04-reference/api.md#상태-확인-72)). 503이면 본문의 `checks`에서 `ok`가 아닌 항목을 고친다(`auth`는 인증 키 설정 뒤 `dev` 재시작, `schema`는 `db-init`). Google 설정과 컬럼 타입·제약 호환성은 확인하지 않으므로 아래 실제 API 절차도 필요하다. 현재 화면에는 인증 API와 기본 HTTP 채팅 경로가 있지만, PR #62의 `202` 접수·작업·구독 계약을 MemberChat에 연결하는 작업은 남아 있다. 아래 실제 API 확인까지 마친 뒤 첫 터미널에서 `Ctrl+C`로 `dev`가 시작한 프로세스를 종료한다.
 
 인증 개발은 `http://127.0.0.1`을 기준으로 한다. `.env`의 `AUTH_API_ORIGIN`은 `http://127.0.0.1:8000`, `AUTH_ALLOWED_ORIGINS`는 `http://127.0.0.1:5173,http://127.0.0.1:8000`으로 설정한다. 화면은 5173, Swagger UI는 8000의 `/docs`에서 제공하므로 두 실제 Origin을 모두 허용하고 `localhost`는 제외한다. Origin에는 `/docs` 경로를 포함하지 않는다. `.env` 변경은 실행 중인 앱 설정에 적용되지 않으므로 직접 관리하는 API 개발 프로세스를 재시작한다. Google 로그인 callback은 `http://127.0.0.1:8000/api/auth/google/callback`을 등록한다.
 

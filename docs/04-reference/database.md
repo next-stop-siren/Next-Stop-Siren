@@ -1,6 +1,6 @@
 # 데이터베이스 설계
 
-**Rev 2 · 2026-10-29 (KST)** · 코드 기준: [`308fbba`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/308fbba83acce02adfd19449b0740d4a99bf9c19)
+**Rev 3 · 2026-11-02 (KST)** · 코드 기준: [`308fbba`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/308fbba83acce02adfd19449b0740d4a99bf9c19)
 
 변경 근거: [PR #57](https://github.com/next-stop-siren/Next-Stop-Siren/pull/57) · [PR #59](https://github.com/next-stop-siren/Next-Stop-Siren/pull/59) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62) · [#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66). Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
 
@@ -181,6 +181,8 @@ DROP TABLE chat_queue_members;
 
 `create_all()`은 기존 테이블을 `ALTER`하지 않는다. 기존 데이터나 스키마를 자동 삭제·재생성하지 않고 요청마다 테이블을 만들지 않는다. 이후 기존 스키마 변경은 적용·복구와 데이터 영향을 검토한 명시적 절차를 먼저 정한다. 도구는 아직 선택하지 않았다.
 
+`/api/ready`(#72)는 `app.readiness`가 등록 제품 모델 10개의 테이블·컬럼 이름을 현재 스키마의 `information_schema.columns`와 비교해 빠진 것이 있으면 준비 안 됨으로 응답한다. 검사 연결은 `default_transaction_read_only=on`이라 테이블을 만들거나 데이터를 바꾸지 않는다. 스키마 버전 표가 없으므로 컬럼 타입·제약·인덱스 차이는 잡지 못한다. 마이그레이션 도구를 정하면 버전 비교로 바꿀지 검토한다. 계약은 [API의 상태 확인](api.md#상태-확인-72)이다.
+
 최소 완료 확인:
 
 - [ ] 빈 전용 테스트 DB에 다섯 ORM 모델의 테이블·인덱스·제약이 생성된다.
@@ -197,3 +199,4 @@ DROP TABLE chat_queue_members;
 | --- | --- | --- |
 | 1 | 2026-10-25 | 등록 모델 10개, 한도·대기열 연결과 기존 DB 변경의 한계를 정리했다. 당시 기준 코드는 `2d50da5`다. |
 | 2 | 2026-10-29 | #66에서 `context_before()` 정렬을 `COALESCE(reply_to_message_id, id), id`로 바꿔 문맥 쌍 순서 차이를 해결된 상태로 갱신했다. 스키마·인덱스 변경은 없다. 구현 `308fbba`. |
+| 3 | 2026-11-02 | #72: `/api/ready`의 읽기 전용 제품 테이블·컬럼 존재 검사와 그 한계(타입·제약 미비교, 버전 표 없음)를 추가했다. 스키마 변경은 없다. |
