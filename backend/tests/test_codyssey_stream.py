@@ -219,6 +219,20 @@ def test_the_deadline_covers_the_whole_stream_and_cancels_the_connection(gpt):
     assert len(gpt.requests) == 1
 
 
+def test_pieces_still_buffered_after_the_deadline_end_the_stream_as_a_timeout(gpt, caplog):
+    """The server sent everything, natural end included, but the reader fell behind the deadline."""
+    caplog.set_level(logging.INFO)
+    pieces = gpt.provider.stream(CONTEXT, timeout_seconds=0.3)
+    assert next(pieces) == "합성 "
+    # By now the remaining piece, the stop reason and `[DONE]` wait in the buffer.
+    time.sleep(0.5)
+    with pytest.raises(ProviderTimeout):
+        next(pieces)
+    assert "mode=stream outcome=timeout" in caplog.text
+    assert "outcome=completed" not in caplog.text
+    assert len(gpt.requests) == 1
+
+
 def test_a_caller_that_stops_reading_cancels_the_request(gpt):
     gpt.hold_after = 1
     pieces = gpt.provider.stream(CONTEXT, timeout_seconds=5)

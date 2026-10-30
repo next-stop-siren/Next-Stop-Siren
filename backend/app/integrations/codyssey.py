@@ -134,12 +134,22 @@ class _Call:
         threading.Thread(target=request, daemon=True).start()
 
     def next(self) -> object:
-        """The next event, or `ProviderTimeout` once the deadline passes, after cancelling."""
-        try:
-            return self.events.get(timeout=max(0.0, self.deadline - time.monotonic()))
-        except queue.Empty:
-            self.cancel()
-            raise ProviderTimeout from None
+        """The next event before the deadline; after it, cancel and raise `ProviderTimeout`.
+
+        An event already waiting on the queue is not read once the deadline has passed,
+        so a reader that falls behind cannot finish a stream from the buffer late.
+        """
+        remaining = self.deadline - time.monotonic()
+        if remaining > 0:
+            try:
+                item = self.events.get(timeout=remaining)
+            except queue.Empty:
+                pass
+            else:
+                if time.monotonic() <= self.deadline:
+                    return item
+        self.cancel()
+        raise ProviderTimeout from None
 
     def cancel(self) -> None:
         """Mark the call cancelled and shut the socket down, so a waiting read or send ends now."""

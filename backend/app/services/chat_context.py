@@ -1,10 +1,10 @@
 """What one execution sends to the AI: #66's completed pairs within a budget, then the question once (#68).
 
-The unit is characters (`len`, code points), not provider tokens: counting tokens
-exactly needs a tokenizer, which is a new runtime dependency that is not approved.
-For Korean text a character is at most about one token, so the budget is a
-conservative upper bound on the input tokens of one call. It is not the member's
-400/100 limit and not the Codyssey weekly allocation; it only keeps one call small.
+The unit is characters (`len`, code points), not provider tokens; counting tokens
+needs a tokenizer, a new runtime dependency that is not approved. The budget limits
+the length of the input only. One character can be several tokens, so it does not
+bound or guarantee the tokens used or their cost. It is not the member's 400/100
+limit and not the Codyssey weekly allocation.
 
 Over the budget, the oldest completed pairs are left out, whole pairs at a time, and
 the kept pairs are always the most recent ones in a row. A question or answer is
@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from app.integrations.provider import ContextMessage
 from app.models.conversation import Message
 
-# Proposed in #68 and pending the team's approval; see docs/04-reference/ai.md.
+# Approved in the #68 review; see docs/04-reference/ai.md.
 # It must stay above the API's question limit, which a unit test checks.
 CONTEXT_CHAR_BUDGET = 16_000
 
