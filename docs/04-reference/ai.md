@@ -1,8 +1,8 @@
 # S11 GPT 연결 기준
 
-**Rev 2 · 2026-10-28 (KST)** · 코드 기준: [`2d50da5`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/2d50da5976548db7b85c5b0b931b7c43e622fa15)
+**Rev 3 · 2026-10-30 (KST)** · 코드 기준: [`308fbba`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/308fbba83acce02adfd19449b0740d4a99bf9c19)
 
-변경 근거: [PR #45](https://github.com/next-stop-siren/Next-Stop-Siren/pull/45) · [PR #46](https://github.com/next-stop-siren/Next-Stop-Siren/pull/46) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62). Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
+변경 근거: [PR #45](https://github.com/next-stop-siren/Next-Stop-Siren/pull/45) · [PR #46](https://github.com/next-stop-siren/Next-Stop-Siren/pull/46) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62) · [#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66). Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
 
 [회원 채팅 정책](chat-policy.md)은 실행 시 문맥과 연결 상태에 의존하지 않는 작업의 의도를 설명한다. 현재 경로·상태 계약은 [API](api.md)로 통합한다. 완료 쌍 필터링, 고정 제공자·모델, 30초 기한과 자동 재시도 금지는 유지한다.
 
@@ -36,7 +36,7 @@
 - 다음 GPT 입력은 **과거의 완성된 질문+답변 쌍을 순서대로 구성한 뒤 현재 질문을 한 번 추가**한다. `completed` 답변에 연결된 질문과 답변만 과거 쌍으로 포함한다.
 - 과거 답변이 `failed`, `interrupted`, `pending`이면 그 질문과 답변을 **쌍 전체로 AI 문맥에서 제외**한다. 해당 기록은 DB와 UI 이력에 그대로 남긴다. 문맥에서 제외하려고 행을 삭제하거나 이력 조회를 필터링하지 않는다.
 
-실행 시작 때 `app.services.chat_context`가 `context_before()`의 완료 메시지를 답변의 `reply_to_message_id`로 질문에 묶어 질문 ID 순으로 놓는다. 그래서 Q2가 A1보다 먼저 저장돼도 보내는 순서는 Q1·A1·Q2·A2다. 격리 어댑터·테스트 존재는 실제 AI 공개·브라우저 통합 완료 증거가 아니다. API 상태·저장 규칙은 [API 기준](api.md), 기록 구조는 [DB 설계](database.md)를 함께 따른다.
+실행 경로 `chat_jobs.context_before()`는 완료 쌍을 질문 기준 쌍 순서(Q1·A1·Q2·A2)로 읽는다. 질문이 답변보다 먼저 여러 개 접수돼도 같다([#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66), [API의 알려진 차이](api.md#알려진-구현-차이와-인수-확인)). #68의 `app.services.chat_context`는 이 순서를 다시 정렬하지 않고 그대로 받아 쌍으로 묶은 뒤 아래 입력 길이 상한을 적용한다. 순서가 맞지 않는 행은 쌍으로 묶지 않고 문맥에서 뺀다. 격리 어댑터·테스트 존재는 실제 AI 공개·브라우저 통합 완료 증거가 아니다. API 상태·저장 규칙은 [API 기준](api.md), 기록 구조는 [DB 설계](database.md)를 함께 따른다.
 
 ### 스트림 응답의 종료 판정
 
@@ -85,5 +85,6 @@
 
 | Rev | 일자 (KST) | 변경과 근거 |
 | --- | --- | --- |
-| 1 | 2026-10-25 | 격리 complete 어댑터와 공개 mock·실제 stream 미연결, 문맥 순서 차이를 구분했다. 기준 코드는 위 고정 SHA이며 근거 PR은 문서 상단에 있다. |
-| 2 | 2026-10-28 | #68: 실제 어댑터 `stream`과 종료 판정, 쌍 순서 문맥 구성, 입력 길이 제안(승인 대기)을 추가했다. 공개 mock 유지와 실제 호출 미실행을 명시했다. |
+| 1 | 2026-10-25 | 격리 complete 어댑터와 공개 mock·실제 stream 미연결, 문맥 순서 차이를 구분했다. 당시 기준 코드는 `2d50da5`다. |
+| 2 | 2026-10-29 | #66에서 실행 경로 `context_before()`가 완료 쌍을 Q1·A1·Q2·A2 순서로 읽도록 고쳐, 문맥 순서 차이를 해결된 상태로 갱신했다. 구현 `308fbba`. |
+| 3 | 2026-10-30 | #68: 실제 어댑터 `stream`과 종료 판정, #66 순서를 받아 쓰는 문맥 구성, 입력 길이 제안(승인 대기)을 추가했다. 공개 mock 유지와 실제 호출 미실행을 명시했다. |
