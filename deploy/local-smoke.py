@@ -6,6 +6,7 @@ from collections.abc import Callable
 import http.client
 import hashlib
 import hmac
+from ipaddress import ip_network
 import json
 from pathlib import Path
 import secrets
@@ -19,6 +20,19 @@ from uuid import uuid4
 ROOT = Path(__file__).resolve().parents[1]
 DOMAIN = "next-stop-siren.duckdns.org"
 ORIGIN = "https://" + DOMAIN
+
+
+def smoke_proxy_networks(network: dict, project: str) -> str:
+    """Trust only this disposable project's network; never a production default."""
+    if (
+        network.get("Name") != project + "_default"
+        or network.get("Labels", {}).get("com.docker.compose.project") != project
+    ):
+        raise ValueError("owned_smoke_network_required")
+    subnets = [ip_network(item["Subnet"]) for item in network["IPAM"]["Config"]]
+    if not subnets or any(subnet.prefixlen == 0 for subnet in subnets):
+        raise ValueError("bounded_smoke_network_required")
+    return ",".join(str(subnet) for subnet in subnets)
 
 
 def short_access_token(values: dict[str, str], user_id: str) -> str:
@@ -120,7 +134,7 @@ def verify_stored_answer(page: dict, completed: dict, question_id: str, expected
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--context", choices=["colima"], required=True)
+    parser.add_argument("--context", choices=["colima", "desktop-linux"], required=True)
     parser.add_argument("--frontend-image", required=True)
     parser.add_argument("--backend-image", required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True)
@@ -136,8 +150,8 @@ def main() -> int:
     checks = []
     owned = False
 
-    def run(command, *, check=True, timeout=180):
-        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout, cwd=ROOT)
+    def run(command, *, check=True, timeout=180, input_text=None):
+        result = subprocess.run(command, input=input_text, capture_output=True, text=True, timeout=timeout, cwd=ROOT)
         commands.append({"argv": command, "exit": result.returncode})
         (evidence / "commands.json").write_text(json.dumps(commands, indent=2))
         if check and result.returncode:
@@ -224,6 +238,20 @@ def main() -> int:
     pull_policy: never
     restart: "no"
     labels: {{org.next-stop-siren.issue73.smoke: "{nonce}"}}
+  client_a:
+    image: {args.backend_image}
+    platform: linux/amd64
+    pull_policy: never
+    entrypoint: ["python", "-c", "import time; time.sleep(1800)"]
+    command: []
+    labels: {{org.next-stop-siren.issue73.smoke: "{nonce}"}}
+  client_b:
+    image: {args.backend_image}
+    platform: linux/amd64
+    pull_policy: never
+    entrypoint: ["python", "-c", "import time; time.sleep(1800)"]
+    command: []
+    labels: {{org.next-stop-siren.issue73.smoke: "{nonce}"}}
   db:
     restart: "no"
     labels: {{org.next-stop-siren.issue73.smoke: "{nonce}"}}
@@ -249,6 +277,9 @@ def main() -> int:
         passed("compose_private_api_db_loopback_nginx")
         owned = True  # Only this freshly verified, unoccupied nonce project can be changed below.
         run(compose + ["up", "-d", "--wait", "db"], timeout=240)
+        network = json.loads(run(docker + ["network", "inspect", project + "_default"]))[0]
+        values["FORWARDED_ALLOW_IPS"] = smoke_proxy_networks(network, project)
+        runtime.write_text("\n".join(f"{key}={value}" for key, value in values.items()) + "\n")
         # Explicitly initialize ONLY this disposable, newly created DB. Never production startup DDL.
         run(
             compose
@@ -396,8 +427,145 @@ def main() -> int:
         assert request("GET", "/api/error?code=" + sentinel)[0] in {502, 504}
         run(compose + ["start", "backend"])
         wait_ready()
+        # Two real source IPs on this disposable network exercise the unchanged Nginx and API.
+        run(compose + ["up", "-d", "--no-deps", "client_a", "client_b"])
+        probe_source = (ROOT / "deploy/login-proxy-client.py").read_text()
+        proxy_results = []
+        snapshots = []
+
+        def snapshot():
+            layout = {}
+            for service in ("nginx", "backend", "client_a", "client_b"):
+                ids = run(compose + ["ps", "-q", service]).split()
+                assert len(ids) == 1, "single_replica_required"
+                info = json.loads(run(docker + ["inspect", ids[0]]))[0]
+                assert info["Config"]["Labels"].get("org.next-stop-siren.issue73.smoke") == nonce
+                if service != "nginx":
+                    assert not info["HostConfig"].get("PortBindings"), "private_ports_required"
+                layout[service] = {
+                    "id": ids[0],
+                    "ip": info["NetworkSettings"]["Networks"][project + "_default"]["IPAddress"],
+                    "image_id": info["Image"],
+                }
+            assert len({item["ip"] for item in layout.values()}) == 4, "distinct_client_addresses_required"
+            workers = json.loads(
+                run(
+                    compose
+                    + [
+                        "exec",
+                        "-T",
+                        "backend",
+                        "python",
+                        "-c",
+                        "import json,pathlib; rows=[]; "
+                        "[rows.append(p.name) for p in pathlib.Path('/proc').iterdir() if p.name.isdigit() "
+                        "and (p/'cmdline').exists() and any(a.endswith(b'/uvicorn') or a == b'uvicorn' "
+                        "for a in (p/'cmdline').read_bytes().split(bytes([0])))]; print(json.dumps(rows))",
+                    ]
+                )
+            )
+            assert len(workers) == 1, "single_uvicorn_process_required"
+            snapshots.append(layout)
+            (evidence / "proxy-layout.json").write_text(json.dumps(snapshots, indent=2))
+            return layout
+
+        def task(email, *, password="synthetic-wrong-password", headers=()):
+            return {"body": {"email": email, "password": password}, "headers": headers}
+
+        def probe(name, client, tasks, *, concurrent=False):
+            rows = json.loads(
+                run(
+                    compose + ["exec", "-T", client, "python", "-c", probe_source],
+                    input_text=json.dumps({"tasks": tasks, "concurrent": concurrent}),
+                )
+            )
+            assert len(rows) == len(tasks) and not any(row["password_echo"] for row in rows)
+            for row in rows:
+                if row["status"] == 200:
+                    assert row["access_token_present"] and row["secure_cookies"]
+                else:
+                    assert not row["auth_cookies"] and not row["access_token_present"]
+                    assert row["code"] == {401: "unauthenticated", 429: "rate_limited"}.get(row["status"])
+                    assert row["status"] in {401, 429}
+                if row["status"] == 429:
+                    assert 1 <= int(row["retry_after"]) <= 600
+                else:
+                    assert row["retry_after"] is None
+            proxy_results.append({"check": name, "client": client, "results": rows})
+            (evidence / "login-proxy-results.json").write_text(json.dumps(proxy_results, indent=2))
+            return [row["status"] for row in rows]
+
+        before = snapshot()
+        spoof_canary = "synthetic-forwarded-" + nonce
+        variants = [
+            [],
+            [["X-Forwarded-For", ""]],
+            [["X-Forwarded-For", "203.0.113.1, 198.51.100.1"]],
+            [["X-Forwarded-For", "203.0.113.2"], ["X-Forwarded-For", spoof_canary]],
+            [["Forwarded", "for=203.0.113.3"], ["X-Real-IP", "203.0.113.3"]],
+            [["X-Forwarded-For", spoof_canary], ["X-Forwarded-Proto", "http"]],
+        ]
+        assert (
+            probe(
+                "spoofed_empty_duplicate_headers",
+                "client_a",
+                [task(f"proxy-a-{i}-{nonce}@example.test", headers=variants[i % len(variants)]) for i in range(30)],
+            )
+            == [401] * 30
+        )
+        assert probe("same_ip_still_limited", "client_a", [task(f"proxy-blocked-{nonce}@example.test")]) == [429]
+        assert probe("other_real_ip_is_independent", "client_b", [task(f"proxy-b-{nonce}@example.test")]) == [401]
+        passed("proxy_real_client_ips_spoof_empty_duplicate_header_isolation")
+
+        assert probe("four_failures", "client_b", [task(account["email"])] * 4) == [401] * 4
+        assert probe("successful_login", "client_b", [task(account["email"], password=account["password"])]) == [200]
+        assert probe("email_reset", "client_b", [task(account["email"])] * 6) == [401] * 5 + [429]
+        assert (
+            probe(
+                "ip_failures_preserved", "client_b", [task(f"proxy-b-fill-{i}-{nonce}@example.test") for i in range(20)]
+            )
+            == [401] * 20
+        )
+        assert probe("ip_limit_after_success", "client_b", [task(f"proxy-b-full-{nonce}@example.test")]) == [429]
+        passed("proxy_login_success_email_reset_ip_history_secure_cookie_retry_after")
+
+        run(compose + ["restart", "backend"], timeout=90)
+        wait_ready()
+        assert probe("restart_resets_ip_limit", "client_a", [task(f"proxy-reset-{nonce}@example.test")]) == [401]
+        shared_email = f"proxy-concurrent-{nonce}@example.test"
+        statuses = probe("concurrent_failures", "client_b", [task(shared_email)] * 10, concurrent=True)
+        assert statuses.count(401) == 5 and statuses.count(429) == 5
+        assert probe("same_email_across_real_ips", "client_a", [task(shared_email)]) == [429]
+        passed("proxy_concurrent_email_limit_cross_ip_and_process_restart_reset")
+
+        run(compose + ["up", "-d", "--no-deps", "--force-recreate", "nginx"])
+        port = int(run(compose + ["port", "nginx", "443"]).strip().rsplit(":", 1)[1])
+        wait_ready()
+        after_nginx = snapshot()
+        assert after_nginx["nginx"]["id"] != before["nginx"]["id"]
+        assert after_nginx["backend"]["id"] == before["backend"]["id"]
+        assert probe("nginx_recreate_preserves_limit", "client_a", [task(shared_email)]) == [429]
+        assert probe("nginx_recreate_other_email", "client_b", [task(f"proxy-recreated-{nonce}@example.test")]) == [401]
+        passed("proxy_nginx_recreation_preserves_backend_counter_and_trust")
+
+        run(compose + ["up", "-d", "--no-deps", "--force-recreate", "backend"], timeout=90)
+        run(compose + ["up", "-d", "--no-deps", "--force-recreate", "nginx"])
+        port = int(run(compose + ["port", "nginx", "443"]).strip().rsplit(":", 1)[1])
+        wait_ready()
+        after_backend = snapshot()
+        assert after_backend["backend"]["id"] != before["backend"]["id"]
+        assert after_backend["backend"]["image_id"] == before["backend"]["image_id"]
+        assert probe("backend_recreate_resets_limit", "client_a", [task(shared_email)]) == [401]
+        assert probe(
+            "backend_recreate_success", "client_b", [task(account["email"], password=account["password"])]
+        ) == [200]
+        assert request("GET", "/api/me", token=token)[0] == 200
+        assert request("GET", f"/api/conversations/{conversation}/messages", token=token)[2] == stored
+        passed("proxy_backend_recreation_same_image_trust_and_persisted_state")
         logs = run(compose + ["logs", "--no-color"])
-        assert sentinel not in logs and token not in logs and account["password"] not in logs
+        assert (
+            sentinel not in logs and spoof_canary not in logs and token not in logs and account["password"] not in logs
+        )
         for name in ("AUTH_ACCESS_KEY", "AUTH_REFRESH_KEY", "AUTH_REFRESH_DIGEST_KEY", "AUTH_CSRF_KEY"):
             assert values[name] not in logs
         (evidence / "sanitized-container-logs.txt").write_text(logs)

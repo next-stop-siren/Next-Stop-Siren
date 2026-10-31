@@ -123,6 +123,21 @@ action pin은40hex 모양뿐 아니라 공식 git/commits의 성공 응답으로
 오프라인 준비 검증은 저장된 ref/tag/commit 응답 및 명령 exit와 workflow pin을 대조하며,
 workflow 실행 시 ref를 다시 resolve하거나 새 런타임 의존성을 추가하지 않는다.
 
+## SSM ReleaseManifest 제약
+
+`ReleaseManifest`는 `allowedPattern: ^[A-Za-z0-9+/=]+$`로 비어 있지 않은 base64 문자만
+허용하고 숫자 `maxChars: 4096`으로 길이를 제한한다. `{1,4096}`처럼 큰 반복 수를 패턴에
+넣지 않는다. [Go/RE2 반복 구문](https://pkg.go.dev/regexp/syntax)은 bounded repeat의
+최소·최대 수가 1000을 넘으면 거부하므로 Python `re` 컴파일 성공만으로 SSM 호환성을 판단할 수 없다.
+오프라인 테스트는 이 제한에 대한 정적 회귀 검사와 값 경계 검사를 분리한다. 실제 SSM 엔진 호출은 아니다.
+
+Owner는 이전 패턴의 생성 실패와 수정된 문서 `NextStopSiren-PilotDeploy` version `1` 생성 성공,
+`HashType: Sha256`, hash `6c4c103fd32436fb95495fe5c97c2579256821d1a7c9da21adb0dcef0d962f97`을
+보고했다. 이는 사용자 제공 증거이며 이 변경에서 AWS에 직접 조회하지 않았다. 배포는 설정한
+AWS 보고 hash를 DescribeDocument와 대조하고, GetDocument JSON 내용은 로컬 소스와 의미적으로
+비교한다. 공백·키 순서는 무관하며 내용 변경은 거부한다. 로컬 JSON 파일의 raw-byte hash를
+AWS 보고 hash와 동일하다고 가정하지 않는다. 이 소스 제약 변경에는 host helper 재설치가 필요 없다.
+
 ## 로컬 검증과 미실행
 
 `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s deploy/actions/tests -v`
