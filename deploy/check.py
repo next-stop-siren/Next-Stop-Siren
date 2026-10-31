@@ -275,17 +275,17 @@ class SmokeCompletionChecks(unittest.TestCase):
         self.assertNotIn("synthetic-private", output.getvalue())
         self.assertNotIn("fixture@example.test", output.getvalue())
 
-    def test_smoke_trust_is_bound_to_its_new_project_network(self):
+    def test_smoke_trust_is_single_nginx_on_its_exact_project_network(self):
         network = {
-            "Name": "test-project_default",
+            "Name": "test-project_proxy",
             "Labels": {"com.docker.compose.project": "test-project"},
-            "IPAM": {"Config": [{"Subnet": "192.0.2.0/28"}]},
+            "IPAM": {"Config": [{"Subnet": "172.28.74.0/29"}]},
         }
-        self.assertEqual(smoke.smoke_proxy_networks(network, "test-project"), "192.0.2.0/28")
+        self.assertEqual(smoke.smoke_proxy_address(network, "test-project"), "172.28.74.2")
         entrypoint.validate(
             {
                 **synthetic_values(),
-                "FORWARDED_ALLOW_IPS": smoke.smoke_proxy_networks(network, "test-project"),
+                "FORWARDED_ALLOW_IPS": smoke.smoke_proxy_address(network, "test-project"),
             }
         )
         for change in (
@@ -296,7 +296,63 @@ class SmokeCompletionChecks(unittest.TestCase):
             {"IPAM": {"Config": [{"Subnet": "not-a-subnet"}]}},
         ):
             with self.subTest(change=change), self.assertRaises(ValueError):
-                smoke.smoke_proxy_networks({**network, **change}, "test-project")
+                smoke.smoke_proxy_address({**network, **change}, "test-project")
+
+    def test_smoke_fails_on_subnet_overlap_without_claiming_other_resources(self):
+        def network(subnet):
+            return {"IPAM": {"Config": [{"Subnet": subnet}]}}
+
+        smoke.reject_proxy_overlap([network("172.31.32.0/20"), network("172.17.0.0/16"), network("2001:db8::/64")])
+        for subnet in ("172.28.74.0/29", "172.28.0.0/16", "172.28.74.0/30"):
+            with self.subTest(subnet=subnet), self.assertRaisesRegex(ValueError, "proxy_subnet_already_in_use"):
+                smoke.reject_proxy_overlap([network(subnet)])
+
+    def test_smoke_requires_fixed_proxy_and_separate_database_with_egress(self):
+        config = {
+            "services": {
+                "nginx": {"networks": {"proxy": {"ipv4_address": "172.28.74.2"}}},
+                "backend": {
+                    "networks": {"proxy": {}, "database": {}},
+                    "environment": {"FORWARDED_ALLOW_IPS": "172.28.74.2"},
+                },
+                "db": {"networks": {"database": {}}},
+            },
+            "networks": {
+                "proxy": {
+                    "ipam": {
+                        "config": [{"subnet": "172.28.74.0/29", "ip_range": "172.28.74.4/30", "gateway": "172.28.74.1"}]
+                    }
+                },
+                "database": {"internal": True},
+            },
+        }
+        smoke.validate_proxy_layout(config)
+        for change in (
+            "nginx_database",
+            "wrong_proxy",
+            "backend_no_egress",
+            "db_proxy",
+            "internal_proxy",
+            "broad_trust",
+            "dynamic_pool",
+        ):
+            bad = deepcopy(config)
+            if change == "nginx_database":
+                bad["services"]["nginx"]["networks"]["database"] = {}
+            elif change == "wrong_proxy":
+                bad["services"]["nginx"]["networks"]["proxy"]["ipv4_address"] = "172.28.74.3"
+            elif change == "backend_no_egress":
+                del bad["services"]["backend"]["networks"]["proxy"]
+            elif change == "db_proxy":
+                bad["services"]["db"]["networks"]["proxy"] = {}
+            elif change == "internal_proxy":
+                bad["networks"]["proxy"]["internal"] = True
+            elif change == "broad_trust":
+                bad["services"]["backend"]["environment"]["FORWARDED_ALLOW_IPS"] = "172.28.74.0/29"
+            else:
+                del bad["networks"]["proxy"]["ipam"]["config"][0]["ip_range"]
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, "dedicated_proxy_database_layout"):
+                smoke.validate_proxy_layout(bad)
 
     @staticmethod
     def completed():

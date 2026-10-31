@@ -22,17 +22,48 @@ DOMAIN = "next-stop-siren.duckdns.org"
 ORIGIN = "https://" + DOMAIN
 
 
-def smoke_proxy_networks(network: dict, project: str) -> str:
-    """Trust only this disposable project's network; never a production default."""
+PROXY_SUBNET = ip_network("172.28.74.0/29")
+PROXY_ADDRESS = "172.28.74.2"
+
+
+def smoke_proxy_address(network: dict, project: str) -> str:
+    """Trust only fixed Nginx on this disposable project's exact proxy network."""
     if (
-        network.get("Name") != project + "_default"
+        network.get("Name") != project + "_proxy"
         or network.get("Labels", {}).get("com.docker.compose.project") != project
     ):
         raise ValueError("owned_smoke_network_required")
     subnets = [ip_network(item["Subnet"]) for item in network["IPAM"]["Config"]]
-    if not subnets or any(subnet.prefixlen == 0 for subnet in subnets):
-        raise ValueError("bounded_smoke_network_required")
-    return ",".join(str(subnet) for subnet in subnets)
+    if subnets != [PROXY_SUBNET]:
+        raise ValueError("exact_proxy_subnet_required")
+    return PROXY_ADDRESS
+
+
+def reject_proxy_overlap(networks: list[dict]) -> None:
+    """Fail before creating resources; never remove another network to make room."""
+    for network in networks:
+        for item in network.get("IPAM", {}).get("Config") or []:
+            subnet = ip_network(item["Subnet"])
+            if subnet.version == 4 and subnet.overlaps(PROXY_SUBNET):
+                raise ValueError("proxy_subnet_already_in_use")
+
+
+def validate_proxy_layout(config: dict) -> None:
+    """Require isolated DB, fixed proxy identity, and a non-internal egress path."""
+    services, networks = config["services"], config["networks"]
+    if (
+        set(services["nginx"]["networks"]) != {"proxy"}
+        or services["nginx"]["networks"]["proxy"]["ipv4_address"] != PROXY_ADDRESS
+        or set(services["backend"]["networks"]) != {"proxy", "database"}
+        or set(services["db"]["networks"]) != {"database"}
+        or services["backend"]["environment"].get("FORWARDED_ALLOW_IPS") != PROXY_ADDRESS
+        or networks["proxy"].get("internal", False)
+        or not networks["database"].get("internal", False)
+        or networks["proxy"]["ipam"]["config"] != [
+            {"subnet": str(PROXY_SUBNET), "ip_range": "172.28.74.4/30", "gateway": "172.28.74.1"}
+        ]
+    ):
+        raise ValueError("dedicated_proxy_database_layout_required")
 
 
 def short_access_token(values: dict[str, str], user_id: str) -> str:
@@ -174,6 +205,8 @@ def main() -> int:
         for resource in ("volume", "network"):
             if run(docker + [resource, "ls", "-q", "--filter", "label=com.docker.compose.project=" + project]).strip():
                 raise RuntimeError("project_resources_already_exist")
+        existing_networks = run(docker + ["network", "ls", "-q"]).split()
+        reject_proxy_overlap(json.loads(run(docker + ["network", "inspect", *existing_networks])))
         for image in (args.frontend_image, args.backend_image):
             inspected = json.loads(run(docker + ["image", "inspect", image]))[0]
             if (inspected["Os"], inspected["Architecture"]) != ("linux", "amd64"):
@@ -186,6 +219,7 @@ def main() -> int:
             "AUTH_ENV": "production",
             "AUTH_COOKIE_SECURE": "true",
             "CHAT_WORKER": "on",
+            "FORWARDED_ALLOW_IPS": PROXY_ADDRESS,
             "AUTH_API_ORIGIN": ORIGIN,
             "AUTH_ALLOWED_ORIGINS": ORIGIN,
             "AUTH_ACCESS_KID": "smoke-access",
@@ -242,6 +276,7 @@ def main() -> int:
     image: {args.backend_image}
     platform: linux/amd64
     pull_policy: never
+    networks: [proxy]
     entrypoint: ["python", "-c", "import time; time.sleep(1800)"]
     command: []
     labels: {{org.next-stop-siren.issue73.smoke: "{nonce}"}}
@@ -249,6 +284,7 @@ def main() -> int:
     image: {args.backend_image}
     platform: linux/amd64
     pull_policy: never
+    networks: [proxy]
     entrypoint: ["python", "-c", "import time; time.sleep(1800)"]
     command: []
     labels: {{org.next-stop-siren.issue73.smoke: "{nonce}"}}
@@ -270,6 +306,7 @@ def main() -> int:
             str(override),
         ]
         config = json.loads(run(compose + ["config", "--format", "json"]))
+        validate_proxy_layout(config)
         if config["services"]["backend"].get("ports") or config["services"]["db"].get("ports"):
             raise RuntimeError("private_ports_required")
         if any(port["host_ip"] != "127.0.0.1" for port in config["services"]["nginx"]["ports"]):
@@ -277,9 +314,6 @@ def main() -> int:
         passed("compose_private_api_db_loopback_nginx")
         owned = True  # Only this freshly verified, unoccupied nonce project can be changed below.
         run(compose + ["up", "-d", "--wait", "db"], timeout=240)
-        network = json.loads(run(docker + ["network", "inspect", project + "_default"]))[0]
-        values["FORWARDED_ALLOW_IPS"] = smoke_proxy_networks(network, project)
-        runtime.write_text("\n".join(f"{key}={value}" for key, value in values.items()) + "\n")
         # Explicitly initialize ONLY this disposable, newly created DB. Never production startup DDL.
         run(
             compose
@@ -294,6 +328,8 @@ def main() -> int:
             ]
         )
         run(compose + ["up", "-d", "backend", "nginx"])
+        network = json.loads(run(docker + ["network", "inspect", project + "_proxy"]))[0]
+        assert smoke_proxy_address(network, project) == values["FORWARDED_ALLOW_IPS"]
         port = int(run(compose + ["port", "nginx", "443"]).strip().rsplit(":", 1)[1])
 
         def request(method, path, payload=None, token=None):
@@ -444,9 +480,12 @@ def main() -> int:
                     assert not info["HostConfig"].get("PortBindings"), "private_ports_required"
                 layout[service] = {
                     "id": ids[0],
-                    "ip": info["NetworkSettings"]["Networks"][project + "_default"]["IPAddress"],
+                    "ip": info["NetworkSettings"]["Networks"][project + "_proxy"]["IPAddress"],
                     "image_id": info["Image"],
                 }
+            assert layout["nginx"]["ip"] == PROXY_ADDRESS
+            nginx_info = json.loads(run(docker + ["inspect", layout["nginx"]["id"]]))[0]
+            assert set(nginx_info["NetworkSettings"]["Networks"]) == {project + "_proxy"}
             assert len({item["ip"] for item in layout.values()}) == 4, "distinct_client_addresses_required"
             workers = json.loads(
                 run(
@@ -562,6 +601,25 @@ def main() -> int:
         assert request("GET", "/api/me", token=token)[0] == 200
         assert request("GET", f"/api/conversations/{conversation}/messages", token=token)[2] == stored
         passed("proxy_backend_recreation_same_image_trust_and_persisted_state")
+        run(compose + ["restart", "backend"], timeout=90)
+        wait_ready()
+        direct_probe = """import http.client,json
+statuses=[]
+for i in range(31):
+    connection=http.client.HTTPConnection('backend',8000,timeout=10)
+    body=json.dumps({'email':f'direct-spoof-{i}@example.test','password':'synthetic-invalid-password'})
+    connection.request('POST','/api/auth/login',body,{'Content-Type':'application/json',
+        'Origin':'https://next-stop-siren.duckdns.org','X-Forwarded-For':f'198.51.100.{i+1}'})
+    response=connection.getresponse(); response.read(); statuses.append(response.status); connection.close()
+print(json.dumps(statuses))
+"""
+        direct_statuses = json.loads(run(compose + ["exec", "-T", "client_a", "python", "-c", direct_probe]))
+        assert direct_statuses == [401] * 30 + [429], "untrusted_client_cannot_rotate_forwarded_ips"
+        passed("direct_backend_spoof_cannot_bypass_single_proxy_trust")
+        run(compose + ["exec", "-T", "backend", "python", "-c",
+                       "import socket; socket.create_connection(('example.com',443),timeout=10).close()"])
+        passed("backend_outbound_dns_tcp_without_provider_api")
+
         logs = run(compose + ["logs", "--no-color"])
         assert (
             sentinel not in logs and spoof_canary not in logs and token not in logs and account["password"] not in logs
@@ -570,6 +628,23 @@ def main() -> int:
             assert values[name] not in logs
         (evidence / "sanitized-container-logs.txt").write_text(logs)
         passed("query_cookie_auth_secrets_absent_from_access_error_logs")
+        before_network = json.loads(run(docker + ["network", "inspect", project + "_proxy"]))[0]
+        run(compose + ["down", "--volumes", "--remove-orphans"], timeout=120)
+        # A new network and backend-first oneoff must still leave .2 for Nginx.
+        run(compose + ["up", "-d", "--wait", "db"], timeout=240)
+        run(compose + ["run", "--rm", "--no-deps", "backend", "python", "-c",
+                       "import os; from app.db_init import initialize_schema; "
+                       "initialize_schema(os.environ['DATABASE_URL'])"])
+        run(compose + ["up", "-d", "backend", "nginx"])
+        port = int(run(compose + ["port", "nginx", "443"]).strip().rsplit(":", 1)[1])
+        wait_ready()
+        after_network = json.loads(run(docker + ["network", "inspect", project + "_proxy"]))[0]
+        assert before_network["Id"] != after_network["Id"]
+        assert smoke_proxy_address(after_network, project) == values["FORWARDED_ALLOW_IPS"]
+        nginx_id = run(compose + ["ps", "-q", "nginx"]).strip()
+        nginx_info = json.loads(run(docker + ["inspect", nginx_id]))[0]
+        assert nginx_info["NetworkSettings"]["Networks"][project + "_proxy"]["IPAddress"] == PROXY_ADDRESS
+        passed("network_recreated_backend_first_nginx_static_ip_and_readiness")
         result["status"] = "PASS"
     except Exception as error:
         result["failure_type"] = type(error).__name__
