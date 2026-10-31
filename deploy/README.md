@@ -80,10 +80,31 @@ client IP를 검증해 기존 로그인 제한 키로 사용하며 헤더를 다
 `FORWARDED_ALLOW_IPS`는 필수다. 쉼표로 구분한 IPv4/IPv6 주소 또는 엄격한 CIDR을 지정한다.
 항목 양끝 공백은 허용하지만 누락·빈 값/항목·`*`·`0.0.0.0/0`·`::/0`, 호스트 이름·URL·포트·
 소켓 경로·scope ID가 붙은 IPv6·잘못된 IP/CIDR은 preflight/startup에서 거부한다.
-[운영 env 예시](production.env.example)의 빈 값은 의도적으로 시작에 실패한다.
+[운영 env 예시](production.env.example)는 아래 전용 네트워크에 고정된 `172.28.74.2` 하나만 신뢰한다.
 목록은 backend에서 관찰되는 실제 Nginx 주소 또는 Owner가 승인한 전용 네트워크의 가장 좁은 범위로 정한다.
 `nginx` 서비스 이름은 자동 DNS 해석되지 않으며 임의의 Docker 기본 대역을 운영 신뢰 범위로 복사하지 않는다.
 형식 검사 통과는 해당 범위의 운영 승인이 아니다. 목록 변경 뒤 backend를 재시작한다.
+
+Compose의 `proxy` 네트워크는 `172.28.74.0/29`(gateway `.1`)이며 Nginx 주소는
+`172.28.74.2`로 고정한다. 동적 pool은 `172.28.74.4/30`으로 제한해 Nginx가 없을 때도
+다른 컨테이너가 `.2`를 선점하지 못하게 한다. backend만 proxy와 별도 `database` 네트워크에 연결하고 DB는
+internal database 네트워크에만 연결한다. Nginx와 DB는 네트워크를 공유하지 않는다.
+proxy는 internal이 아니므로 backend의 외부 Google/AI 제공자 연결 경로를 유지한다.
+인증 소스 로직은 변경하지 않으며 `/29` 전체를 신뢰하지 않는다.
+
+Owner가 관찰한 EC2 경로 `172.31.32.0/20`, `172.17.0.0/16`과 이 대역은 겹치지 않는다.
+실제 적용 직전에 전체 호스트/VPC/컨테이너 경로와 기존 Docker IPAM 충돌을 다시 확인해야 한다.
+충돌 시 기존 네트워크를 지우거나 임의 대역으로 바꾸지 말고 중단한다. `/29`에서 gateway와
+Nginx를 제외한 동적 pool은 `.4`~`.6` 3개이며 단일 backend 운영을 전제로 한다. smoke는
+backend와 두 client에 3개를 사용하고 `.3`은 pool 밖의 수동 여유 주소로 남긴다. 동시 스택·scale·추가 컨테이너 배치 전 주소 용량을 검토한다.
+네트워크를 재생성해도 Nginx 주소와 trust는 그대로여야 하며 runtime env를 채운 뒤 backend를 재시작한다.
+
+기존 스택의 DB 컨테이너는 별도 전환이 필요하다. `server_deploy.py`는 DB를 `--no-recreate`로
+시작하므로 이전 default 네트워크의 DB를 새 database 네트워크로 자동 이전하지 않는다.
+새 disposable 스택의 로컬 검증은 이 전환을 검증하지 않는다. 기존 스택에 적용하기 전
+DB 볼륨을 보존하는 컨테이너·네트워크 전환과 백업·복구 계획을 별도로 승인해야 한다.
+DB 볼륨을 삭제하거나 단순 재시작만으로 전환된다고 가정하지 않는다. Owner EC2에는 아직
+배포된 앱이 없다는 제공 정보에 따르면 첫 신규 배포는 이 기존 스택 전환 대상이 아니다.
 
 Uvicorn CLI가 별도로 읽는 `UVICORN_FORWARDED_ALLOW_IPS`는 생략하는 것을 권장한다.
 함께 지정하면 `FORWARDED_ALLOW_IPS`와 문자열이 정확히 같아야 하며, 다른 값(빈 값 포함)이면
@@ -142,15 +163,16 @@ smoke는 새로운 무작위 project, loopback 임시 포트, 합성 인증/DB �
 채팅 smoke는 target job의 completed 이벤트와 같은 답변 ID·completed 상태·비어 있지 않은
 모의 본문/조각의 일치 및 실제 저장 재조회를 요구한다. 완료 대기는 ping/다른 이벤트로
 연장되지 않는 전체 40초 기한이며, 실패·중단·미완료·다른 답변은 거부한다.
-실제 Google/AI/ACME/DNS/AWS를 호출하지 않는다. TLS 검증 생략은 이 loopback self-signed
-smoke에만 한정한다. 이 결과를 실제 인증서·DNS·가용성·t2 성능 검증으로 세지 않는다.
+smoke는 `example.com`의 공개 DNS 조회와 TCP 443 연결로 outbound 경로를 확인하며
+HTTP 요청이나 provider API는 호출하지 않는다. Google/AI/ACME/AWS와 DNS-provider API의
+실제 동작은 검증하지 않는다. TLS 검증 생략은 이 loopback self-signed smoke에만 한정한다. 이 결과를 실제 인증서·운영 DNS 설정·가용성·t2 성능 검증으로 세지 않는다.
 
-smoke는 새 project 네트워크의 이름·소유 label·IPAM 범위를 검사한 뒤 합성 runtime에만 신뢰 CIDR을 넣는다.
+smoke는 기존 Docker IPAM과 `/29` 충돌을 먼저 거부하고, 새 project proxy 네트워크의 이름·소유 label·정확한 대역을 검사한다.
+합성 runtime도 Nginx `172.28.74.2` 하나만 신뢰하고 두 client는 같은 proxy 네트워크의 다른 주소를 쓴다.
 서로 다른 실제 source IP의 `client_a`/`client_b`에서 빈·중복·위조 헤더, IP별 분리·이메일별 공유,
 동시 실패·성공 후 이메일 초기화/IP 실패 보존, 429·Retry-After와 Nginx/backend 재생성을 확인한다.
 컨테이너 재생성 때 IP가 재사용될 수 있으므로 container ID와 실제 주소를 함께 기록한다.
-합성 CIDR은 클라이언트 컨테이너도 포함하므로 이 환경을 운영의 backend 직접 접근 신뢰 경계 증거로 사용하지 않는다.
-해당 경계는 별도의 [비신뢰 TCP 검사](../backend/tests/test_login_proxy.py)와 실제 운영 구성에서 구분해 확인한다.
+클라이언트 주소는 신뢰 목록에 포함하지 않는다. backend 직접 접근의 전달 헤더 거부 경계는 별도의 [비신뢰 TCP 검사](../backend/tests/test_login_proxy.py)와 실제 운영 구성에서 구분해 확인한다.
 
 `result.json`은 검사·정리 결과, `proxy-layout.json`은 container/IP/image identity,
 `login-proxy-results.json`은 응답 상태·오류 코드·재시도 시간과 쿠키/토큰 존재 여부만 담는다.

@@ -12,6 +12,9 @@ services:
     depends_on:
       backend:
         condition: service_started
+    networks:
+      proxy:
+        ipv4_address: 172.28.74.2
     restart: unless-stopped
     stop_grace_period: 20s
     logging: &logging
@@ -28,6 +31,9 @@ services:
       db:
         condition: service_healthy
     restart: unless-stopped
+    networks:
+      proxy: {}
+      database: {}
     # Uvicorn request drain: 10s; worker poll join receives 35s, but pool wait is unbounded.
     # 60s is Compose's final stop/kill boundary, not proof of lossless worker shutdown.
     stop_grace_period: 60s
@@ -48,9 +54,21 @@ services:
       retries: 10
       start_period: 10s
     restart: unless-stopped
+    networks:
+      database: {}
     stop_grace_period: 30s
     logging: *logging
 volumes:
   db-data:
   acme-webroot:
   letsencrypt:
+networks:
+  proxy:
+    ipam:
+      config:
+        - subnet: 172.28.74.0/29
+          # Keep .2 outside dynamic allocation even while Nginx is being recreated.
+          ip_range: 172.28.74.4/30
+          gateway: 172.28.74.1
+  database:
+    internal: true
