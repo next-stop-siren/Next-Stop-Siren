@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -16,6 +17,58 @@ import local
 
 
 class LocalAutomationTest(unittest.TestCase):
+    def test_database_timeout_cleans_process_before_database_teardown(self):
+        order = []
+        child = unittest.mock.Mock()
+        child.wait.side_effect = subprocess.TimeoutExpired("pytest", 600)
+
+        def database(action):
+            try:
+                action("validated")
+            finally:
+                order.append("database-stop")
+
+        with patch.object(local, "with_test_database", side_effect=database), \
+             patch.object(local, "spawn", return_value=child) as spawn, \
+             patch.object(local, "stop_child", side_effect=lambda _: order.append("process-stop")):
+            with self.assertRaisesRegex(local.Failure, "timed out"):
+                local.test_db()
+        self.assertEqual(order, ["process-stop", "database-stop"])
+        child.wait.assert_called_once_with(timeout=600)
+        self.assertEqual(spawn.call_args.kwargs["env"]["TEST_DATABASE_URL"], "validated")
+
+    def test_owned_command_cleans_up_after_failure_or_interrupt(self):
+        for outcome in (1, KeyboardInterrupt()):
+            with self.subTest(outcome=outcome):
+                child = unittest.mock.Mock()
+                if isinstance(outcome, BaseException):
+                    child.wait.side_effect = outcome
+                else:
+                    child.wait.return_value = outcome
+                with patch.object(local, "spawn", return_value=child), \
+                     patch.object(local, "stop_child") as stop:
+                    with self.assertRaises(KeyboardInterrupt if isinstance(outcome, BaseException) else local.Failure):
+                        local.run_owned(["example"])
+                stop.assert_called_once_with(child)
+
+    @unittest.skipIf(os.name == "nt", "POSIX process-group verification")
+    def test_owned_command_timeout_stops_real_descendant(self):
+        with tempfile.TemporaryDirectory() as temp:
+            marker = Path(temp) / "descendant-stopped"
+            grandchild = ("import signal,time,pathlib; "
+                          f"p=pathlib.Path({str(marker)!r}); "
+                          "signal.signal(signal.SIGTERM, lambda *_: (p.write_text('stopped'), exit(0))); "
+                          "time.sleep(30)")
+            parent = ("import subprocess,sys,time; "
+                      f"subprocess.Popen([sys.executable,'-c',{grandchild!r}]); time.sleep(30)")
+            with self.assertRaisesRegex(local.Failure, "timed out"):
+                local.run_owned([sys.executable, "-c", parent], cwd=Path(temp), timeout=2)
+            for _ in range(20):
+                if marker.exists():
+                    break
+                time.sleep(0.1)
+            self.assertEqual(marker.read_text(), "stopped")
+
     def test_every_compose_operation_has_exact_identity(self):
         for command in ("config", "ps", "up", "stop", "exec"):
             with self.subTest(command=command), patch.object(local, "run", return_value="") as run:

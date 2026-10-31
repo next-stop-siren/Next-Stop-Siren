@@ -25,6 +25,7 @@ from db_guard import UnsafeTestDatabase, guarded_url, read_settings  # noqa: E40
 ENV = ROOT / ".env"
 SERVICES = ("db-dev", "db-test")
 VERSIONS = {"node": "v24.21.0", "npm": "11.19.0", "uv": "0.11.19"}
+DB_TEST_TIMEOUT_SECONDS = 600
 TOOLS = {name: os.environ.get(f"B71_{name.upper()}", name) for name in ("node", "npm", "uv", "docker")}
 
 
@@ -355,6 +356,20 @@ def stop_child(child):
         child.wait(timeout=5)
 
 
+def run_owned(command, *, cwd=ROOT, timeout=120, env=None):
+    """Finish the command's process tree before its caller cleans up test resources."""
+    try:
+        child = spawn(command, cwd, env=env)
+        try:
+            returncode = child.wait(timeout=timeout)
+        finally:
+            stop_child(child)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise Failure(f"Cannot run {command[0]}: {exc}", 2) from exc
+    if returncode:
+        raise Failure(f"{command[0]} failed ({returncode})", 3)
+
+
 def dev():
     preflight(docker=True, frontend=True, backend=True)
     if not ENV.exists() or not (BACKEND / ".venv").exists() or not (FRONTEND / "node_modules").exists():
@@ -590,8 +605,8 @@ def test_db():
     def check(url):
         env = command_env()
         env["TEST_DATABASE_URL"] = url
-        run(tool("uv", "run", "--no-sync", "pytest", "-m", "db", "-q"),
-            cwd=BACKEND, timeout=300, env=env)
+        run_owned(tool("uv", "run", "--no-sync", "pytest", "-m", "db", "-q"),
+                  cwd=BACKEND, timeout=DB_TEST_TIMEOUT_SECONDS, env=env)
     with_test_database(check)
 
 
