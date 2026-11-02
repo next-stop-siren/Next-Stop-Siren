@@ -197,8 +197,11 @@ Nginx→backend→disposable PostgreSQL의 **13개 통합 항목**을 통과했�
 
 ## 남은 출시/배포 게이트
 
-- #72: `/api/health`는 프로세스, `/api/ready`는 SELECT 1뿐이다. preflight도 설정 검증일 뿐
-  제품 스키마·worker 준비를 완전히 증명하지 않는다. 실제 기능 확인까지 별도 필요하다.
+- #72: `/api/health`는 프로세스만, `/api/ready`는 DB SELECT 1·인증 설정·제품 테이블/컬럼·
+  이 프로세스의 worker poll을 읽기 전용으로 확인한다([상태 확인](../docs/04-reference/api.md#상태-확인-72)).
+  rollout은 `ready` 200을 트래픽 투입 조건으로, 503의 `checks`와 `Service not ready` 로그를 원인
+  확인에 쓴다. 컬럼 타입·제약 호환성과 실제 로그인·채팅은 확인하지 않으므로 기능 확인은 계속
+  필요하다. 실제 서버에서의 확인 순서는 Owner와 #76에서 검증한다.
 - #74: 명시 프록시 신뢰와 로컬 검사는 구현했다. Owner의 실제 신뢰 주소/접근 경계·단일 실행·재시작 수용,
   운영 구성 확인과 독립 검토를 마친 뒤 #76 및 trusted_proxy 게이트의 실제 증거에 연결해야 한다.
 - #75: 운영 초기화/기존 스키마 적용·백업/복원·보존/RPO/RTO는 미해결이다. 볼륨이나
