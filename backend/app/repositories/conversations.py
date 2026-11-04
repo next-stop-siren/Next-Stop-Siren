@@ -7,10 +7,20 @@ through the conversation.
 
 from collections.abc import Sequence
 
-from sqlalchemy import Select, func, or_, select, update
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy import ColumnElement, Select, func, or_, select, update
+from sqlalchemy.orm import InstrumentedAttribute, Session, aliased
 
 from app.models.conversation import Conversation, Message
+
+
+def context_order() -> tuple[ColumnElement[int | None], InstrumentedAttribute[int]]:
+    """Order context rows as Q1·A1·Q2·A2 (#66), whatever order the rows were stored in.
+
+    A question's pair key is its own ID and an answer's is its question's ID, so each
+    answer follows its question even when the next question was stored first. Within
+    a pair the question goes first, as an answer is always stored after its question.
+    """
+    return func.coalesce(Message.reply_to_message_id, Message.id), Message.id
 
 
 def create_conversation(session: Session, user_id: int) -> Conversation:
@@ -65,7 +75,7 @@ def list_messages(
 
 
 def list_context_messages(session: Session, user_id: int, conversation_id: int) -> Sequence[Message] | None:
-    """Return the completed question+answer pairs in ascending ID order as the next AI context.
+    """Return the completed question+answer pairs in pair order as the next AI context.
 
     A question whose answer is failed, interrupted or pending is left out together
     with that answer (S11). The rows themselves stay in the history. None has the
@@ -77,9 +87,14 @@ def list_context_messages(session: Session, user_id: int, conversation_id: int) 
     answered = select(answer.reply_to_message_id).where(
         answer.conversation_id == conversation_id, answer.role == "assistant", answer.status == "completed"
     )
-    statement = _owned_messages(user_id, conversation_id).where(
-        Message.status == "completed",
-        or_(Message.role == "assistant", Message.id.in_(answered)),
+    statement = (
+        _owned_messages(user_id, conversation_id)
+        .where(
+            Message.status == "completed",
+            or_(Message.role == "assistant", Message.id.in_(answered)),
+        )
+        .order_by(None)
+        .order_by(*context_order())
     )
     return session.scalars(statement).all()
 

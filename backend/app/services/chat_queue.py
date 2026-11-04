@@ -40,6 +40,7 @@ from app.models.chat_job import ChatJob
 from app.models.conversation import Message
 from app.repositories import chat_jobs as repository
 from app.repositories import conversations as conversation_repository
+from app.services import chat_context
 from app.services.chat import (
     ANSWER_TIME_LIMIT_SECONDS,
     RETRYABLE_STATUSES,
@@ -350,7 +351,8 @@ def claim_next(
 
     Recovery and expiry run first under the same lock. A started job has a new pending
     answer, a new `run_token` and a deadline 30 seconds after its start; its context
-    is read now, at execution, from the completed pairs before its question.
+    is read now, at execution, from the completed pairs before its question, in pair
+    order and within the budget of `chat_context`.
     """
     changes = recover(session, ledger, user_id, now=now)
     now = _now(session, now)
@@ -373,12 +375,17 @@ def claim_next(
     session.flush()
     changes.add(job.id)
     question = repository.get_message(session, job.question_message_id)
-    context = [
-        ContextMessage(message.role, message.content or "")
-        for message in repository.context_before(session, job.conversation_id, job.question_message_id)
-    ]
-    context.append(ContextMessage("user", question.content or ""))
-    return Claimed(job.id, job.run_token, answer.id, context), changes
+    pairs = chat_context.pair_messages(repository.context_before(session, job.conversation_id, job.question_message_id))
+    built = chat_context.build_context(pairs, question.content or "")
+    # Counts only, never the text, so a left-out pair can be traced without its content.
+    logger.info(
+        "event=chat_context_built job_id=%s pairs_sent=%s pairs_left_out=%s characters=%s",
+        job.id,
+        built.pairs_sent,
+        built.pairs_left_out,
+        built.characters,
+    )
+    return Claimed(job.id, job.run_token, answer.id, built.messages), changes
 
 
 def finish(

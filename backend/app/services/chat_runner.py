@@ -179,6 +179,21 @@ class ChatJobWorker:
         self._wake = threading.Event()
         self._stopping = threading.Event()
         self._loop: threading.Thread | None = None
+        # When a poll last succeeded (monotonic seconds); readiness reads it (#72).
+        self._last_poll: float | None = None
+
+    def status(self, *, stale_after: float) -> str:
+        """`ok` while polling; otherwise `not_started`, `stopped`, `starting` (no poll yet) or `stalled`."""
+        if self._loop is None:
+            return "not_started"
+        if self._stopping.is_set() or not self._loop.is_alive():
+            return "stopped"
+        last_poll = self._last_poll
+        if last_poll is None:
+            return "starting"
+        if time.monotonic() - last_poll > stale_after:
+            return "stalled"
+        return "ok"
 
     def start(self) -> None:
         self._loop = threading.Thread(target=self._run, name="chat-job-poll", daemon=True)
@@ -237,6 +252,7 @@ class ChatJobWorker:
         while not self._stopping.is_set():
             try:
                 self.tick()
+                self._last_poll = time.monotonic()
             except Exception as error:
                 logger.error("Chat job poll failed, %s", SafeError.of(error))
             self._wake.wait(self._poll_seconds)

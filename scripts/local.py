@@ -174,6 +174,26 @@ def wait_databases(services=SERVICES, *, test=False):
         print(f"{service}: SELECT 1 passed")
 
 
+def setup_readiness(status, body):
+    """The `setup` message for a /api/ready answer, or None to keep waiting.
+
+    `setup` runs before the auth keys and `db-init`, so a 503 whose only failures are
+    auth, schema or worker still proves the API reached the database.
+    """
+    if status == 200 and body == b'{"status":"ready"}':
+        return "API readiness passed"
+    if status != 503:
+        return None
+    try:
+        checks = json.loads(body)["checks"]
+    except (ValueError, KeyError, TypeError):
+        return None
+    if not isinstance(checks, dict) or checks.get("database") != "ok":
+        return None
+    pending = ", ".join(f"{name}={value}" for name, value in checks.items() if value != "ok")
+    return f"API database connection passed; not ready until auth keys and db-init are done ({pending})"
+
+
 def api_probe():
     with socket.socket() as reserved:
         reserved.bind(("127.0.0.1", 0))
@@ -187,11 +207,14 @@ def api_probe():
                 raise Failure("API exited before readiness", 4)
             try:
                 with urlopen(f"http://127.0.0.1:{port}/api/ready", timeout=2) as response:
-                    if response.status == 200 and response.read() == b'{"status":"ready"}':
-                        print("API readiness passed")
-                        return
-            except (URLError, HTTPError, TimeoutError):
-                pass
+                    message = setup_readiness(response.status, response.read())
+            except HTTPError as error:
+                message = setup_readiness(error.code, error.read())
+            except (URLError, TimeoutError):
+                message = None
+            if message is not None:
+                print(message)
+                return
             time.sleep(1)
         raise Failure("API readiness failed within 30 seconds", 4)
     finally:

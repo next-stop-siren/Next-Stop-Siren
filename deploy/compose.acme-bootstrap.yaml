@@ -1,0 +1,4 @@
+# HTTP-only bootstrap before a real certificate exists; Owner-approved server operation only.
+services:
+  nginx:
+    command: ["nginx", "-c", "/etc/nginx/acme.conf", "-g", "daemon off;"]

@@ -1,0 +1,13 @@
+# Explicit optional tool; not a fourth always-on application service.
+services:
+  certbot:
+    image: ${CERTBOT_IMAGE:?Set a reviewed certbot image digest}
+    profiles: [acme]
+    volumes:
+      - acme-webroot:/var/www/acme
+      - letsencrypt:/etc/letsencrypt
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"

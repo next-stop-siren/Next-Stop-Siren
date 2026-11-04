@@ -18,7 +18,7 @@ PR #62의 서버 대기열과 PR #64의 Rev 1 문서는 완료된 기반이다. 
 ## 함께 읽을 기준
 
 1. [온보딩](../01-start/onboarding.md)으로 로컬 환경을 준비한다. 모델 10개의 등록과 기존 DB의 스키마 변경은 별개다. Windows 실제 실행은 아직 NOT RUN이다.
-2. [API Rev 3](../04-reference/api.md)에서 접수·조회·구독·오류 계약을 읽는다. [정책](../04-reference/chat-policy.md)은 의도와 알려진 구현 차이를 설명한다. [시나리오](../04-reference/chat-queue-api-draft.md)의 가짜 데이터로 화면·서버 경계를 준비한다.
+2. [API Rev 4](../04-reference/api.md)에서 접수·조회·구독·오류 계약을 읽는다. [정책](../04-reference/chat-policy.md)은 의도와 현재 구현 상태를 설명한다. [시나리오](../04-reference/chat-queue-api-draft.md)의 가짜 데이터로 화면·서버 경계를 준비한다.
 3. [인증](../04-reference/authentication.md), [DB](../04-reference/database.md), [AI](../04-reference/ai.md)의 실제 구현과 남은 검증을 확인한다. PR #50에서 제외했던 Google 실패 복귀의 서버 처리·자체 검증은 #69의 `1cbf709`에 반영됐다. [프런트 연동 안내](../03-development/google-login-failure.md)를 참고하고 실패 화면 연결·실제 Google 전체 흐름·독립 검토는 별도로 확인한다. 실제 AI·배포는 완료되지 않았다.
 4. [협업 흐름](../03-development/workflow.md)의 문서 Rev·커밋 고정 참조와 [품질 지침](../03-development/quality.md)의 검사 경계를 따른다. 기존 이슈의 완료 이력은 소급 수정하지 않는다.
 

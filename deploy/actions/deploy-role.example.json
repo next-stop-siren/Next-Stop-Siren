@@ -1,0 +1,29 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "OnlyPinnedDocumentAndTarget",
+      "Effect": "Allow",
+      "Action": "ssm:SendCommand",
+      "Resource": [
+        "arn:aws:ssm:__REQUIRED_REGION__:__REQUIRED_ACCOUNT_ID__:document/__REQUIRED_DOCUMENT_NAME__",
+        "arn:aws:ec2:__REQUIRED_REGION__:__REQUIRED_ACCOUNT_ID__:instance/__REQUIRED_INSTANCE_ID__"
+      ],
+      "Condition": {"StringEquals": {"aws:RequestedRegion": "__REQUIRED_REGION__"}}
+    },
+    {
+      "Sid": "ReadControlledDocument",
+      "Effect": "Allow",
+      "Action": ["ssm:GetDocument", "ssm:DescribeDocument"],
+      "Resource": "arn:aws:ssm:__REQUIRED_REGION__:__REQUIRED_ACCOUNT_ID__:document/__REQUIRED_DOCUMENT_NAME__",
+      "Condition": {"StringEquals": {"aws:RequestedRegion": "__REQUIRED_REGION__"}}
+    },
+    {
+      "Sid": "PollResultOnly",
+      "Effect": "Allow",
+      "Action": "ssm:GetCommandInvocation",
+      "Resource": "*",
+      "Condition": {"StringEquals": {"aws:RequestedRegion": "__REQUIRED_REGION__"}}
+    }
+  ]
+}
