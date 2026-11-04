@@ -16,92 +16,204 @@ from ssm_transport import AwsCLI, DispatchUnknown, configuration, dispatch
 ROOT = Path(__file__).resolve().parents[2]
 
 
+SAFE_VALIDATION_REASONS = {
+    "aws_account_required",
+    "aws_role",
+    "explicit_seoul_region_required",
+    "instance",
+    "controlled_document_required",
+    "numeric_pinned_document_version",
+    "required_hashes",
+    "image_repository",
+    "source_sha",
+    "publication_run_id",
+    "same_sha_trusted_ci_success_required",
+    "environment_policy",
+    "environment_main_only",
+    "environment_policy_count",
+    "exact_main_sha",
+    "owner_rerun",
+    "manual_main_only",
+    "pinned_document_description",
+    "pinned_document_content",
+    "remote_failed",
+    "remote_nonzero",
+    "command_failed",
+    "package_lookup_failed",
+}
+
+
 def command(arguments, *, env=None, data=None):
     result = subprocess.run(arguments, input=data, capture_output=True, text=True, cwd=ROOT, env=env, timeout=900)
-    require(result.returncode == 0, "command_failed")
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(result.returncode, arguments, output=result.stdout, stderr=result.stderr)
     return result.stdout.strip()
 
 
-def publish(client, values, artifact_dir: Path, execute=command) -> str:
-    context = authorized_context(values)
-    sha = values.get("SOURCE_SHA", "")
-    repo, workflow_id = publication_guard(client, sha, context)
-    require(execute(["git", "rev-parse", "HEAD"]) == sha, "checkout_sha")
-    images = [
-        image_repository(values.get(name, "")) for name in ("PILOT_FRONTEND_REPOSITORY", "PILOT_BACKEND_REPOSITORY")
-    ]
-    require(images[0] != images[1], "distinct_packages")
-    for image in images:
-        try:
-            package = client.get("orgs/next-stop-siren/packages/container/" + image.rsplit("/", 1)[1])
-        except urllib.error.HTTPError as error:
-            require(error.code == 404, "package_lookup_failed")  # Confirmed first creation only.
-        else:
-            require(package["visibility"] == "public", "owner_public_package_required")
-    artifact_dir.mkdir(parents=True, exist_ok=False)
-    run_id, attempt = context["GITHUB_RUN_ID"], context["GITHUB_RUN_ATTEMPT"]
-    with tempfile.TemporaryDirectory(prefix="pilot-docker-", dir=values["RUNNER_TEMP"]) as docker_config:
-        env = {**values, "DOCKER_CONFIG": docker_config}
-        execute(
-            ["docker", "login", "ghcr.io", "--username", values["GITHUB_ACTOR"], "--password-stdin"],
-            env=env,
-            data=values["GITHUB_TOKEN"],
-        )
-        refs = []
-        for name, image in zip(("frontend", "backend"), images, strict=True):
-            metadata = Path(docker_config) / (name + ".json")
-            execute(
-                [
-                    "docker",
-                    "buildx",
-                    "build",
-                    "--platform",
-                    "linux/amd64",
-                    "--provenance=true",
-                    "--label",
-                    "org.opencontainers.image.revision=" + sha,
-                    "--label",
-                    "org.opencontainers.image.source=https://github.com/" + REPOSITORY,
-                    "--file",
-                    f"deploy/{name}.Dockerfile",
-                    "--tag",
-                    f"{image}:sha-{sha}-run-{run_id}-{attempt}",
-                    "--metadata-file",
-                    str(metadata),
-                    "--push",
-                    ".",
-                ],
-                env=env,
+def close_publish_http_error(error):
+    """Release error responses without reading their potentially sensitive bodies."""
+    try:
+        error.close()
+    except Exception:
+        raise ValueError("http_response_cleanup_failed") from None
+
+
+class PublishFailure(ValueError):
+    """Only static stage/reason identifiers cross the CLI diagnostic boundary."""
+
+    def __init__(self, stage, error):
+        self.stage = stage
+        self.exit_code = None
+        if isinstance(error, (subprocess.TimeoutExpired, TimeoutError)):
+            reason = "timeout_outcome_unknown"
+        elif isinstance(error, subprocess.CalledProcessError):
+            # Treat these bounded signals as hints, never echo command output or argv.
+            output = error.stderr[-8192:].lower() if isinstance(error.stderr, str) else ""
+            self.exit_code = error.returncode if type(error.returncode) is int else None
+            registry_stage = stage == "registry_login" or stage in {"frontend_build_push", "backend_build_push"}
+            if registry_stage and "unauthorized: authentication required" in output:
+                reason = "authentication_rejected"
+            elif registry_stage and (
+                "denied: permission_denied" in output or "requested access to the resource is denied" in output
+            ):
+                reason = "registry_access_denied"
+            elif stage in {"frontend_build_push", "backend_build_push"} and any(
+                hint in output for hint in (
+                    "multi-platform build is not supported for the docker driver",
+                    "attestations are not supported for the docker driver",
+                    "provenance is not supported",
+                )
+            ):
+                reason = "builder_feature_unsupported"
+            elif (
+                stage in {"frontend_build_push", "backend_build_push"}
+                and "failed to solve: process" in output
+                and "did not complete successfully: exit code:" in output
+            ):
+                reason = "dockerfile_step_failed"
+            else:
+                reason = "command_failed_unknown_cause"
+        elif isinstance(error, urllib.error.HTTPError):
+            reason = "github_access_or_input" if error.code in {401, 403, 404} else "github_api_failed"
+            try:
+                close_publish_http_error(error)
+            except ValueError:
+                reason = "http_response_cleanup_failed"
+        elif isinstance(error, urllib.error.URLError):
+            reason = "github_transport_failed"
+        elif isinstance(error, OSError):
+            reason = (
+                "command_launch_failed" if stage in {
+                    "checkout", "registry_login", "frontend_build_push", "backend_build_push"
+                } else "local_io_failed"
             )
-            image_digest = read_json(metadata.read_bytes())["containerimage.digest"]
-            require(matches(r"sha256:[0-9a-f]{64}", image_digest), "built_digest")
-            refs.append(image + "@" + image_digest)
-    # First push can create private packages. Never release a deployable manifest until public.
-    for image in images:
-        package = client.get("orgs/next-stop-siren/packages/container/" + image.rsplit("/", 1)[1])
-        require(package["visibility"] == "public", "owner_public_package_required")
-    release = {
-        "schema_version": 1,
-        "repository": REPOSITORY,
-        "repository_id": str(repo["id"]),
-        "owner_id": str(repo["owner"]["id"]),
-        "source_sha": sha,
-        "workflow_id": str(workflow_id),
-        "workflow_path": PUBLISH_WORKFLOW,
-        "run_id": run_id,
-        "run_attempt": attempt,
-        "platform": "linux/amd64",
-        "frontend": refs[0],
-        "backend": refs[1],
-        "files": {},
-    }
-    for name, source in FILES.items():
-        data = (ROOT / source).read_bytes()
-        (artifact_dir / name).write_bytes(data)
-        release["files"][name] = digest(data)
-    validate_release(release)
-    (artifact_dir / "release.json").write_bytes(canonical(release))
-    return f"pilot-release-{sha}-{run_id}-{attempt}"
+        elif isinstance(error, ValueError):
+            value = str(error)
+            safe = SAFE_VALIDATION_REASONS | {"owner_public_package_required", "http_response_cleanup_failed"}
+            reason = value if value in safe else "provenance_or_contract_rejected"
+        else:
+            reason = "unknown_failure"
+        self.reason = reason
+        super().__init__(reason)
+
+
+def publish(client, values, artifact_dir: Path, execute=command) -> str:
+    stage = "provenance"
+    try:
+        context = authorized_context(values)
+        sha = values.get("SOURCE_SHA", "")
+        repo, workflow_id = publication_guard(client, sha, context)
+        stage = "checkout"
+        require(execute(["git", "rev-parse", "HEAD"]) == sha, "checkout_sha")
+        stage = "package_preflight"
+        images = [
+            image_repository(values.get(name, "")) for name in ("PILOT_FRONTEND_REPOSITORY", "PILOT_BACKEND_REPOSITORY")
+        ]
+        require(images[0] != images[1], "distinct_packages")
+        for image in images:
+            try:
+                package = client.get("orgs/next-stop-siren/packages/container/" + image.rsplit("/", 1)[1])
+            except urllib.error.HTTPError as error:
+                try:
+                    require(error.code == 404, "package_lookup_failed")  # Confirmed first creation only.
+                finally:
+                    close_publish_http_error(error)
+            else:
+                require(package["visibility"] == "public", "owner_public_package_required")
+        stage = "artifact_directory"
+        artifact_dir.mkdir(parents=True, exist_ok=False)
+        run_id, attempt = context["GITHUB_RUN_ID"], context["GITHUB_RUN_ATTEMPT"]
+        stage = "docker_configuration"
+        with tempfile.TemporaryDirectory(prefix="pilot-docker-", dir=values["RUNNER_TEMP"]) as docker_config:
+            env = {**values, "DOCKER_CONFIG": docker_config}
+            stage = "registry_login"
+            execute(
+                ["docker", "login", "ghcr.io", "--username", values["GITHUB_ACTOR"], "--password-stdin"],
+                env=env,
+                data=values["GITHUB_TOKEN"],
+            )
+            refs = []
+            for name, image in zip(("frontend", "backend"), images, strict=True):
+                metadata = Path(docker_config) / (name + ".json")
+                stage = name + "_build_push"
+                execute(
+                    [
+                        "docker",
+                        "buildx",
+                        "build",
+                        "--platform",
+                        "linux/amd64",
+                        "--provenance=true",
+                        "--label",
+                        "org.opencontainers.image.revision=" + sha,
+                        "--label",
+                        "org.opencontainers.image.source=https://github.com/" + REPOSITORY,
+                        "--file",
+                        f"deploy/{name}.Dockerfile",
+                        "--tag",
+                        f"{image}:sha-{sha}-run-{run_id}-{attempt}",
+                        "--metadata-file",
+                        str(metadata),
+                        "--push",
+                        ".",
+                    ],
+                    env=env,
+                )
+                stage = name + "_metadata"
+                image_digest = read_json(metadata.read_bytes())["containerimage.digest"]
+                require(matches(r"sha256:[0-9a-f]{64}", image_digest), "built_digest")
+                refs.append(image + "@" + image_digest)
+            stage = "docker_configuration_cleanup"
+        stage = "public_package_verification"
+        # First push can create private packages. Never release a deployable manifest until public.
+        for image in images:
+            package = client.get("orgs/next-stop-siren/packages/container/" + image.rsplit("/", 1)[1])
+            require(package["visibility"] == "public", "owner_public_package_required")
+        stage = "release_artifact"
+        release = {
+            "schema_version": 1,
+            "repository": REPOSITORY,
+            "repository_id": str(repo["id"]),
+            "owner_id": str(repo["owner"]["id"]),
+            "source_sha": sha,
+            "workflow_id": str(workflow_id),
+            "workflow_path": PUBLISH_WORKFLOW,
+            "run_id": run_id,
+            "run_attempt": attempt,
+            "platform": "linux/amd64",
+            "frontend": refs[0],
+            "backend": refs[1],
+            "files": {},
+        }
+        for name, source in FILES.items():
+            data = (ROOT / source).read_bytes()
+            (artifact_dir / name).write_bytes(data)
+            release["files"][name] = digest(data)
+        validate_release(release)
+        (artifact_dir / "release.json").write_bytes(canonical(release))
+        return f"pilot-release-{sha}-{run_id}-{attempt}"
+    except Exception as error:
+        raise PublishFailure(stage, error) from None
 
 
 def prepare(client, values, directory: Path, execute=command) -> None:
@@ -119,11 +231,14 @@ def main() -> int:
     parser.add_argument("operation", choices=("publish", "prepare", "dispatch"))
     parser.add_argument("--execute", action="store_true", required=True)
     args = parser.parse_args()
+    publish_stage = "context"
     try:
         authorized_context()
         temporary = Path(os.environ["RUNNER_TEMP"]) / "pilot-release"
         if args.operation == "publish":
+            publish_stage = "publication_setup"
             name = publish(GitHub(os.environ["GITHUB_TOKEN"]), dict(os.environ), temporary)
+            publish_stage = "github_output"
             with open(os.environ["GITHUB_OUTPUT"], "a") as output:
                 output.write("artifact_name=" + name + "\n")
         elif args.operation == "prepare":
@@ -137,6 +252,20 @@ def main() -> int:
             command_id = dispatch(AwsCLI(config["region"]), config, encoded, document)
             print("Verified SSM success; command ID " + command_id)
     except Exception as error:
+        if args.operation == "publish":
+            failure = error if isinstance(error, PublishFailure) else PublishFailure(publish_stage, error)
+            if failure.reason == "owner_public_package_required":
+                print(
+                    "Owner action: make both GHCR packages public in GitHub package settings; "
+                    "verify package state before rerunning publication; no release issued.", file=sys.stderr,
+                )
+            print(
+                "PILOT_PUBLISH_FAILED: stage=" + failure.stage + "; reason=" + failure.reason.upper()
+                + ("; exit=" + str(failure.exit_code) if failure.exit_code is not None else "")
+                + "; stop; no blind resend; see deployment documentation.",
+                file=sys.stderr,
+            )
+            return 1
         if isinstance(error, ValueError) and str(error) == "owner_public_package_required":
             print(
                 "Owner action: make both GHCR packages public in GitHub package settings, "
@@ -146,6 +275,8 @@ def main() -> int:
         else:
             if isinstance(error, DispatchUnknown):
                 code = "DISPATCH_UNKNOWN_DO_NOT_RESEND"
+            elif isinstance(error, subprocess.CalledProcessError):
+                code = "COMMAND_FAILED"
             elif isinstance(error, TimeoutError):
                 code = "TIMEOUT_RECONCILE_COMMAND"
             elif isinstance(error, urllib.error.HTTPError):
@@ -153,31 +284,7 @@ def main() -> int:
             elif isinstance(error, ValueError):
                 # Only locally generated constant validation reasons, never arbitrary API/env values.
                 reason = str(error)
-                safe = {
-                    "aws_account_required",
-                    "aws_role",
-                    "explicit_seoul_region_required",
-                    "instance",
-                    "controlled_document_required",
-                    "numeric_pinned_document_version",
-                    "required_hashes",
-                    "image_repository",
-                    "source_sha",
-                    "publication_run_id",
-                    "same_sha_trusted_ci_success_required",
-                    "environment_policy",
-                    "environment_main_only",
-                    "environment_policy_count",
-                    "exact_main_sha",
-                    "owner_rerun",
-                    "manual_main_only",
-                    "pinned_document_description",
-                    "pinned_document_content",
-                    "remote_failed",
-                    "remote_nonzero",
-                    "command_failed",
-                    "package_lookup_failed",
-                }
+                safe = SAFE_VALIDATION_REASONS
                 code = reason.upper() if reason in safe else "PROVENANCE_OR_CONTRACT_REJECTED"
             else:
                 code = "LOCAL_OR_REMOTE_OPERATION_FAILED"

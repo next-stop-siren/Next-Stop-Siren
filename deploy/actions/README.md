@@ -118,6 +118,33 @@ configuration 코드는 Owner 변수 준비, `SAME_SHA_TRUSTED_CI_SUCCESS_REQUIR
 `TIMEOUT_RECONCILE_COMMAND`는 마지막 command ID/SSM 기록/host 상태를 Owner가 확인한다.
 원인 불명 `LOCAL_OR_REMOTE_OPERATION_FAILED`도 재시도 전에 해당 단계의 설정·상태를 확인한다.
 
+게시 실패는 `PILOT_PUBLISH_FAILED: stage=<고정 단계>; reason=<고정 사유>`로 표시한다.
+`provenance`는 workflow/source/환경 권한 검사, `checkout`은 checkout SHA 검사,
+`package_preflight`와 `public_package_verification`은 push 전/후 공개 패키지 확인이다.
+`registry_login`은 GHCR 로그인, `frontend_build_push`/`backend_build_push`는 각 이미지의
+**단일 buildx build --push 명령**이다. 이 단계만으로 build와 push 중 어느 쪽인지 단정하지 않는다.
+`*_metadata`는 digest 읽기/검증, `artifact_directory`/`docker_configuration`/
+`docker_configuration_cleanup`/`release_artifact`/`github_output`은 로컬 파일·임시 설정·출력 단계다.
+초기 실행 환경 오류는 `context`/`publication_setup`으로 표시한다.
+
+사유는 원문 로그를 노출하지 않는 제한된 힌트다. `AUTHENTICATION_REJECTED`는 GHCR 인증,
+`REGISTRY_ACCESS_DENIED`는 패키지 write 권한·소유권을 확인한다.
+`BUILDER_FEATURE_UNSUPPORTED`는 Docker builder의 platform/provenance/attestation 지원,
+`DOCKERFILE_STEP_FAILED`는 해당 이미지 Dockerfile의 실패한 build 단계를 확인한다.
+이 힌트는 stderr의 마지막 최대 8192자에서 알려진 문구만 분류하며 원인을 확정하지 않는다.
+`COMMAND_FAILED_UNKNOWN_CAUSE`는 분류할 근거가 없다는 뜻이며 안전한 숫자 `exit`만 덧붙인다.
+`COMMAND_LAUNCH_FAILED`는 로컬 실행 파일/권한, `LOCAL_IO_FAILED`는 해당 로컬 경로/권한,
+`GITHUB_TRANSPORT_FAILED`는 GitHub DNS/연결 상태,
+`GITHUB_ACCESS_OR_INPUT`/`GITHUB_API_FAILED`는 해당 단계 GitHub 권한·입력·서비스 상태를 확인한다.
+`PROVENANCE_OR_CONTRACT_REJECTED`는 source/환경/artifact 계약을 다시 확인하고,
+`OWNER_PUBLIC_PACKAGE_REQUIRED`는 두 GHCR 패키지를 Owner가 public으로 바꾼 후 상태를 확인한다.
+`UNKNOWN_FAILURE`는 원인 미상이다. `TIMEOUT_OUTCOME_UNKNOWN`은 명령 또는 API timeout이며,
+build/push가 일부 완료됐을 수 있으므로 실제 workflow/package 상태를 먼저 확인한다.
+HTTP 오류 response는 body를 읽지 않고 닫아 지연된 ResourceWarning에도 원문 reason이 노출되지 않게 한다.
+`HTTP_RESPONSE_CLEANUP_FAILED`는 response 정리 실패이며 게시를 중단하고 runner 상태를 확인한다.
+어떤 실패도 자동 재시도하지 않는다. 원문 subprocess stdout/stderr, argv, 예외 문자열,
+토큰·환경값은 진단에 출력하지 않는다. 이 진단은 prepare/dispatch 절차나 권한 gate를 바꾸지 않는다.
+
 action pin은40hex 모양뿐 아니라 공식 git/commits의 성공 응답으로 확인한다. annotated tag는
 공식 git/tags chain을 실제 commit까지 peel하며 tag object나404를 commit 증거로 쓰지 않는다.
 오프라인 준비 검증은 저장된 ref/tag/commit 응답 및 명령 exit와 workflow pin을 대조하며,
