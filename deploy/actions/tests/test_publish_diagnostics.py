@@ -54,6 +54,12 @@ class PublishDiagnosticTests(unittest.TestCase):
             def run(arguments, **kwargs):
                 calls.append(arguments)
                 current = "checkout" if arguments[0] == "git" else "registry_login"
+                if arguments[1:3] == ["buildx", "create"]:
+                    current = "builder_create"
+                elif arguments[1:3] == ["buildx", "inspect"]:
+                    current = "builder_bootstrap"
+                elif arguments[1:3] == ["buildx", "rm"]:
+                    current = "builder_cleanup"
                 if "--metadata-file" in arguments:
                     name = Path(arguments[arguments.index("--metadata-file") + 1]).stem
                     current = name + "_build_push"
@@ -108,11 +114,23 @@ class PublishDiagnosticTests(unittest.TestCase):
                     if failure == "exit":
                         self.assertIn("; exit=1;", output)
                     self.assertEqual(len(calls), 1 + (stage != "checkout") + (stage == "frontend_build_push")
-                                     + 2 * (stage == "backend_build_push"))
+                                     + 2 * (stage == "backend_build_push")
+                                     + 3 * (stage in {"frontend_build_push", "backend_build_push"}))
+
+    def test_builder_stage_errors_are_redacted_through_main(self):
+        for stage, count in (("builder_create", 3), ("builder_bootstrap", 5), ("builder_cleanup", 7)):
+            for failure, reason in (("exit", "COMMAND_FAILED_UNKNOWN_CAUSE"),
+                                    ("timeout", "TIMEOUT_OUTCOME_UNKNOWN"),
+                                    ("oserror", "COMMAND_LAUNCH_FAILED")):
+                with self.subTest(stage=stage, failure=failure):
+                    output, calls = self.run_cli(stage=stage, failure=failure)
+                    self.assertIn("stage=" + stage + "; reason=" + reason, output)
+                    self.assertEqual(len(calls), count)
 
     def test_buildx_feature_and_dockerfile_failures_are_static_hints(self):
         for signal, reason in (
             ("ERROR: attestations are not supported for the docker driver ", "BUILDER_FEATURE_UNSUPPORTED"),
+            ("ERROR: Attestation is not supported for the docker driver. ", "BUILDER_FEATURE_UNSUPPORTED"),
             ("failed to solve: process /bin/sh did not complete successfully: exit code: 1 ", "DOCKERFILE_STEP_FAILED"),
         ):
             for stage in ("frontend_build_push", "backend_build_push"):

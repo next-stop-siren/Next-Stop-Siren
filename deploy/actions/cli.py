@@ -1,6 +1,7 @@
 """Thin workflow entry points; every mutation is explicit and gated."""
 
 import argparse
+from contextlib import contextmanager
 import os
 from pathlib import Path
 import subprocess
@@ -81,6 +82,7 @@ class PublishFailure(ValueError):
                 hint in output for hint in (
                     "multi-platform build is not supported for the docker driver",
                     "attestations are not supported for the docker driver",
+                    "attestation is not supported for the docker driver",
                     "provenance is not supported",
                 )
             ):
@@ -104,7 +106,8 @@ class PublishFailure(ValueError):
         elif isinstance(error, OSError):
             reason = (
                 "command_launch_failed" if stage in {
-                    "checkout", "registry_login", "frontend_build_push", "backend_build_push"
+                    "checkout", "registry_login", "frontend_build_push", "backend_build_push",
+                    "builder_create", "builder_bootstrap", "builder_cleanup"
                 } else "local_io_failed"
             )
         elif isinstance(error, ValueError):
@@ -115,6 +118,60 @@ class PublishFailure(ValueError):
             reason = "unknown_failure"
         self.reason = reason
         super().__init__(reason)
+
+
+@contextmanager
+def publication_builder(execute, env):
+    """Own one named builder in the publication's private temporary Docker config."""
+    builder = "pilot-" + Path(env["DOCKER_CONFIG"]).name
+    created, failed = False, False
+    stage = "builder_create"
+    try:
+        execute(["docker", "buildx", "create", "--name", builder, "--driver", "docker-container"], env=env)
+        created = True
+        stage = "builder_bootstrap"
+        execute(["docker", "buildx", "inspect", builder, "--bootstrap"], env=env)
+        stage = "builder_use"
+        yield builder
+    except BaseException as error:
+        failed = True
+        if isinstance(error, Exception) and not isinstance(error, PublishFailure):
+            raise PublishFailure(stage, error) from None
+        raise
+    finally:
+        if created:
+            try:
+                execute(["docker", "buildx", "rm", builder], env=env)
+            except Exception as error:
+                if not failed:
+                    raise PublishFailure("builder_cleanup", error) from None
+                # The original build/bootstrap failure remains authoritative.
+                print("PILOT_BUILDER_CLEANUP_FAILED: reconcile owned builder before retry.", file=sys.stderr)
+
+
+def build_image(execute, env, builder, name, image, sha, run_id, attempt):
+    """Build one image using the explicit publication builder and validate its digest."""
+    stage = name + "_build_push"
+    try:
+        metadata = Path(env["DOCKER_CONFIG"]) / (name + ".json")
+        execute(
+            [
+                "docker", "buildx", "build", "--builder", builder,
+                "--platform", "linux/amd64", "--provenance=true",
+                "--label", "org.opencontainers.image.revision=" + sha,
+                "--label", "org.opencontainers.image.source=https://github.com/" + REPOSITORY,
+                "--file", f"deploy/{name}.Dockerfile",
+                "--tag", f"{image}:sha-{sha}-run-{run_id}-{attempt}",
+                "--metadata-file", str(metadata), "--push", ".",
+            ],
+            env=env,
+        )
+        stage = name + "_metadata"
+        image_digest = read_json(metadata.read_bytes())["containerimage.digest"]
+        require(matches(r"sha256:[0-9a-f]{64}", image_digest), "built_digest")
+        return image_digest
+    except Exception as error:
+        raise PublishFailure(stage, error) from None
 
 
 def publish(client, values, artifact_dir: Path, execute=command) -> str:
@@ -153,36 +210,10 @@ def publish(client, values, artifact_dir: Path, execute=command) -> str:
                 data=values["GITHUB_TOKEN"],
             )
             refs = []
-            for name, image in zip(("frontend", "backend"), images, strict=True):
-                metadata = Path(docker_config) / (name + ".json")
-                stage = name + "_build_push"
-                execute(
-                    [
-                        "docker",
-                        "buildx",
-                        "build",
-                        "--platform",
-                        "linux/amd64",
-                        "--provenance=true",
-                        "--label",
-                        "org.opencontainers.image.revision=" + sha,
-                        "--label",
-                        "org.opencontainers.image.source=https://github.com/" + REPOSITORY,
-                        "--file",
-                        f"deploy/{name}.Dockerfile",
-                        "--tag",
-                        f"{image}:sha-{sha}-run-{run_id}-{attempt}",
-                        "--metadata-file",
-                        str(metadata),
-                        "--push",
-                        ".",
-                    ],
-                    env=env,
-                )
-                stage = name + "_metadata"
-                image_digest = read_json(metadata.read_bytes())["containerimage.digest"]
-                require(matches(r"sha256:[0-9a-f]{64}", image_digest), "built_digest")
-                refs.append(image + "@" + image_digest)
+            with publication_builder(execute, env) as builder:
+                for name, image in zip(("frontend", "backend"), images, strict=True):
+                    image_digest = build_image(execute, env, builder, name, image, sha, run_id, attempt)
+                    refs.append(image + "@" + image_digest)
             stage = "docker_configuration_cleanup"
         stage = "public_package_verification"
         # First push can create private packages. Never release a deployable manifest until public.
@@ -212,6 +243,8 @@ def publish(client, values, artifact_dir: Path, execute=command) -> str:
         validate_release(release)
         (artifact_dir / "release.json").write_bytes(canonical(release))
         return f"pilot-release-{sha}-{run_id}-{attempt}"
+    except PublishFailure:
+        raise
     except Exception as error:
         raise PublishFailure(stage, error) from None
 

@@ -150,6 +150,26 @@ action pin은40hex 모양뿐 아니라 공식 git/commits의 성공 응답으로
 오프라인 준비 검증은 저장된 ref/tag/commit 응답 및 명령 exit와 workflow pin을 대조하며,
 workflow 실행 시 ref를 다시 resolve하거나 새 런타임 의존성을 추가하지 않는다.
 
+## 게시 builder 수명
+
+게시 과정은 로그인과 같은 임시 `DOCKER_CONFIG` 안에 `docker-container` 드라이버의 고유한
+named builder를 만들고 bootstrap합니다. frontend/backend 모두 같은 명시적 `--builder`와
+`--platform linux/amd64 --provenance=true`를 사용합니다. 기본 docker driver로 자동 전환하거나
+provenance를 끄지 않습니다. `builder_create`/`builder_bootstrap`/`builder_cleanup`은 이 수명 단계입니다.
+생성이 확인된 해당 builder만 마지막에 제거하며 기본 builder나 다른 작업의 builder를 지우지 않습니다.
+bootstrap·이미지 빌드·digest 검증 실패에도 정리를 시도합니다. 정리만 실패해도 릴리스 발급을 중단하고,
+앞선 오류와 정리 오류가 함께 발생하면 앞선 stage/reason을 유지하며 고정된
+`PILOT_BUILDER_CLEANUP_FAILED` 안내를 추가합니다. Owner는 남은 builder/runner 상태를 확인한 뒤 재시도해야 합니다.
+create 응답이 실패·유실되면 소유가 확인되지 않은 builder를 임의로 제거하지 않습니다.
+
+실패 사유는 `Attestation is not supported for the docker driver`와 복수형 문구를 모두 같은
+고정 `BUILDER_FEATURE_UNSUPPORTED` 힌트로 분류합니다. 과거 기본 driver의 provenance=true 실패와
+false 성공 비교는 원인 진단이며 이 구현의 실제 GHCR 게시 성공을 뜻하지 않습니다.
+별도 승인된 FE runner 검사는 실제 `publication_builder`/`build_image` 호출을 사용하되,
+검토된 executor가 정확한 frontend 인자를 대조한 후 이미지 출력만 로컬 OCI로 바꿉니다.
+credentials/login/backend/registry push를 실행하지 않고 OCI digest·attestation을 별도로 확인합니다.
+이 검사가 성공해도 실제 registry 권한이나 FE/BE 게시 쌍·배포 완료를 보장하지 않습니다.
+
 ## SSM ReleaseManifest 제약
 
 `ReleaseManifest`는 `allowedPattern: ^[A-Za-z0-9+/=]+$`로 비어 있지 않은 base64 문자만
