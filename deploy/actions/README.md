@@ -170,6 +170,13 @@ false 성공 비교는 원인 진단이며 이 구현의 실제 GHCR 게시 성�
 credentials/login/backend/registry push를 실행하지 않고 OCI digest·attestation을 별도로 확인합니다.
 이 검사가 성공해도 실제 registry 권한이나 FE/BE 게시 쌍·배포 완료를 보장하지 않습니다.
 
+## 로컬 host readiness 구현 (B71-OBS-055)
+
+기존 `--source --frontend --backend` 호출에 맞는 standalone
+[verify-pilot-readiness](verify-pilot-readiness)와 [검사·설치·한계 안내](readiness.md)를 추가했다.
+로컬 합성 검증은 서버 설치, Owner 운영 gates 승인, 실제 사용자 로그인·채팅이나 배포 완료와 구분한다.
+이전 준비 Phase의 미실행 경계와 #75/#74/#76의 남은 운영 검증을 유지한다.
+
 ## SSM ReleaseManifest 제약
 
 `ReleaseManifest`는 `allowedPattern: ^[A-Za-z0-9+/=]+$`로 비어 있지 않은 base64 문자만
