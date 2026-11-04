@@ -25,6 +25,7 @@ from db_guard import UnsafeTestDatabase, guarded_url, read_settings  # noqa: E40
 ENV = ROOT / ".env"
 SERVICES = ("db-dev", "db-test")
 VERSIONS = {"node": "v24.21.0", "npm": "11.19.0", "uv": "0.11.19"}
+DB_TEST_TIMEOUT_SECONDS = 600
 TOOLS = {name: os.environ.get(f"B71_{name.upper()}", name) for name in ("node", "npm", "uv", "docker")}
 
 
@@ -360,22 +361,39 @@ def stop_child(child):
             except subprocess.TimeoutExpired:
                 raise Failure("Owned Windows process did not stop after job termination", 4)
         return
-    else:
+    # A launcher can exit while its descendants still own the process group.
+    for sig, grace in ((signal.SIGTERM, 8), (signal.SIGKILL, 5)):
         try:
-            os.killpg(child.pid, signal.SIGTERM)
+            os.killpg(child.pid, sig)
         except ProcessLookupError:
-            pass
-    try:
-        child.wait(timeout=8)
-    except subprocess.TimeoutExpired:
-        if os.name == "nt":
-            subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"], check=False)
-        else:
+            child.wait(timeout=5)
+            return
+        deadline = time.monotonic() + grace
+        while True:
+            child.poll()  # Reap the launcher so its zombie does not keep the group present.
             try:
-                os.killpg(child.pid, signal.SIGKILL)
+                os.killpg(child.pid, 0)
             except ProcessLookupError:
-                pass
-        child.wait(timeout=5)
+                child.wait(timeout=5)
+                return
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.05)
+    raise Failure("Owned process group did not stop after termination", 4)
+
+
+def run_owned(command, *, cwd=ROOT, timeout=120, env=None):
+    """Finish the command's process tree before its caller cleans up test resources."""
+    try:
+        child = spawn(command, cwd, env=env)
+        try:
+            returncode = child.wait(timeout=timeout)
+        finally:
+            stop_child(child)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise Failure(f"Cannot run {command[0]}: {exc}", 2) from exc
+    if returncode:
+        raise Failure(f"{command[0]} failed ({returncode})", 3)
 
 
 def dev():
@@ -613,8 +631,8 @@ def test_db():
     def check(url):
         env = command_env()
         env["TEST_DATABASE_URL"] = url
-        run(tool("uv", "run", "--no-sync", "pytest", "-m", "db", "-q"),
-            cwd=BACKEND, timeout=300, env=env)
+        run_owned(tool("uv", "run", "--no-sync", "pytest", "-m", "db", "-q"),
+                  cwd=BACKEND, timeout=DB_TEST_TIMEOUT_SECONDS, env=env)
     with_test_database(check)
 
 
