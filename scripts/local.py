@@ -338,22 +338,25 @@ def stop_child(child):
             except subprocess.TimeoutExpired:
                 raise Failure("Owned Windows process did not stop after job termination", 4)
         return
-    else:
+    # A launcher can exit while its descendants still own the process group.
+    for sig, grace in ((signal.SIGTERM, 8), (signal.SIGKILL, 5)):
         try:
-            os.killpg(child.pid, signal.SIGTERM)
+            os.killpg(child.pid, sig)
         except ProcessLookupError:
-            pass
-    try:
-        child.wait(timeout=8)
-    except subprocess.TimeoutExpired:
-        if os.name == "nt":
-            subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"], check=False)
-        else:
+            child.wait(timeout=5)
+            return
+        deadline = time.monotonic() + grace
+        while True:
+            child.poll()  # Reap the launcher so its zombie does not keep the group present.
             try:
-                os.killpg(child.pid, signal.SIGKILL)
+                os.killpg(child.pid, 0)
             except ProcessLookupError:
-                pass
-        child.wait(timeout=5)
+                child.wait(timeout=5)
+                return
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.05)
+    raise Failure("Owned process group did not stop after termination", 4)
 
 
 def run_owned(command, *, cwd=ROOT, timeout=120, env=None):

@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,57 @@ import local
 
 
 class LocalAutomationTest(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "POSIX process-group verification")
+    def test_database_cleanup_waits_for_stubborn_descendant_after_launcher_exit(self):
+        for launcher_exited in (True, False):
+            with self.subTest(launcher_exited=launcher_exited), tempfile.TemporaryDirectory() as temp:
+                ready = Path(temp) / "descendant-ready"
+                descendant = ("import signal,time,pathlib; "
+                              "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                              f"pathlib.Path({str(ready)!r}).touch(); time.sleep(30)")
+                parent = ("import subprocess,sys,time; "
+                          f"subprocess.Popen([sys.executable,'-c',{descendant!r}]); "
+                          + ("" if launcher_exited else "time.sleep(30)"))
+                children = []
+                real_spawn = local.spawn
+
+                def spawn(command, cwd, **kwargs):
+                    child = real_spawn(command, cwd, **kwargs)
+                    children.append(child)
+                    deadline = time.monotonic() + 5
+                    while not ready.exists() and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    self.assertTrue(ready.exists())
+                    if launcher_exited:
+                        child.wait(timeout=5)
+                    return child
+
+                def database(action):
+                    try:
+                        action("validated")
+                    finally:
+                        # This is the point where the real wrapper would stop the DB.
+                        with self.assertRaises(ProcessLookupError):
+                            os.killpg(children[0].pid, 0)
+
+                try:
+                    with patch.object(local, "spawn", side_effect=spawn), \
+                         patch.object(local, "with_test_database", side_effect=database), \
+                         patch.object(local, "DB_TEST_TIMEOUT_SECONDS", 0.3), \
+                         patch.object(local, "tool", return_value=[sys.executable, "-c", parent]):
+                        if launcher_exited:
+                            local.test_db()
+                        else:
+                            with self.assertRaisesRegex(local.Failure, "timed out"):
+                                local.test_db()
+                finally:
+                    for child in children:
+                        try:
+                            os.killpg(child.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        child.wait(timeout=5)
+
     def test_database_timeout_cleans_process_before_database_teardown(self):
         order = []
         child = unittest.mock.Mock()
