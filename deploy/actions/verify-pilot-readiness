@@ -1,0 +1,326 @@
+#!/usr/bin/python3 -I
+"""Read-only, bounded pilot checks. Installed root-owned and hash-pinned by Owner."""
+
+import argparse
+from html.parser import HTMLParser
+import http.client
+import json
+import os
+import re
+import select
+import signal
+import socket
+import ssl
+import subprocess
+import sys
+import time
+
+HOST = "next-stop-siren.duckdns.org"
+PORT = 443
+CAFILE = "/etc/ssl/certs/ca-certificates.crt"
+DOCKER = "/usr/bin/docker"
+DOCKER_HOST = "unix:///var/run/docker.sock"
+PROJECT = "next-stop-siren"
+TOTAL_SECONDS = 60
+OP_SECONDS = 3
+BACKOFF_INITIAL = 1
+BACKOFF_MAX = 3
+QUERY_LIMIT = 16_384
+PAGE_LIMIT = 131_072
+ASSET_LIMIT = 2_000_000
+SHA = r"[0-9a-f]{40}"
+IMAGE_ID = r"sha256:[0-9a-f]{64}"
+IMAGE = r"ghcr\.io/next-stop-siren/[a-z0-9]+(?:[._-][a-z0-9]+)*@sha256:[0-9a-f]{64}"
+ASSET = r"/assets/index-[A-Za-z0-9_-]{6,64}\.js"
+CONTAINER_FORMAT = (
+    '{"id":{{json .Id}},"image":{{json .Image}},"running":{{json .State.Running}},'
+    '"project":{{json (index .Config.Labels "com.docker.compose.project")}},'
+    '"service":{{json (index .Config.Labels "com.docker.compose.service")}},'
+    '"oneoff":{{json (index .Config.Labels "com.docker.compose.oneoff")}},'
+    '"https":{{json (index .NetworkSettings.Ports "443/tcp")}}}'
+)
+IMAGE_FORMAT = '{"id":{{json .Id}},"source":{{json (index .Config.Labels "org.opencontainers.image.revision")}}}'
+
+
+class Rejected(Exception):
+    """Only local constant codes are allowed across the diagnostic boundary."""
+
+
+class Starting(Rejected):
+    """A bounded retry may allow an otherwise valid service to finish starting."""
+
+
+def require(condition, code):
+    if not condition:
+        raise Rejected(code)
+
+
+def budget(deadline):
+    remaining = deadline - time.monotonic()
+    require(remaining > 0, "DEADLINE")
+    return min(OP_SECONDS, remaining)
+
+
+def deadline_signal(signum, frame):
+    raise Rejected("DEADLINE")
+
+
+class SafeParser(argparse.ArgumentParser):
+    def error(self, message):
+        raise Rejected("ARGUMENTS")
+
+
+def arguments(argv):
+    require(
+        len(argv) == 6 and all(argv.count(flag) == 1 for flag in ("--source", "--frontend", "--backend")), "ARGUMENTS"
+    )
+    parser = SafeParser(allow_abbrev=False, add_help=False)
+    for name in ("source", "frontend", "backend"):
+        parser.add_argument("--" + name, required=True)
+    args = parser.parse_args(argv)
+    require(re.fullmatch(SHA, args.source) is not None, "ARGUMENTS")
+    require(all(re.fullmatch(IMAGE, value) is not None for value in (args.frontend, args.backend)), "ARGUMENTS")
+    require(args.frontend.split("@")[0] != args.backend.split("@")[0], "ARGUMENTS")
+    return args
+
+
+def close_owned(process):
+    """Called with SIGALRM deferred; cleanup has its own bounded reap budget."""
+    if process is None:
+        return
+    try:
+        if process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass  # Child exited between poll and kill; still reap it.
+        process.wait(timeout=1)
+    finally:
+        process.stdout.close()
+
+
+def query(parts, deadline):
+    """Own process/pipe until cleanup, then deliver any deferred global deadline."""
+    process, failed = None, False
+    # No child exists yet. Local select/wait deadlines remain active while the
+    # signal is deferred, so an alarm cannot interrupt handle setup or cleanup.
+    previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGALRM})
+    try:
+        try:
+            process = subprocess.Popen(
+                [DOCKER, "--host", DOCKER_HOST, *parts], stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True,
+                env={"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "DOCKER_CONFIG": "/nonexistent"},
+            )
+            limit = min(deadline, time.monotonic() + OP_SECONDS)
+            output = bytearray()
+            while True:
+                remaining = limit - time.monotonic()
+                require(remaining > 0, "DOCKER_TIMEOUT")
+                readable, _, _ = select.select([process.stdout], [], [], remaining)
+                require(bool(readable), "DOCKER_TIMEOUT")
+                chunk = os.read(process.stdout.fileno(), min(4096, QUERY_LIMIT + 1 - len(output)))
+                if not chunk:
+                    break
+                output.extend(chunk)
+                require(len(output) <= QUERY_LIMIT, "DOCKER_RESPONSE")
+            require(process.wait(timeout=budget(limit)) == 0, "DOCKER_QUERY")
+            return output.decode("utf-8").strip()
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            try:
+                close_owned(process)
+            except BaseException:
+                if not failed:
+                    failed = True
+                    raise Rejected("DOCKER_CLEANUP") from None
+    finally:
+        try:
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+        except BaseException:
+            if not failed:
+                raise
+
+
+def document(data):
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            require(key not in result, "JSON_CONTRACT")
+            result[key] = value
+        return result
+
+    def invalid(value):
+        raise Rejected("JSON_CONTRACT")
+
+    return json.loads(data, object_pairs_hook=unique, parse_constant=invalid)
+
+
+def image_identity(args, deadline):
+    identities = []
+    for service, pinned in (("nginx", args.frontend), ("backend", args.backend)):
+        identifier = query([
+            "ps", "--all", "--no-trunc", "--quiet",
+            "--filter", "label=com.docker.compose.project=" + PROJECT,
+            "--filter", "label=com.docker.compose.service=" + service,
+            "--filter", "label=com.docker.compose.oneoff=False",
+        ], deadline)
+        require(re.fullmatch(r"[0-9a-f]{64}", identifier) is not None, "CONTAINER_SELECTION")
+        container = document(query(
+            ["inspect", "--type", "container", "--format", CONTAINER_FORMAT, identifier], deadline
+        ))
+        require(isinstance(container, dict), "CONTAINER_IDENTITY")
+        require(
+            container == {
+                "id": identifier, "image": container.get("image"), "running": True,
+                "project": PROJECT, "service": service, "oneoff": "False", "https": container.get("https"),
+            } and re.fullmatch(IMAGE_ID, container.get("image", "")) is not None,
+            "CONTAINER_IDENTITY",
+        )
+        bindings = ()
+        if service == "nginx":
+            ports = container["https"]
+            require(isinstance(ports, list) and 1 <= len(ports) <= 4, "HTTPS_LISTENER_IDENTITY")
+            require(all(isinstance(port, dict) and set(port) == {"HostIp", "HostPort"}
+                        and isinstance(port["HostIp"], str) and isinstance(port["HostPort"], str)
+                        for port in ports), "HTTPS_LISTENER_IDENTITY")
+            require(any(port["HostIp"] in {"0.0.0.0", "127.0.0.1"} and port["HostPort"] == "443"
+                        for port in ports), "HTTPS_LISTENER_IDENTITY")
+            bindings = tuple(sorted((port["HostIp"], port["HostPort"]) for port in ports))
+        image = document(query(["image", "inspect", "--format", IMAGE_FORMAT, pinned], deadline))
+        require(isinstance(image, dict), "IMAGE_IDENTITY")
+        require(image == {"id": container["image"], "source": args.source}, "IMAGE_IDENTITY")
+        identities.append((identifier, image["id"], bindings))
+    return identities
+
+
+class LocalHTTPS(http.client.HTTPSConnection):
+    """Verify the production hostname/cert while connecting only to numeric loopback."""
+
+    def connect(self):
+        sock = socket.create_connection(("127.0.0.1", self.port), timeout=self.timeout)
+        try:
+            self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+        except BaseException:
+            sock.close()
+            raise
+
+
+def request(path, deadline, maximum):
+    require(path in {"/", "/api/ready", "/api/me"} or re.fullmatch(ASSET, path) is not None, "HTTP_PATH")
+    # Explicit CA file ignores SSL_CERT_FILE/DIR, HTTP proxies, cookies and user URLs.
+    context = ssl.create_default_context(cafile=CAFILE)
+    connection = LocalHTTPS(HOST, PORT, timeout=budget(deadline), context=context)
+    try:
+        connection.request("GET", path, headers={"Accept-Encoding": "identity", "User-Agent": "Pilot-Readiness/1"})
+        response = connection.getresponse()
+        with response:
+            require(response.getheader("Content-Encoding", "identity").lower() == "identity", "HTTP_ENCODING")
+            data = bytearray()
+            while True:
+                budget(deadline)
+                chunk = response.read1(min(65_536, maximum + 1 - len(data)))
+                if not chunk:
+                    break
+                data.extend(chunk)
+                require(len(data) <= maximum, "HTTP_RESPONSE_SIZE")
+            return response.status, response.getheader("Content-Type", "").split(";")[0].strip().lower(), (
+                response.getheader("WWW-Authenticate", ""), bytes(data)
+            )
+    except ssl.SSLCertVerificationError:
+        raise Rejected("TLS_IDENTITY") from None
+    except (OSError, http.client.HTTPException):
+        raise Starting("HTTPS_TRANSPORT") from None
+    finally:
+        connection.close()
+
+
+class AppShell(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.root = False
+        self.korean = False
+        self.modules = []
+        self.base = False
+
+    def handle_starttag(self, tag, attributes):
+        attrs = dict(attributes)
+        if tag == "html":
+            self.korean = attrs.get("lang") == "ko"
+        if tag == "div" and attrs.get("id") == "root":
+            self.root = True
+        if tag == "script" and attrs.get("type") == "module":
+            self.modules.append(attrs.get("src", ""))
+        if tag == "base":
+            self.base = True
+
+
+def smoke(deadline):
+    status, kind, (_, data) = request("/api/ready", deadline, PAGE_LIMIT)
+    if status in {502, 503, 504}:
+        raise Starting("NOT_READY")
+    require(status == 200 and kind == "application/json", "READINESS_CONTRACT")
+    require(document(data) == {"status": "ready"}, "READINESS_CONTRACT")
+    status, kind, (challenge, data) = request("/api/me", deadline, PAGE_LIMIT)
+    require(status == 401 and kind == "application/json" and challenge == "Bearer", "GUEST_AUTH_CONTRACT")
+    body = document(data)
+    require(isinstance(body, dict) and set(body) == {"error"}, "GUEST_AUTH_CONTRACT")
+    error = body["error"]
+    require(
+        isinstance(error, dict) and set(error) == {"code", "message", "fields", "trace_id"}
+        and error["code"] == "unauthenticated" and isinstance(error["message"], str) and bool(error["message"])
+        and error["fields"] == {} and isinstance(error["trace_id"], str)
+        and re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", error["trace_id"]) is not None,
+        "GUEST_AUTH_CONTRACT",
+    )
+    status, kind, (_, data) = request("/", deadline, PAGE_LIMIT)
+    require(status == 200 and kind == "text/html", "FRONTEND_SHELL")
+    shell = AppShell()
+    shell.feed(data.decode("utf-8"))
+    shell.close()
+    require(shell.root and shell.korean and not shell.base and len(shell.modules) == 1, "FRONTEND_SHELL")
+    require(re.fullmatch(ASSET, shell.modules[0]) is not None, "FRONTEND_ASSET_PATH")
+    status, kind, (_, data) = request(shell.modules[0], deadline, ASSET_LIMIT)
+    require(status == 200 and kind in {"application/javascript", "text/javascript"}, "FRONTEND_ASSET")
+    require(bool(data.strip()) and not data.lstrip().startswith(b"<"), "FRONTEND_ASSET")
+
+
+def main(argv=None):
+    previous = signal.signal(signal.SIGALRM, deadline_signal)
+    signal.setitimer(signal.ITIMER_REAL, TOTAL_SECONDS)
+    try:
+        args = arguments(sys.argv[1:] if argv is None else argv)
+        deadline = time.monotonic() + TOTAL_SECONDS
+        before = image_identity(args, deadline)
+        # Reserve six bounded Docker queries for the final stability check.
+        startup_deadline = deadline - (6 * OP_SECONDS + 0.1)
+        delay = BACKOFF_INITIAL
+        signal.setitimer(signal.ITIMER_REAL, max(0.001, startup_deadline - time.monotonic()))
+        while True:
+            try:
+                smoke(startup_deadline)
+                break
+            except Starting:
+                remaining = startup_deadline - time.monotonic()
+                require(remaining > delay, "STARTUP_DEADLINE")
+                time.sleep(delay)
+                delay = min(BACKOFF_MAX, delay * 2)
+        signal.setitimer(signal.ITIMER_REAL, max(0.001, deadline - time.monotonic()))
+        require(image_identity(args, deadline) == before, "CONTAINER_CHANGED_DURING_CHECK")
+        print("PILOT_READINESS_OK")
+        return 0
+    except Rejected as error:
+        print("PILOT_READINESS_FAILED: " + str(error), file=sys.stderr)
+        return 1
+    except Exception:
+        print("PILOT_READINESS_FAILED: LOCAL_OR_CONTRACT_FAILURE", file=sys.stderr)
+        return 1
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
