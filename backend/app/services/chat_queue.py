@@ -23,7 +23,9 @@ The member quota (#15) is reached through `QuotaLedger`. Admission reserves afte
 queue checks and in the same transaction, and every job end resolves the reservation
 once, in the transaction that ends the job: settled when completed, refunded with
 the job state otherwise. The ledger enforces the 10-second interval between new
-admissions and the daily and six-hour limits, and raises its own refusal.
+admissions and the daily and six-hour limits, and raises its own refusal. Each
+resolution is returned in `Changes.quota`, and the caller logs it by job ID with
+`log_quota` once the transaction has committed (#70).
 """
 
 import logging
@@ -141,14 +143,48 @@ PROVIDER_FAILED = Outcome("failed", error_code="provider_failed")
 OUTCOME_UNKNOWN = Outcome("interrupted", error_code="outcome_unknown")
 
 
+QuotaResult = Literal["settled", "refunded", "already_resolved"]
+
+
+@dataclass(frozen=True)
+class QuotaResolution:
+    """How a job's end resolved its reservation in the transaction; logged by `log_quota` after the commit (#70)."""
+
+    job_id: int
+    reservation_id: int
+    state: str
+    result: QuotaResult
+
+
 @dataclass
 class Changes:
     """Jobs whose state changed in the transaction, for the subscription events of #53 after it commits."""
 
     job_ids: list[int] = field(default_factory=list)
+    quota: list[QuotaResolution] = field(default_factory=list)
 
     def add(self, *job_ids: int) -> None:
         self.job_ids.extend(job_id for job_id in job_ids if job_id not in self.job_ids)
+
+    def merge(self, other: "Changes") -> None:
+        self.add(*other.job_ids)
+        self.quota.extend(other.quota)
+
+
+def log_quota(changes: Changes) -> None:
+    """Log the reservations the committed transaction resolved, by job ID; call only after the commit.
+
+    The ledger runs before the commit, so a line written there could report a settle or
+    refund that a failed commit rolled back.
+    """
+    for item in changes.quota:
+        logger.info(
+            "Quota resolved, job_id=%s, state=%s, reservation_id=%s, quota=%s",
+            item.job_id,
+            item.state,
+            item.reservation_id,
+            item.result,
+        )
 
 
 def _now(session: Session, now: datetime | None) -> datetime:
@@ -258,29 +294,36 @@ def admit_retry(
     return Admission(question, job, created=True)
 
 
-def _resolve(session: Session, ledger: QuotaLedger, job: ChatJob) -> None:
+def _resolve(session: Session, ledger: QuotaLedger, job: ChatJob, changes: Changes) -> None:
     if job.reservation_id is None:
         return
+    result: QuotaResult
     if job.state == "completed":
         resolved = ledger.settle(session, job.reservation_id)
+        result = "settled"
     else:
         resolved = ledger.refund(session, job.reservation_id, cast(RefundReason, job.state))
+        result = "refunded"
     if not resolved:
         logger.warning("Reservation already resolved, job_id=%s, state=%s", job.id, job.state)
+        result = "already_resolved"
+    changes.quota.append(QuotaResolution(job.id, job.reservation_id, job.state, result))
 
 
-def _end_unstarted(session: Session, ledger: QuotaLedger, job: ChatJob, state: str, now: datetime) -> None:
+def _end_unstarted(
+    session: Session, ledger: QuotaLedger, job: ChatJob, state: str, now: datetime, changes: Changes
+) -> None:
     job.state = state
     job.paused_by_message_id = None
     job.finished_at = now
     session.flush()
-    _resolve(session, ledger, job)
+    _resolve(session, ledger, job, changes)
+    changes.add(job.id)
 
 
 def _expire_due(session: Session, ledger: QuotaLedger, user_id: int, now: datetime, changes: Changes) -> None:
     for job in repository.due_waiting(session, user_id, now):
-        _end_unstarted(session, ledger, job, "expired", now)
-        changes.add(job.id)
+        _end_unstarted(session, ledger, job, "expired", now, changes)
 
 
 def _conclude(session: Session, ledger: QuotaLedger, job: ChatJob, answer: Message, now: datetime) -> Changes:
@@ -290,7 +333,7 @@ def _conclude(session: Session, ledger: QuotaLedger, job: ChatJob, answer: Messa
     job.state = answer.status if answer.status in ("completed", "failed", "interrupted") else "interrupted"
     job.finished_at = now
     session.flush()
-    _resolve(session, ledger, job)
+    _resolve(session, ledger, job, changes)
     changes.add(job.id)
     if job.state == "completed":
         held = repository.hold(session, job.conversation_id)
@@ -339,7 +382,7 @@ def recover(session: Session, ledger: QuotaLedger, user_id: int, *, now: datetim
     changes = Changes()
     running = repository.running_job(session, user_id)
     if running is not None and _stale(running, now):
-        changes.add(*_reconcile(session, ledger, running, now).job_ids)
+        changes.merge(_reconcile(session, ledger, running, now))
     _expire_due(session, ledger, user_id, now, changes)
     return changes
 
@@ -437,8 +480,7 @@ def cancel(
         return job, changes
     if job.state not in ("queued", "paused"):
         raise JobNotCancelable
-    _end_unstarted(session, ledger, job, "canceled", now)
-    changes.add(job.id)
+    _end_unstarted(session, ledger, job, "canceled", now, changes)
     return job, changes
 
 

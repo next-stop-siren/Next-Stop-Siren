@@ -13,7 +13,8 @@ asking twice. The app starts the worker (#53) and turns its `notify` and `on_del
 which also receive the member's ID, into subscription events. `notify` is called only
 after a commit, so a stored outcome that failed to commit is never announced. Log
 entries carry row IDs only, never a question or an answer, and a failure is logged as
-its `SafeError` classification, never its exception text or traceback (#70).
+its `SafeError` classification and the `Stage` it stopped at, never its exception text
+or traceback (#70).
 """
 
 import logging
@@ -23,6 +24,7 @@ import time
 from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
+from typing import Literal
 
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -45,18 +47,28 @@ class _Ended:
     """Put on the queue after the provider's last piece."""
 
 
+STREAM_THREAD_NAME = "chat-provider-stream"
+
+# Where `run_next` stopped; storing the outcome also resolves the quota in the same transaction.
+Stage = Literal["claim", "start_notify", "generate", "store", "outcome_notify"]
+
+
 def generate(
     provider: AnswerProvider,
     context: Sequence[ContextMessage],
     *,
     time_limit: float = ANSWER_TIME_LIMIT_SECONDS,
     on_delta: Callable[[str], None] | None = None,
+    job_id: int | None = None,
 ) -> Outcome:
     """Stream the answer within the time limit and return how it ended; pieces go to `on_delta` as they arrive.
 
     The provider is read on a helper thread, so a provider that stops sending cannot
     hold the job past the limit; a piece that arrives after it counts as a timeout.
-    Any failure other than `ProviderFailed` leaves the outcome unknown.
+    Any failure other than `ProviderFailed` leaves the outcome unknown. A stream that
+    fails to close is logged as its `SafeError` and does not change the outcome; it
+    never leaves the helper thread, whose default hook would print the exception text
+    and traceback to stderr (#70).
     """
     deadline = time.monotonic() + time_limit
     arrivals: queue.Queue[tuple[str | _Ended | Exception, float]] = queue.Queue()
@@ -76,9 +88,12 @@ def generate(
         finally:
             close = getattr(pieces, "close", None)
             if close is not None:
-                close()
+                try:
+                    close()
+                except Exception as error:
+                    logger.error("Provider stream close failed, job_id=%s, %s", job_id, SafeError.of(error))
 
-    threading.Thread(target=receive, daemon=True).start()
+    threading.Thread(target=receive, name=STREAM_THREAD_NAME, daemon=True).start()
     parts: list[str] = []
     try:
         while True:
@@ -99,7 +114,7 @@ def generate(
             if isinstance(item, ProviderFailed):
                 return PROVIDER_FAILED
             if not isinstance(item, ProviderTimeout):
-                logger.error("Provider raised an unexpected error, error_type=%s", type(item).__name__)
+                logger.error("Provider raised an unexpected error, job_id=%s, %s", job_id, SafeError.of(item))
             return OUTCOME_UNKNOWN
     finally:
         stop.set()
@@ -115,41 +130,73 @@ def run_next(
     notify: Notify | None = None,
     on_delta: OnDelta | None = None,
 ) -> bool:
-    """Run the member's next job if the execution right is free; False when nothing started."""
-    with session_factory() as session:
-        claimed, changes = chat_queue.claim_next(session, ledger, user_id)
-        session.commit()
-    if notify is not None and changes.job_ids:
-        notify(changes.job_ids)
-    if claimed is None:
-        return False
-    logger.info("Job started, job_id=%s, answer_id=%s", claimed.job_id, claimed.answer_message_id)
-    called_at = time.monotonic()
-    job_id = claimed.job_id
-    delta = None if on_delta is None else (lambda text: on_delta(job_id, text))
-    outcome = generate(provider, claimed.context, time_limit=time_limit, on_delta=delta)
-    logger.info(
-        "Provider call ended, job_id=%s, outcome=%s, elapsed_ms=%s",
-        claimed.job_id,
-        outcome.error_code or outcome.status,
-        round((time.monotonic() - called_at) * 1000),
-    )
+    """Run the member's next job if the execution right is free; False when nothing started.
+
+    Every line carries the job ID that admission logged, from the start to the stored
+    outcome, its quota resolution and the notification. A failure is logged with the
+    `Stage` it stopped at before it is raised (`store` as "Job outcome not stored", which
+    also covers the quota resolved in that transaction); a job that stopped after its
+    start stays running until recovery interrupts it.
+    """
+    stage: Stage = "claim"
+    job_id: int | None = None
     try:
         with session_factory() as session:
-            finished = chat_queue.finish(session, ledger, claimed.job_id, claimed.run_token, outcome)
+            claimed, changes = chat_queue.claim_next(session, ledger, user_id)
             session.commit()
-    except Exception as error:
-        # The outcome is not stored: the job stays running and recovery interrupts it later.
-        logger.error(
-            "Job outcome not stored, job_id=%s, outcome=%s, %s",
-            claimed.job_id,
+        # Jobs that recovery or expiry ended under the same lock.
+        chat_queue.log_quota(changes)
+        stage = "start_notify"
+        if notify is not None and changes.job_ids:
+            notify(changes.job_ids)
+        if claimed is None:
+            return False
+        job_id = started = claimed.job_id
+        stage = "generate"
+        logger.info("Job started, job_id=%s, answer_id=%s", job_id, claimed.answer_message_id)
+        called_at = time.monotonic()
+        delta = None if on_delta is None else (lambda text: on_delta(started, text))
+        outcome = generate(provider, claimed.context, time_limit=time_limit, on_delta=delta, job_id=job_id)
+        logger.info(
+            "Provider call ended, job_id=%s, outcome=%s, elapsed_ms=%s",
+            job_id,
             outcome.error_code or outcome.status,
-            SafeError.of(error),
+            round((time.monotonic() - called_at) * 1000),
         )
+        stage = "store"
+        try:
+            with session_factory() as session:
+                finished = chat_queue.finish(session, ledger, started, claimed.run_token, outcome)
+                session.commit()
+        except Exception as error:
+            # The outcome is not stored: the job stays running and recovery interrupts it later.
+            logger.error(
+                "Job outcome not stored, job_id=%s, outcome=%s, %s",
+                job_id,
+                outcome.error_code or outcome.status,
+                SafeError.of(error),
+            )
+            raise
+        if finished is None:
+            # `finish` already logged the late result; nothing was stored or resolved.
+            return True
+        logger.info(
+            "Job outcome stored, job_id=%s, outcome=%s, answer_id=%s",
+            job_id,
+            outcome.error_code or outcome.status,
+            claimed.answer_message_id,
+        )
+        chat_queue.log_quota(finished)
+        stage = "outcome_notify"
+        if notify is not None:
+            notify(finished.job_ids)
+        return True
+    except Exception as error:
+        if stage != "store":
+            logger.error(
+                "Job run stopped, user_id=%s, job_id=%s, stage=%s, %s", user_id, job_id, stage, SafeError.of(error)
+            )
         raise
-    if notify is not None and finished is not None:
-        notify(finished.job_ids)
-    return True
 
 
 class ChatJobWorker:

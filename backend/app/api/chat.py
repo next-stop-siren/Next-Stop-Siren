@@ -109,6 +109,7 @@ def cancel_job(
     except chat_queue.JobNotCancelable:
         raise ApiError("job_not_cancelable") from None
     session.commit()
+    chat_queue.log_quota(changes)
     (view,) = chat_views.views(session, user_id, [job])
     body = Canceled(job=job_out(view), limits=current_limits(session, user_id))
     after_commit(request, session, user_id, changes.job_ids)

@@ -46,6 +46,16 @@ MAX_PENDING = 500
 SessionOpener = Callable[[], AbstractContextManager[Session]]
 
 
+def _ids(job_ids: Sequence[int]) -> str:
+    return ",".join(str(job_id) for job_id in job_ids)
+
+
+def _not_sent(user_id: int, job_ids: Sequence[int], reason: str) -> None:
+    """A committed change nobody is listening to; the next snapshot carries it (#70)."""
+    if job_ids:
+        logger.info("Chat events not sent, user_id=%s, job_ids=%s, reason=%s", user_id, _ids(job_ids), reason)
+
+
 def sse(event: str, data: BaseModel) -> str:
     """One server-sent event; the JSON is a single line because JSON escapes line breaks."""
     return f"event: {event}\ndata: {data.model_dump_json()}\n\n"
@@ -201,7 +211,10 @@ class ChatEvents:
         Call it after the commit, on a session whose next reads see that commit. If the
         reads fail, the member's connections are ended instead of being left without the change.
         """
-        if not job_ids or not self.subscribed(user_id):
+        if not job_ids:
+            return
+        if not self.subscribed(user_id):
+            _not_sent(user_id, job_ids, "no_subscription")
             return
         try:
             with self._member_lock(user_id):
@@ -209,24 +222,40 @@ class ChatEvents:
                 jobs = repository.owned_jobs(session, user_id, ids)
                 frames = [sse("job", item_out(found)) for found in chat_views.items(session, user_id, jobs)]
                 frames.append(sse("limits", limits_out(chat_views.limits(session, user_id))))
-                for subscription in self._current(user_id):
+                subscriptions = self._current(user_id)
+                for subscription in subscriptions:
                     for frame in frames:
                         subscription.put(frame)
         except Exception as error:
             # The change is stored; ending the connections makes each reconnect and read it.
-            logger.error("Chat event publish failed, user_id=%s, %s", user_id, SafeError.of(error))
+            logger.error(
+                "Chat event publish failed, user_id=%s, job_ids=%s, %s", user_id, _ids(job_ids), SafeError.of(error)
+            )
             self._end_member(user_id)
+            return
+        logger.info(
+            "Chat events published, user_id=%s, job_ids=%s, connections=%s",
+            user_id,
+            _ids(job_ids),
+            len(subscriptions),
+        )
 
     def notify(self, user_id: int, job_ids: Sequence[int]) -> None:
         """The worker's `notify`: publish on a session of its own."""
-        if self._sessions is None or not self.subscribed(user_id):
+        if self._sessions is None:
+            _not_sent(user_id, job_ids, "no_worker")
+            return
+        if not self.subscribed(user_id):
+            _not_sent(user_id, job_ids, "no_subscription")
             return
         try:
             with self._sessions() as session:
                 self.publish(session, user_id, job_ids)
                 session.rollback()
         except Exception as error:
-            logger.error("Chat event session failed, user_id=%s, %s", user_id, SafeError.of(error))
+            logger.error(
+                "Chat event session failed, user_id=%s, job_ids=%s, %s", user_id, _ids(job_ids), SafeError.of(error)
+            )
             self._end_member(user_id)
 
     def delta(self, user_id: int, job_id: int, text: str) -> None:

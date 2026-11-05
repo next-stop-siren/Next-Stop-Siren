@@ -8,6 +8,7 @@ test_chat_api_db.py and test_chat_queue_db.py. Every user, ID and time is fake.
 """
 
 import asyncio
+import logging
 from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -52,6 +53,7 @@ def job(job_id=7003, state="paused", **fields):
         "conversation_id": 501,
         "question_message_id": 9005,
         "answer_message_id": None,
+        "reservation_id": 8001,
         "state": state,
         "paused_by_message_id": 9003 if state == "paused" else None,
         "accepted_at": T0,
@@ -359,7 +361,8 @@ def test_a_subscription_keeps_order_and_closes_when_too_far_behind():
         loop.close()
 
 
-def test_open_queues_the_snapshot_first_and_publishes_reach_only_the_member(monkeypatch):
+def test_open_queues_the_snapshot_first_and_publishes_reach_only_the_member(monkeypatch, caplog):
+    caplog.set_level(logging.INFO, "app.api.chat_events")
     loop = asyncio.new_event_loop()
     try:
         snapshot = chat_views.Snapshot([], LIMITS, T0)
@@ -373,6 +376,8 @@ def test_open_queues_the_snapshot_first_and_publishes_reach_only_the_member(monk
         other = events.open(FakeSession(), 202, loop, None)
         assert mine.next_reset == datetime(2026, 10, 20, 9, tzinfo=UTC)
         events.publish(FakeSession(), 101, [7003])
+        # The notice is traceable by its job ID (#70).
+        assert "Chat events published, user_id=101, job_ids=7003, connections=1" in caplog.text
         events.delta(101, 7003, "조각")
         first, limits, delta = drain(mine.subscription, loop, 3)
         assert first.startswith("event: snapshot\n") and '"server_time":"2026-10-20T03:00:40Z"' in first

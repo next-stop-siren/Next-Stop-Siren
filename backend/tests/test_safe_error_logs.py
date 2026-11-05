@@ -9,14 +9,16 @@ or database is used.
 
 import asyncio
 import logging
+import threading
 import uuid
 from contextlib import contextmanager
 
 import psycopg
+import pytest
 from sqlalchemy.exc import DataError, IntegrityError, OperationalError
 
 from app.api.chat_events import ChatEvents, Subscription
-from app.integrations.provider import ContextMessage
+from app.integrations.provider import ContextMessage, ProviderFailed
 from app.observability import SafeError, SafeExceptionLogFilter, protect_exception_logs
 from app.services import chat_queue, chat_runner, chat_views
 from app.services.chat_queue import Changes, Claimed
@@ -75,10 +77,13 @@ def test_a_database_error_while_claiming_is_logged_as_a_cause_without_its_text(m
     with caplog.at_level(logging.INFO):
         worker()._drain(101)
     assert_safe(caplog)
-    (record,) = caplog.records
-    message = record.getMessage()
-    assert message.startswith("Chat job run failed, user_id=101, cause=database_error, error_type=DataError/Exception")
-    assert "where=services/chat_runner.py:" in message
+    stopped, failed = (record.getMessage() for record in caplog.records)
+    # Nothing started yet, so no job ID; the stage says the claim did not commit.
+    assert stopped.startswith(
+        "Job run stopped, user_id=101, job_id=None, stage=claim, cause=database_error, error_type=DataError/Exception"
+    )
+    assert failed.startswith("Chat job run failed, user_id=101, cause=database_error, error_type=DataError/Exception")
+    assert "where=services/chat_runner.py:" in failed
 
 
 def test_an_outcome_that_was_not_stored_is_never_logged_as_stored(monkeypatch, caplog):
@@ -165,9 +170,80 @@ def test_failed_notifications_keep_no_sql_values(monkeypatch, caplog):
     finally:
         loop.close()
     assert_safe(caplog)
-    assert "Chat event publish failed, user_id=101, cause=database_conflict" in caplog.text
+    assert "Chat event publish failed, user_id=101, job_ids=7003, cause=database_conflict" in caplog.text
     assert "error_type=IntegrityError/UniqueViolation/23505" in caplog.text
-    assert "Chat event session failed, user_id=101, cause=database_unavailable" in caplog.text
+    assert "Chat event session failed, user_id=101, job_ids=7003, cause=database_unavailable" in caplog.text
+    assert "Chat events published" not in caplog.text
+
+
+class FailingClose:
+    """A provider stream whose `close()` raises with the question, a token and the connection string in its text."""
+
+    def __init__(self, error: Exception | None = None):
+        self._pieces = iter([ANSWER_MARK])
+        self._error = error
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        piece = next(self._pieces, None)
+        if piece is None:
+            if self._error is not None:
+                raise self._error
+            raise StopIteration
+        return piece
+
+    def close(self):
+        raise RuntimeError(f"closing {QUESTION_MARK} with bearer {TOKEN_MARK} at {CONNECTION_MARK}")
+
+
+def wait_for_stream_threads() -> None:
+    for thread in threading.enumerate():
+        if thread.name == chat_runner.STREAM_THREAD_NAME:
+            thread.join(timeout=5)
+
+
+@pytest.mark.parametrize(
+    ("stream_error", "expected"),
+    [(None, "completed"), (ProviderFailed(), "failed")],
+    ids=["after-the-last-piece", "after-a-provider-failure"],
+)
+def test_a_stream_close_failure_keeps_the_outcome_and_prints_nothing_to_stderr(
+    monkeypatch, caplog, capsys, stream_error, expected
+):
+    """`close()` runs on the helper thread; an exception left there would go to stderr with its traceback."""
+    escaped = []
+    monkeypatch.setattr(threading, "excepthook", escaped.append)
+
+    class ClosingProvider(Provider):
+        def stream(self, messages, *, timeout_seconds):
+            return FailingClose(stream_error)
+
+    with caplog.at_level(logging.INFO):
+        outcome = chat_runner.generate(ClosingProvider(), [ContextMessage("user", QUESTION_MARK)], job_id=7)
+        wait_for_stream_threads()
+    assert outcome.status == expected
+    assert escaped == []
+    captured = capsys.readouterr()
+    assert not any(mark in captured.err or mark in captured.out for mark in MARKS)
+    assert "Traceback" not in captured.err
+    assert_safe(caplog)
+    (closed,) = [record.getMessage() for record in caplog.records if "close failed" in record.getMessage()]
+    assert closed.startswith("Provider stream close failed, job_id=7, cause=unexpected, error_type=RuntimeError")
+    assert "where=services/chat_runner.py:" in closed
+
+
+def test_an_unexpected_provider_error_is_logged_with_its_job_and_without_its_text(caplog):
+    class BrokenProvider(Provider):
+        def stream(self, messages, *, timeout_seconds):
+            raise RuntimeError(f"bearer {TOKEN_MARK} for {QUESTION_MARK}")
+
+    with caplog.at_level(logging.INFO):
+        outcome = chat_runner.generate(BrokenProvider(), [ContextMessage("user", QUESTION_MARK)], job_id=7)
+    assert outcome == chat_queue.OUTCOME_UNKNOWN
+    assert_safe(caplog)
+    assert "Provider raised an unexpected error, job_id=7, cause=unexpected, error_type=RuntimeError" in caplog.text
 
 
 def test_the_server_log_of_an_unhandled_request_error_keeps_only_the_cause(caplog):
