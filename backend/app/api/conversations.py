@@ -166,7 +166,12 @@ def send_question(
         raise refusal(error) from None
     session.commit()
     if admission.created and admission.job is not None:
-        logger.info("Question queued, trace_id=%s, job_id=%s", trace_id, admission.job.id)
+        logger.info(
+            "Question queued, trace_id=%s, job_id=%s, reservation_id=%s",
+            trace_id,
+            admission.job.id,
+            admission.job.reservation_id,
+        )
     result = accepted(session, user_id, admission, response)
     if admission.created and admission.job is not None:
         after_commit(request, session, user_id, [admission.job.id])
@@ -191,7 +196,12 @@ def retry_answer(
         raise refusal(error) from None
     session.commit()
     if admission.created and admission.job is not None:
-        logger.info("Retry queued, trace_id=%s, job_id=%s", trace_id, admission.job.id)
+        logger.info(
+            "Retry queued, trace_id=%s, job_id=%s, reservation_id=%s",
+            trace_id,
+            admission.job.id,
+            admission.job.reservation_id,
+        )
     result = accepted(session, user_id, admission, response)
     if admission.created and admission.job is not None:
         after_commit(request, session, user_id, [admission.job.id])
