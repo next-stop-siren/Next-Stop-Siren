@@ -52,7 +52,7 @@ def _ids(job_ids: Sequence[int]) -> str:
 
 
 def _not_sent(user_id: int, job_ids: Sequence[int], reason: str, *, connections: int | None = None) -> None:
-    """A committed change that reached no connection, or not the `connections` named; the next snapshot carries it (#70).
+    """A committed change that missed every connection, or the `connections` named; a snapshot carries it (#70).
 
     `backlog`: the connection fell too far behind and was closed instead. `closed`: it had
     already ended. `no_subscription`/`no_worker`: nobody was listening.
