@@ -57,12 +57,12 @@ Python 모듈·함수·변수는 `snake_case`, 클래스는 `PascalCase`를 쓴�
 `app/integrations/codyssey.py`의 `CodysseyGptProvider`가 [GPT 기준](../04-reference/ai.md)의 실제 어댑터다. `complete`와 대기열 실행기가 쓰는 `stream`(#68)이 있다. 공개 서비스의 `get_provider()`는 별도 승인·화면 통합·배포 검증 전까지 모의 제공자를 유지하며, 실제 어댑터는 대체 서버 검사와 격리 스모크 시험에서만 연결한다.
 
 - **설정:** 서버 `.env`의 `CODYSSEY_API_KEY`(본인 키)·`CODYSSEY_BASE_URL`·`CODYSSEY_MODEL`을 읽는다. URL·모델이 승인값과 다르면 거부한다.
-- **호출:** 표준 라이브러리 `http.client`로 한 번만 요청한다. 자동 재시도·모델 대체가 없고 429·할당 부족을 포함한 비정상 응답은 `ProviderFailed`(기존 502)다.
+- **호출:** `complete`·`stream` 모두 `max_completion_tokens=2048`로 제한하고 표준 라이브러리 `http.client`로 한 번만 요청한다. Codyssey 호환성은 아직 실제 검증하지 않았다. 자동 재시도·모델 대체가 없고 429·할당 부족을 포함한 비정상 응답은 `ProviderFailed`(기존 502)다.
 - **완성 판정:** `finish_reason`이 `stop`인 답변만 완성이다. 길이 제한(`length`)·필터링(`content_filter`)·이유 없음·문자열이 아닌 값(배열·객체 등)은 `ProviderFailed`로 `failed` 저장하며 `completed`로 저장하지 않는다. `stream`은 `stop` 뒤 `data: [DONE]`이 와야 완성이고, `[DONE]` 없이 끝나거나 오류·잘못된 조각이 오면 이미 보낸 조각이 있어도 `ProviderFailed`다. 부분 출력은 저장하지 않는다.
 - **30초 기한·취소:** 기한이 지나면 연결을 닫아 대기를 끝내고 `ProviderTimeout`(기존 504)을 낸다. 연결 대기 중에 기한이 지나면 연결이 열린 뒤에도 요청을 보내지 않는다. 취소는 전송 완료를 기다리지 않으며, 지연된 전송은 닫힌 소켓에서 실패한다. 늦은 결과는 버린다. 제공자 쪽 생성·차감 중단은 보장하지 않는다.
 - **기록:** 어댑터는 모드·결과·HTTP 상태·종료 이유 분류·조각 수·소요 시간만 남기고, 문맥 구성은 보낸·제외한 쌍 수와 문자 수만 남긴다. 실행기의 예외는 #70의 `SafeError` 분류로만 기록하며 예외 원문·traceback을 남기지 않는다.
 
-모의 검사는 `tests/test_codyssey_provider.py`(`complete`)와 `tests/test_codyssey_stream.py`(`stream`과 실행기 연결)가 로컬 대체 서버로 수행한다. 실제 스모크는 질문을 대기열에 접수하고 실행기로 실제 어댑터를 1회 부른 뒤 이력을 다시 읽는다. 실제 호출은 별도 승인 뒤에만 실행한다. 실제 스모크는 `live` 표시가 있어 `--run-live` 없이는 CI·`-m db`에서도 건너뛴다. 대시보드에서 남은 할당을 확인한 뒤 합성 질문 1회로 실행하고, 출력된 상태·소요 시간만 증거로 남긴다. 테스트 DB를 쓰므로 실행 전에 `db-test`를 켜고 [온보딩](../01-start/onboarding.md)대로 `TEST_DATABASE_URL`을 지정한다.
+모의 검사는 `tests/test_codyssey_provider.py`(`complete`)와 `tests/test_codyssey_stream.py`(`stream`과 실행기 연결)가 로컬 대체 서버로 수행한다. 실제 스모크는 질문을 대기열에 접수하고 실행기로 실제 어댑터를 1회 부른 뒤 이력을 다시 읽는다. 실제 호출은 별도 승인 뒤에만 실행한다. 실제 스모크는 `live` 표시가 있어 `--run-live` 없이는 CI·`-m db`에서도 건너뛴다. [파일럿 총예산·450만 중단 기준](../04-reference/ai.md#개인-키와-파일럿-예산)에 따라 Owner가 시험 전후 대시보드를 확인한다. 합성 질문 1회로 실행하고, 출력된 상태·소요 시간만 증거로 남긴다. 테스트 DB를 쓰므로 실행 전에 `db-test`를 켜고 [온보딩](../01-start/onboarding.md)대로 `TEST_DATABASE_URL`을 지정한다.
 
 ```bash
 cd backend

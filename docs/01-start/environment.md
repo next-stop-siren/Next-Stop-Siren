@@ -55,7 +55,7 @@ macOS에는 Git과 실행 중인 Docker 엔진·Compose(Colima 또는 Docker Des
 
 ## S11 개인 AI 설정
 
-[S11 GPT 기준](../04-reference/ai.md)의 개인별 서버 키·주간 할당·고정 모델 기준을 따른다. 키는 각자의 백엔드/서버 `.env`에만 보관하고 프런트엔드에 전달하지 않는다. `CODYSSEY_API_KEY`, `CODYSSEY_BASE_URL`, `CODYSSEY_MODEL` 파서와 어댑터는 격리 스모크 전용이다. 일반 앱의 `get_provider()`는 모의를 유지한다. 실제 키 없이도 모의 대화 저장·조회가 가능하다.
+[S11 GPT 기준](../04-reference/ai.md)의 개인별 서버 키·파일럿 총예산·고정 모델 기준을 따른다. 키는 각자의 백엔드/서버 `.env`에만 보관하고 프런트엔드에 전달하지 않는다. `CODYSSEY_API_KEY`, `CODYSSEY_BASE_URL`, `CODYSSEY_MODEL` 파서와 어댑터는 격리 스모크 전용이다. 일반 앱의 `get_provider()`는 모의를 유지한다. 실제 키 없이도 모의 대화 저장·조회가 가능하다.
 
 ## PM 배포 준비 체크리스트
 

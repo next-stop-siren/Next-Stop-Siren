@@ -138,6 +138,7 @@ def test_pieces_arrive_in_order_from_one_streaming_request_with_the_fixed_model(
     assert made.headers["Authorization"] == f"Bearer {KEY}"
     assert made.body == {
         "model": "gpt-5.5",
+        "max_completion_tokens": 2048,
         "messages": [{"role": item.role, "content": item.content} for item in CONTEXT],
         "stream": True,
     }
@@ -195,8 +196,13 @@ def test_an_error_or_malformed_chunk_fails_the_stream(gpt, caplog, line, logged)
 
 @pytest.mark.parametrize(
     "reply",
-    [(429, b'{"error": {"message": "rate limit"}}'), (429, b'{"error": {"code": "insufficient_quota"}}'), (500, b"x")],
-    ids=["429", "quota", "500"],
+    [
+        (429, b'{"error": {"message": "rate limit"}}'),
+        (429, b'{"error": {"code": "insufficient_quota"}}'),
+        (400, b'{"error": {"message": "unsupported max_completion_tokens"}}'),
+        (500, b"x"),
+    ],
+    ids=["429", "quota", "unsupported completion limit", "500"],
 )
 def test_a_refused_request_fails_before_any_piece_with_no_retry_or_other_model(gpt, caplog, reply):
     caplog.set_level(logging.INFO)

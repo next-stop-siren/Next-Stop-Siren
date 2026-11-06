@@ -91,6 +91,7 @@ class _Call:
         self.connection.auto_open = 0
         payload: dict[str, object] = {
             "model": settings.model,
+            "max_completion_tokens": 2048,
             "messages": [{"role": message.role, "content": message.content} for message in messages],
         }
         if stream:

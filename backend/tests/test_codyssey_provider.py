@@ -129,6 +129,7 @@ def test_one_request_with_the_fixed_model_and_the_given_context(gpt):
     assert made.headers["Authorization"] == f"Bearer {KEY}"
     assert made.body == {
         "model": "gpt-5.5",
+        "max_completion_tokens": 2048,
         "messages": [
             {"role": "user", "content": "이전 질문"},
             {"role": "assistant", "content": "이전 답변"},
@@ -142,6 +143,7 @@ def test_one_request_with_the_fixed_model_and_the_given_context(gpt):
     [
         (429, {"error": {"message": "rate limit"}}),
         (429, {"error": {"code": "insufficient_quota"}}),
+        (400, {"error": {"message": "unsupported max_completion_tokens"}}),
         (401, {"error": {"message": "bad key"}}),
         (404, {"error": {"message": "model not found"}}),
         (500, {"error": {"message": "server error"}}),
@@ -150,7 +152,18 @@ def test_one_request_with_the_fixed_model_and_the_given_context(gpt):
         (200, {"choices": []}),
         (200, completion(None)),
     ],
-    ids=["429", "quota", "401", "unknown model", "500", "503", "not json", "no choice", "no content"],
+    ids=[
+        "429",
+        "quota",
+        "unsupported completion limit",
+        "401",
+        "unknown model",
+        "500",
+        "503",
+        "not json",
+        "no choice",
+        "no content",
+    ],
 )
 def test_a_failure_is_one_request_with_no_retry_or_other_model(gpt, reply):
     gpt.reply = reply
