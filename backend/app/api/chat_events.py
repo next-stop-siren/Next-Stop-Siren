@@ -25,6 +25,7 @@ import threading
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
+from typing import Literal
 from datetime import datetime
 
 from pydantic import BaseModel
@@ -50,10 +51,24 @@ def _ids(job_ids: Sequence[int]) -> str:
     return ",".join(str(job_id) for job_id in job_ids)
 
 
-def _not_sent(user_id: int, job_ids: Sequence[int], reason: str) -> None:
-    """A committed change nobody is listening to; the next snapshot carries it (#70)."""
-    if job_ids:
+def _not_sent(user_id: int, job_ids: Sequence[int], reason: str, *, connections: int | None = None) -> None:
+    """A committed change that reached no connection, or not the `connections` named; the next snapshot carries it (#70).
+
+    `backlog`: the connection fell too far behind and was closed instead. `closed`: it had
+    already ended. `no_subscription`/`no_worker`: nobody was listening.
+    """
+    if not job_ids:
+        return
+    if connections is None:
         logger.info("Chat events not sent, user_id=%s, job_ids=%s, reason=%s", user_id, _ids(job_ids), reason)
+    else:
+        logger.info(
+            "Chat events not sent, user_id=%s, job_ids=%s, reason=%s, connections=%s",
+            user_id,
+            _ids(job_ids),
+            reason,
+            connections,
+        )
 
 
 def sse(event: str, data: BaseModel) -> str:
@@ -67,6 +82,9 @@ class Closed:
 
 CLOSED = Closed()
 
+# What `Subscription.put` did with a frame.
+Delivery = Literal["queued", "backlog", "closed"]
+
 
 class Subscription:
     """The events of one member for one open connection, delivered on the connection's event loop."""
@@ -79,12 +97,16 @@ class Subscription:
         self._pending = 0
         self._closed = False
 
-    def put(self, frame: str) -> None:
-        """Queue a frame from any thread; a subscription that is too far behind gets `CLOSED` instead."""
+    def put(self, frame: str) -> Delivery:
+        """Queue a frame from any thread and say whether it was queued.
+
+        A subscription that is too far behind gets `CLOSED` instead (`backlog`); one that
+        has already ended, or whose loop has closed, drops the frame (`closed`).
+        """
         item: str | Closed = frame
         with self._lock:
             if self._closed:
-                return
+                return "closed"
             self._pending += 1
             if self._pending > MAX_PENDING:
                 self._closed = True
@@ -95,6 +117,8 @@ class Subscription:
             # The connection's loop has already closed.
             with self._lock:
                 self._closed = True
+            return "closed"
+        return "backlog" if item is CLOSED else "queued"
 
     def end(self) -> None:
         """Deliver `CLOSED` after the frames already queued, from any thread; later frames are dropped."""
@@ -222,10 +246,18 @@ class ChatEvents:
                 jobs = repository.owned_jobs(session, user_id, ids)
                 frames = [sse("job", item_out(found)) for found in chat_views.items(session, user_id, jobs)]
                 frames.append(sse("limits", limits_out(chat_views.limits(session, user_id))))
-                subscriptions = self._current(user_id)
-                for subscription in subscriptions:
+                delivered = 0
+                dropped: dict[Delivery, int] = {}
+                for subscription in self._current(user_id):
+                    result: Delivery = "queued"
                     for frame in frames:
-                        subscription.put(frame)
+                        result = subscription.put(frame)
+                        if result != "queued":
+                            break
+                    if result == "queued":
+                        delivered += 1
+                    else:
+                        dropped[result] = dropped.get(result, 0) + 1
         except Exception as error:
             # The change is stored; ending the connections makes each reconnect and read it.
             logger.error(
@@ -233,12 +265,17 @@ class ChatEvents:
             )
             self._end_member(user_id)
             return
-        logger.info(
-            "Chat events published, user_id=%s, job_ids=%s, connections=%s",
-            user_id,
-            _ids(job_ids),
-            len(subscriptions),
-        )
+        # Published only for connections that queued every frame of this change; a dropped
+        # one reconnects with `since` and reads the stored change from its snapshot.
+        if delivered:
+            logger.info(
+                "Chat events published, user_id=%s, job_ids=%s, connections=%s", user_id, _ids(job_ids), delivered
+            )
+        for reason, count in dropped.items():
+            _not_sent(user_id, job_ids, reason, connections=count)
+        if not delivered and not dropped:
+            # The last connection closed after the subscription check.
+            _not_sent(user_id, job_ids, "no_subscription")
 
     def notify(self, user_id: int, job_ids: Sequence[int]) -> None:
         """The worker's `notify`: publish on a session of its own."""
