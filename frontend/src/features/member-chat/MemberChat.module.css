@@ -204,6 +204,19 @@
   outline: 2px solid #bfdbfe;
 }
 
+/* 흐린 안내. 숨길 때는 visibility만 바꿔 자리를 유지한다(화면 낭독기에서도 빠진다). */
+.composerNotice {
+  margin: 8px 0 0;
+  color: #697586;
+  font-size: 12px;
+  line-height: 1.5;
+  opacity: 0.8;
+}
+
+.composerNotice[data-visible='false'] {
+  visibility: hidden;
+}
+
 .composerFooter {
   display: flex;
   align-items: center;

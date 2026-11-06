@@ -1565,3 +1565,135 @@ test('질문을 보내는 동안에는 사이드바에서 대화를 바꾸거나
   slowPost.resolve(acceptQuestion('502', postInit))
   await waitFor(() => expect(other.disabled).toBe(false))
 })
+
+// --- 입력 안내(#68) ---
+
+const COMPOSER_NOTICE_TEXT = '대화가 길어지면 이전 내용 일부가 답변에 반영되지 않을 수 있어요.'
+
+function composerNotice() {
+  return screen.getByTestId('composer-notice')
+}
+
+function expectNoticeVisible(visible: boolean) {
+  expect(composerNotice().textContent).toBe(COMPOSER_NOTICE_TEXT)
+  expect(composerNotice().getAttribute('data-visible')).toBe(String(visible))
+  expect(composerNotice().getAttribute('aria-hidden')).toBe(String(!visible))
+}
+
+test('입력이 비어 있으면 안내를 보이고, 글자를 넣으면 숨기고, 모두 지우면 다시 보인다', async () => {
+  const user = userEvent.setup()
+  mockApi((url) => {
+    if (url === '/api/conversations?limit=20') return json(200, page([conversation('501')]))
+    if (url === '/api/conversations/501/messages?limit=100') return json(200, page([]))
+    return undefined
+  })
+
+  renderChat()
+  await findConversationButton('501')
+  expectNoticeVisible(true)
+
+  await user.type(textarea(), '가')
+  expectNoticeVisible(false)
+
+  await user.type(textarea(), '나다')
+  expectNoticeVisible(false)
+
+  await user.type(textarea(), '{Backspace}{Backspace}')
+  expectNoticeVisible(false)
+
+  await user.type(textarea(), '{Backspace}')
+  expect(textarea().value).toBe('')
+  expectNoticeVisible(true)
+})
+
+test('공백·줄바꿈만 입력해도 안내를 숨기고, 공백을 제거해 빈 값으로 보지 않는다', async () => {
+  const user = userEvent.setup()
+  mockApi((url) => {
+    if (url === '/api/conversations?limit=20') return json(200, page([conversation('501')]))
+    if (url === '/api/conversations/501/messages?limit=100') return json(200, page([]))
+    return undefined
+  })
+
+  renderChat()
+  await findConversationButton('501')
+
+  await user.type(textarea(), ' ')
+  expectNoticeVisible(false)
+
+  await user.clear(textarea())
+  expectNoticeVisible(true)
+
+  await user.type(textarea(), '{Enter}')
+  expect(textarea().value).toBe('\n')
+  expectNoticeVisible(false)
+})
+
+test('전송하는 동안 안내는 숨겨져 있다가, 접수되어 입력이 비워지면 다시 보인다', async () => {
+  const user = userEvent.setup()
+  const accepted = deferred<Response>()
+
+  mockApi((url, init) => {
+    if (url === '/api/conversations?limit=20') return json(200, page([conversation('501')]))
+    if (url === '/api/conversations/501/messages?limit=100') return json(200, page([]))
+    if (url === '/api/conversations/501/messages' && init?.method === 'POST') return accepted.promise
+    return undefined
+  })
+
+  renderChat()
+  await findConversationButton('501')
+
+  await user.type(textarea(), '안내 확인 질문')
+  await user.click(sendButton())
+  await waitFor(() => expect(textarea().disabled).toBe(true))
+  expectNoticeVisible(false)
+
+  await act(async () => {
+    accepted.resolve(acceptQuestion('501', { body: JSON.stringify({ content: '안내 확인 질문', request_key: 'k-1' }) }))
+  })
+  await waitFor(() => expect(textarea().value).toBe(''))
+  expectNoticeVisible(true)
+})
+
+test('전송이 실패해 입력이 남아 있으면 안내는 계속 숨겨져 있다', async () => {
+  const user = userEvent.setup()
+  mockApi((url, init) => {
+    if (url === '/api/conversations?limit=20') return json(200, page([conversation('501')]))
+    if (url === '/api/conversations/501/messages?limit=100') return json(200, page([]))
+    if (url === '/api/conversations/501/messages' && init?.method === 'POST')
+      return json(503, { error: { code: 'temporarily_unavailable', message: '일시적인 오류입니다.' } })
+    return undefined
+  })
+
+  renderChat()
+  await findConversationButton('501')
+
+  await user.type(textarea(), '실패할 질문')
+  await user.click(sendButton())
+
+  await screen.findByRole('alert')
+  expect(textarea().value).toBe('실패할 질문')
+  expectNoticeVisible(false)
+})
+
+test('안내는 보일 때와 숨길 때 모두 같은 자리에 있어 입력 영역 구조가 바뀌지 않는다', async () => {
+  const user = userEvent.setup()
+  mockApi((url) => {
+    if (url === '/api/conversations?limit=20') return json(200, page([conversation('501')]))
+    if (url === '/api/conversations/501/messages?limit=100') return json(200, page([]))
+    return undefined
+  })
+
+  renderChat()
+  await findConversationButton('501')
+
+  const form = textarea().form as HTMLFormElement
+  const children = () => Array.from(form.children)
+  const before = children()
+  const noticeBefore = composerNotice()
+  expect(children().indexOf(noticeBefore)).toBe(children().indexOf(textarea()) + 1)
+
+  await user.type(textarea(), '가')
+
+  expect(children()).toEqual(before)
+  expect(composerNotice()).toBe(noticeBefore)
+})
