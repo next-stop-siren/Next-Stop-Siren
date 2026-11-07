@@ -8,6 +8,7 @@ test_chat_api_db.py and test_chat_queue_db.py. Every user, ID and time is fake.
 """
 
 import asyncio
+import logging
 from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -52,6 +53,7 @@ def job(job_id=7003, state="paused", **fields):
         "conversation_id": 501,
         "question_message_id": 9005,
         "answer_message_id": None,
+        "reservation_id": 8001,
         "state": state,
         "paused_by_message_id": 9003 if state == "paused" else None,
         "accepted_at": T0,
@@ -359,7 +361,8 @@ def test_a_subscription_keeps_order_and_closes_when_too_far_behind():
         loop.close()
 
 
-def test_open_queues_the_snapshot_first_and_publishes_reach_only_the_member(monkeypatch):
+def test_open_queues_the_snapshot_first_and_publishes_reach_only_the_member(monkeypatch, caplog):
+    caplog.set_level(logging.INFO, "app.api.chat_events")
     loop = asyncio.new_event_loop()
     try:
         snapshot = chat_views.Snapshot([], LIMITS, T0)
@@ -373,6 +376,8 @@ def test_open_queues_the_snapshot_first_and_publishes_reach_only_the_member(monk
         other = events.open(FakeSession(), 202, loop, None)
         assert mine.next_reset == datetime(2026, 10, 20, 9, tzinfo=UTC)
         events.publish(FakeSession(), 101, [7003])
+        # The notice is traceable by its job ID (#70).
+        assert "Chat events published, user_id=101, job_ids=7003, connections=1" in caplog.text
         events.delta(101, 7003, "조각")
         first, limits, delta = drain(mine.subscription, loop, 3)
         assert first.startswith("event: snapshot\n") and '"server_time":"2026-10-20T03:00:40Z"' in first
@@ -384,6 +389,67 @@ def test_open_queues_the_snapshot_first_and_publishes_reach_only_the_member(monk
         assert not events.subscribed(101) and events.subscribed(202)
     finally:
         loop.close()
+
+
+def readable_publish(monkeypatch) -> None:
+    """A publish whose committed reads succeed: one `limits` frame per change."""
+    monkeypatch.setattr(chat_views, "snapshot", lambda *_args: chat_views.Snapshot([], LIMITS, T0))
+    monkeypatch.setattr(chat_views, "related_ids", lambda _s, _u, ids: list(ids))
+    monkeypatch.setattr(job_repository, "owned_jobs", lambda *_args: [])
+    monkeypatch.setattr(chat_views, "items", lambda *_args: [])
+    monkeypatch.setattr(chat_views, "limits", lambda *_args: LIMITS)
+
+
+def event_logs(caplog) -> list[str]:
+    return [record.getMessage() for record in caplog.records if record.name == "app.api.chat_events"]
+
+
+def test_a_notice_dropped_by_a_backlogged_connection_is_logged_as_not_sent(monkeypatch, caplog):
+    """The slow connection gets `CLOSED` instead of the change; only the healthy one counts as published (#70)."""
+    caplog.set_level(logging.INFO, "app.api.chat_events")
+    loop = asyncio.new_event_loop()
+    try:
+        readable_publish(monkeypatch)
+        events = ChatEvents()
+        healthy = events.open(FakeSession(), 101, loop, None).subscription
+        slow = events.open(FakeSession(), 101, loop, None).subscription
+        # Unread frames up to the limit: the snapshot plus these.
+        for index in range(MAX_PENDING - 1):
+            assert slow.put(f"frame-{index}") == "queued"
+        caplog.clear()
+        events.publish(FakeSession(), 101, [7003])
+        assert event_logs(caplog) == [
+            "Chat events published, user_id=101, job_ids=7003, connections=1",
+            "Chat events not sent, user_id=101, job_ids=7003, reason=backlog, connections=1",
+        ]
+        assert drain(healthy, loop, 2)[1].startswith("event: limits\n")
+        assert drain(slow, loop, MAX_PENDING + 1)[-1] is CLOSED
+    finally:
+        loop.close()
+
+
+@pytest.mark.parametrize("cut", ["ended", "loop closed"])
+def test_a_notice_to_a_connection_that_is_gone_is_never_logged_as_published(monkeypatch, caplog, cut):
+    caplog.set_level(logging.INFO, "app.api.chat_events")
+    loop = asyncio.new_event_loop()
+    other_loop = asyncio.new_event_loop()
+    try:
+        readable_publish(monkeypatch)
+        events = ChatEvents()
+        if cut == "ended":
+            gone = events.open(FakeSession(), 101, loop, None).subscription
+            gone.end()
+        else:
+            gone = events.open(FakeSession(), 101, other_loop, None).subscription
+            other_loop.close()
+        caplog.clear()
+        events.publish(FakeSession(), 101, [7003])
+        assert event_logs(caplog) == ["Chat events not sent, user_id=101, job_ids=7003, reason=closed, connections=1"]
+        assert gone.put("event: job\ndata: {}\n\n") == "closed"
+    finally:
+        loop.close()
+        if not other_loop.is_closed():
+            other_loop.close()
 
 
 def test_publishing_without_subscribers_reads_nothing(monkeypatch):

@@ -609,6 +609,32 @@ def test_after_a_restart_waiting_jobs_run_and_a_cut_off_execution_is_interrupted
         assert reader.get(Message, resumed.answer_message_id).content == "모의 답변입니다."
 
 
+def test_a_job_id_traces_the_run_to_the_stored_answer_the_settle_and_the_notice(committed_queue_sessions, caplog):
+    """From the start to the settle and the completion notice, every step names the admitted job (#70)."""
+    sessions = committed_queue_sessions
+    ledger, user_id, _, (job_id,) = setup_member(sessions, questions=1)
+    from app.integrations.provider import MockProvider
+
+    notified: list[list[int]] = []
+    with caplog.at_level(logging.INFO, "app.services"):
+        assert chat_runner.run_next(
+            sessions, MockProvider(), ledger, user_id, notify=lambda ids: notified.append(list(ids))
+        )
+    with sessions() as reader:
+        job = reader.get(ChatJob, job_id)
+        assert job.state == "completed"
+        answer_id, reservation_id = job.answer_message_id, job.reservation_id
+    traced = [record.getMessage() for record in caplog.records if f"job_id={job_id}," in record.getMessage()]
+    assert traced[0] == f"Job started, job_id={job_id}, answer_id={answer_id}"
+    assert traced[-2:] == [
+        f"Job outcome stored, job_id={job_id}, outcome=completed, answer_id={answer_id}",
+        f"Quota resolved, job_id={job_id}, state=completed, reservation_id={reservation_id}, quota=settled",
+    ]
+    assert ledger.resolutions(reservation_id) == [("settle", reservation_id)]
+    assert notified[-1][0] == job_id
+    assert "모의 답변입니다." not in caplog.text
+
+
 def test_a_real_database_error_in_the_runner_logs_no_sql_values_question_or_connection(
     committed_queue_sessions, monkeypatch, caplog
 ):
