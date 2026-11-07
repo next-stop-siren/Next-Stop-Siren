@@ -21,6 +21,9 @@ smoke_spec.loader.exec_module(smoke)
 client_spec = importlib.util.spec_from_file_location("proxy_client", ROOT / "deploy/login-proxy-client.py")
 proxy_client = importlib.util.module_from_spec(client_spec)
 client_spec.loader.exec_module(proxy_client)
+recovery_spec = importlib.util.spec_from_file_location("db_recovery", ROOT / "deploy/db-recovery.py")
+recovery = importlib.util.module_from_spec(recovery_spec)
+recovery_spec.loader.exec_module(recovery)
 
 
 def synthetic_values() -> dict[str, str]:
@@ -451,6 +454,294 @@ class SmokeCompletionChecks(unittest.TestCase):
             stored.update(change)
             with self.subTest(fields=list(change)), self.assertRaises(RuntimeError):
                 smoke.verify_stored_answer({"items": [stored]}, completed, "10")
+
+
+def recovery_snapshot(**changes) -> dict:
+    """A synthetic snapshot with every product table and no reservation FK yet."""
+    value = {
+        "server_version_num": "170011",
+        "tables": {name: {"rows": 2, "sha256": "0" * 64} for name in recovery.TABLES},
+        "groups": {"chat_jobs": {"queued": 1}, "messages": {"user:completed": 2}, "chat_quota_reservations": {}},
+        "orphan_job_reservations": 0,
+        "constraints": ["chat_jobs_pkey", "messages_pkey"],
+        "indexes": ["chat_jobs_pkey", "messages_pkey"],
+        "database_bytes": 1 << 20,
+        "other_tables": [],
+    }
+    value.update(changes)
+    return value
+
+
+class FakeDatabase(recovery.Database):
+    """Records every call; never runs Docker or SQL."""
+
+    def __init__(self, snapshots, *, running=False, existing=(), restored=None):
+        super().__init__([], runner=self.unexpected_runner)
+        self.snapshots, self.running, self.existing = list(snapshots), running, set(existing)
+        self.restored = restored
+        self.calls = []
+
+    @staticmethod
+    def unexpected_runner(*args, **kwargs):
+        raise AssertionError("no command may run")
+
+    def snapshot(self, database=recovery.MAIN_DB):
+        self.calls.append(("snapshot", database))
+        if database != recovery.MAIN_DB and self.restored is not None:
+            return deepcopy(self.restored)
+        return deepcopy(self.snapshots.pop(0) if len(self.snapshots) > 1 else self.snapshots[0])
+
+    def sql(self, statements, *, code, database=recovery.MAIN_DB, variables=""):
+        self.calls.append(("sql", code, database))
+        return ""
+
+    def backend_running(self):
+        return self.running
+
+    def free_bytes(self):
+        return 1 << 40
+
+    def database_exists(self, name):
+        return name in self.existing
+
+    def dump(self, path):
+        self.calls.append(("dump",))
+        path.write_bytes(b"synthetic archive")
+
+    def archive_list(self, path):
+        return "\n".join(f"1; 0 0 TABLE DATA public {name} owner" for name in recovery.TABLES)
+
+    def restore_into(self, name, path):
+        self.calls.append(("restore_into", name))
+
+    def create(self, name):
+        self.calls.append(("create", name))
+
+    def drop(self, name):
+        self.calls.append(("drop", name))
+
+    def swap(self, retained):
+        self.calls.append(("swap", retained))
+
+
+class DataRecoveryChecks(unittest.TestCase):
+    """#75 gates: stopped backend, fresh matching backup, no orphans, no live-DB drop, no leaked values."""
+
+    def setUp(self):
+        import tempfile
+        from datetime import datetime, timezone
+
+        self.directory = tempfile.TemporaryDirectory(prefix="recovery-check-")
+        self.work = Path(self.directory.name)
+        self.now = datetime(2026, 11, 7, 3, 0, tzinfo=timezone.utc)
+
+    def tearDown(self):
+        self.directory.cleanup()
+
+    def manifest(self, *, purpose="pre-change", snapshot=None, age_minutes=5, name="backup-x"):
+        from datetime import timedelta
+
+        archive = self.work / (name + ".dump")
+        archive.write_bytes(b"synthetic archive " + name.encode())
+        manifest = {
+            "schema_version": 1,
+            "file": archive.name,
+            "bytes": archive.stat().st_size,
+            "sha256": recovery.file_sha256(archive),
+            "created_at": (self.now - timedelta(minutes=age_minutes)).isoformat(),
+            "purpose": purpose,
+            "backend_running": False,
+            "consistent": snapshot is not False,
+            "snapshot": recovery_snapshot() if snapshot is None else (snapshot or None),
+        }
+        path = self.work / (name + ".manifest.json")
+        path.write_text(json.dumps(manifest))
+        return path
+
+    def test_differences_name_changed_tables_and_unexpected_constraints(self):
+        before = recovery_snapshot()
+        self.assertEqual(recovery.differences(before, deepcopy(before)), [])
+        after = deepcopy(before)
+        after["tables"]["messages"]["sha256"] = "1" * 64
+        after["database_bytes"] = 5
+        self.assertEqual(recovery.differences(before, after), ["tables.messages"])
+        with_fk = recovery_snapshot(constraints=before["constraints"] + [recovery.FK_NAME])
+        self.assertEqual(recovery.differences(before, with_fk, added=frozenset({recovery.FK_NAME})), [])
+        self.assertEqual(recovery.differences(before, with_fk), ["constraints"])
+        self.assertEqual(recovery.differences(with_fk, before, removed=frozenset({recovery.FK_NAME})), [])
+
+    def test_classification_separates_empty_init_partial_and_existing_apply(self):
+        self.assertEqual(recovery.classify(recovery_snapshot(tables={})), "empty_use_db_init")
+        self.assertEqual(recovery.classify(recovery_snapshot(tables={"users": {}})), "partial_stop")
+        self.assertEqual(recovery.classify(recovery_snapshot()), "needs_reservation_fk")
+        current = recovery_snapshot(constraints=[recovery.FK_NAME])
+        self.assertEqual(recovery.classify(current), "current")
+
+    def test_snapshot_query_is_read_only_and_limited_to_present_tables(self):
+        sql = recovery.snapshot_sql({"users", "messages"})
+        self.assertIn("BEGIN READ ONLY ISOLATION LEVEL REPEATABLE READ;", sql)
+        for forbidden in ("INSERT", "UPDATE", "DELETE", "ALTER", "DROP", "CREATE", "TRUNCATE"):
+            self.assertNotIn(forbidden, sql.upper().replace("CURRENT_SETTING", ""))
+        self.assertIn("FROM users AS t", sql)
+        self.assertNotIn("FROM chat_jobs AS t", sql)
+        self.assertIn("'orphan_job_reservations', NULL", sql)
+
+    def test_manifest_must_name_an_unchanged_archive_in_its_own_directory(self):
+        path = self.manifest()
+        recovery.load_manifest(path)
+        data = json.loads(path.read_text())
+        for change, code in (
+            ({"file": "../outside.dump"}, "manifest_invalid"),
+            ({"purpose": "weekly"}, "manifest_invalid"),
+            ({"extra": 1}, "manifest_invalid"),
+            ({"bytes": data["bytes"] + 1}, "backup_size_mismatch"),
+            ({"sha256": "f" * 64}, "backup_sha256_mismatch"),
+        ):
+            with self.subTest(change=change):
+                path.write_text(json.dumps({**data, **change}))
+                with self.assertRaisesRegex(recovery.Failure, f"^{code}$"):
+                    recovery.load_manifest(path)
+
+    def test_apply_requires_stopped_backend_fresh_matching_pre_change_backup_and_no_orphans(self):
+        cases = (
+            ({"running": True}, {}, "stop_backend_first"),
+            ({}, {"age_minutes": 61}, "fresh_pre_change_backup_required"),
+            ({}, {"age_minutes": -5}, "fresh_pre_change_backup_required"),
+            ({}, {"purpose": "daily"}, "fresh_pre_change_backup_required"),
+            ({}, {"snapshot": False}, "backup_does_not_match_current"),
+            ({}, {"snapshot": recovery_snapshot(orphan_job_reservations=3)}, "backup_does_not_match_current"),
+        )
+        for options, manifest, code in cases:
+            with self.subTest(code=code, manifest=manifest):
+                db = FakeDatabase([recovery_snapshot()], **options)
+                path = self.manifest(**manifest, name=f"backup-{len(manifest)}-{code}")
+                with self.assertRaisesRegex(recovery.Failure, f"^{code}$"):
+                    recovery.apply_fk(db, self.work, path, self.now)
+                self.assertNotIn(("sql", "apply_failed", recovery.MAIN_DB), db.calls)
+        orphaned = recovery_snapshot(orphan_job_reservations=1)
+        db = FakeDatabase([orphaned])
+        with self.assertRaisesRegex(recovery.Failure, "^orphan_reservations$"):
+            recovery.apply_fk(db, self.work, self.manifest(snapshot=orphaned, name="backup-orphan"), self.now)
+        self.assertNotIn(("sql", "apply_failed", recovery.MAIN_DB), db.calls)
+
+    def test_apply_runs_one_transaction_then_proves_only_the_fk_changed(self):
+        before = recovery_snapshot()
+        after = recovery_snapshot(constraints=before["constraints"] + [recovery.FK_NAME])
+        db = FakeDatabase([before, before, after])
+        result = recovery.apply_fk(db, self.work, self.manifest(), self.now)
+        self.assertEqual(result["result"], "applied")
+        self.assertEqual([call for call in db.calls if call[0] == "sql"], [("sql", "apply_failed", recovery.MAIN_DB)])
+        self.assertIn("ADD CONSTRAINT chat_jobs_reservation_fk", recovery.APPLY_FK)
+        self.assertLess(recovery.APPLY_FK.index("BEGIN;"), recovery.APPLY_FK.index("ALTER TABLE"))
+        self.assertNotIn("DROP", recovery.APPLY_FK)
+        damaged = deepcopy(after)
+        damaged["tables"]["chat_jobs"]["rows"] = 1
+        with self.assertRaisesRegex(recovery.Failure, "^unexpected_change_after_apply$"):
+            later = self.now.replace(second=1)
+            recovery.apply_fk(FakeDatabase([before, before, damaged]), self.work, self.manifest(name="b2"), later)
+        current = FakeDatabase([after])
+        self.assertEqual(recovery.apply_fk(current, self.work, Path("unused"), self.now)["result"], "already_applied")
+        self.assertNotIn("TABLE", recovery.REVERT_FK.replace("ALTER TABLE chat_jobs", ""))
+
+    def test_backup_refuses_running_backend_for_pre_change_and_flags_concurrent_writes(self):
+        db = FakeDatabase([recovery_snapshot()], running=True)
+        with self.assertRaisesRegex(recovery.Failure, "^stop_backend_first$"):
+            recovery.backup(db, self.work, "pre-change", self.now)
+        self.assertNotIn(("dump",), db.calls)
+        changed = recovery_snapshot(tables={**recovery_snapshot()["tables"], "messages": {"rows": 3, "sha256": "1"}})
+        result = recovery.backup(
+            FakeDatabase([recovery_snapshot(), changed], running=True), self.work, "daily", self.now
+        )
+        manifest = json.loads(Path(result["manifest"]).read_text())
+        self.assertFalse(manifest["consistent"])
+        self.assertIsNone(manifest["snapshot"])
+
+        def partial_dump(path):
+            path.write_bytes(b"partial")
+            raise recovery.Failure("backup_dump_failed")
+
+        failing = FakeDatabase([recovery_snapshot()])
+        failing.dump = partial_dump
+        with self.assertRaisesRegex(recovery.Failure, "^backup_dump_failed$"):
+            recovery.backup(failing, self.work, "pre-change", self.now.replace(minute=1))
+        self.assertEqual(len(list(self.work.glob("*.dump"))), 1)  # Only the earlier complete archive remains.
+
+    def test_restore_stages_checks_and_swaps_without_dropping_the_live_database(self):
+        expected = recovery_snapshot()
+        db = FakeDatabase([recovery_snapshot(), expected], restored=expected)
+        result = recovery.restore(db, self.work, self.manifest(), None, self.now)
+        self.assertEqual(result["retained_database"], "nss_replaced_20261107t030000z")
+        self.assertEqual(
+            [call for call in db.calls if call[0] in {"create", "restore_into", "swap", "drop"}],
+            [
+                ("create", recovery.STAGING_DB),
+                ("restore_into", recovery.STAGING_DB),
+                ("swap", result["retained_database"]),
+            ],
+        )
+        mismatch = FakeDatabase([recovery_snapshot()], restored=recovery_snapshot(orphan_job_reservations=9))
+        with self.assertRaisesRegex(recovery.Failure, "^restored_snapshot_mismatch$"):
+            recovery.restore(mismatch, self.work, self.manifest(name="b2"), None, self.now)
+        self.assertIn(("drop", recovery.STAGING_DB), mismatch.calls)
+        self.assertFalse(any(call[0] == "swap" for call in mismatch.calls))
+        for options, manifest, code in (
+            ({"running": True}, {}, "stop_backend_first"),
+            ({}, {"snapshot": False}, "expected_snapshot_required"),
+            ({"existing": {recovery.STAGING_DB}}, {}, "staging_database_exists"),
+        ):
+            with self.subTest(code=code):
+                db = FakeDatabase([expected], restored=expected, **options)
+                with self.assertRaisesRegex(recovery.Failure, f"^{code}$"):
+                    recovery.restore(db, self.work, self.manifest(**manifest, name="b-" + code), None, self.now)
+        swap_sql = []
+        database = recovery.Database([], runner=lambda argv, **kwargs: swap_sql.append(kwargs["input_bytes"]) or b"")
+        database.swap("nss_replaced_x")
+        self.assertIn(b'ALTER DATABASE :"target" RENAME TO nss_replaced_x', swap_sql[0])
+        self.assertNotIn(b"DROP", swap_sql[0])
+
+    def test_failed_commands_keep_server_text_private_and_print_only_codes(self):
+        secret = "synthetic-key-value-canary"
+        command = [sys.executable, "-c", f"import sys; sys.stderr.write('{secret}'); sys.exit(3)"]
+        with self.assertRaises(recovery.Failure) as raised:
+            recovery.run_command(command, code="apply_failed", diagnostics=self.work)
+        self.assertEqual(str(raised.exception), "apply_failed")
+        self.assertIn(secret, next(self.work.glob("diagnostics-*-apply_failed.txt")).read_text())
+        for argv in (["--db-container", "x", "--work-dir", str(ROOT / "tmp-recovery"), "precheck"],):
+            error = StringIO()
+            with patch.object(recovery.sys, "stderr", error):
+                self.assertEqual(recovery.main(argv), 1)
+            self.assertEqual(error.getvalue(), "DB_RECOVERY_FAILED: work_dir_inside_repository\n")
+            self.assertFalse((ROOT / "tmp-recovery").exists())
+
+    def test_compose_target_passes_only_paths_and_checks_backend_state(self):
+        args = recovery.parser().parse_args(
+            [
+                "--compose-project",
+                "next-stop-siren",
+                "--compose-file",
+                "/opt/next-stop-siren/releases/r/compose.yaml",
+                "--env-file",
+                "/etc/next-stop-siren/production.env",
+                "--work-dir",
+                "/var/backups/next-stop-siren",
+                "precheck",
+            ]
+        )
+        db = recovery.build_database(args, self.work)
+        self.assertEqual(db.exec_prefix[-3:], ["exec", "-T", "db"])
+        self.assertEqual(db.backend_check[-5:], ["ps", "--status", "running", "--quiet", "backend"])
+        self.assertIn(str(Path("/etc/next-stop-siren/production.env")), db.exec_prefix)
+        self.assertNotIn("POSTGRES_PASSWORD", " ".join(db.exec_prefix))
+        for template in (recovery.PSQL, recovery.PG_DUMP, recovery.PG_RESTORE):
+            self.assertIn('"$POSTGRES_USER"', template)
+
+    def test_container_logs_rotate_with_a_fixed_disk_ceiling(self):
+        compose = (ROOT / "deploy/compose.yaml").read_text()
+        self.assertEqual(compose.count("logging: &logging"), 1)
+        self.assertEqual(compose.count("logging: *logging"), 2)
+        self.assertIn('driver: json-file\n      options:\n        max-size: "5m"\n        max-file: "2"', compose)
+        # Three services x 2 files x 5 MiB: at most 30 MiB of container logs on the host.
+        self.assertEqual(compose.count("\n    logging:"), 3)
 
 
 if __name__ == "__main__":
