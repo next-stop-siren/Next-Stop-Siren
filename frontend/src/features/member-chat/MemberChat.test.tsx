@@ -1565,3 +1565,64 @@ test('질문을 보내는 동안에는 사이드바에서 대화를 바꾸거나
   slowPost.resolve(acceptQuestion('502', postInit))
   await waitFor(() => expect(other.disabled).toBe(false))
 })
+
+// --- 입력 안내(#68) ---
+// 안내는 textarea의 placeholder다. 비었을 때만 보이고 입력하면 숨는 동작은 브라우저가 처리하므로(jsdom은 그리지 않는다),
+// 여기서는 placeholder가 안내 문구로 지정돼 있고, 입력·삭제·전송으로 입력값이 바뀌어도 별도 안내 요소 없이 그대로인지 검사한다.
+
+const COMPOSER_NOTICE_TEXT = '대화가 길어지면 이전 내용 일부가 답변에 반영되지 않을 수 있어요.'
+
+function mockEmptyConversation() {
+  return mockApi((url, init) => {
+    if (url === '/api/conversations?limit=20') return json(200, page([conversation('501')]))
+    if (url === '/api/conversations/501/messages?limit=100') return json(200, page([]))
+    if (url === '/api/conversations/501/messages' && init?.method === 'POST') return acceptQuestion('501', init)
+    return undefined
+  })
+}
+
+test('입력창의 placeholder가 안내 문구이고, 안내를 따로 그리는 요소는 없다', async () => {
+  mockEmptyConversation()
+
+  renderChat()
+  await findConversationButton('501')
+
+  expect(textarea().placeholder).toBe(COMPOSER_NOTICE_TEXT)
+  expect(textarea().value).toBe('')
+  // 본문에 같은 문구가 글자로 한 번 더 그려지지 않는다.
+  expect(screen.queryByText(COMPOSER_NOTICE_TEXT)).toBeNull()
+})
+
+test('입력하고 지우고 공백만 넣어도 placeholder는 바뀌지 않는다', async () => {
+  const user = userEvent.setup()
+  mockEmptyConversation()
+
+  renderChat()
+  await findConversationButton('501')
+
+  await user.type(textarea(), '가')
+  expect(textarea().placeholder).toBe(COMPOSER_NOTICE_TEXT)
+
+  await user.clear(textarea())
+  expect(textarea().value).toBe('')
+  expect(textarea().placeholder).toBe(COMPOSER_NOTICE_TEXT)
+
+  // 공백만 있는 값도 빈 값이 아니다. 브라우저는 value가 ''일 때만 placeholder를 보여 준다.
+  await user.type(textarea(), ' ')
+  expect(textarea().value).toBe(' ')
+  expect(textarea().placeholder).toBe(COMPOSER_NOTICE_TEXT)
+})
+
+test('전송으로 입력값이 비워진 뒤에도 placeholder가 그대로여서 다시 보인다', async () => {
+  const user = userEvent.setup()
+  mockEmptyConversation()
+
+  renderChat()
+  await findConversationButton('501')
+
+  await user.type(textarea(), '안내 확인 질문')
+  await user.click(sendButton())
+  await waitFor(() => expect(textarea().value).toBe(''))
+
+  expect(textarea().placeholder).toBe(COMPOSER_NOTICE_TEXT)
+})
