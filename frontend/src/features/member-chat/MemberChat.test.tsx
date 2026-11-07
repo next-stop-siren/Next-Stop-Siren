@@ -1567,133 +1567,62 @@ test('질문을 보내는 동안에는 사이드바에서 대화를 바꾸거나
 })
 
 // --- 입력 안내(#68) ---
+// 안내는 textarea의 placeholder다. 비었을 때만 보이고 입력하면 숨는 동작은 브라우저가 처리하므로(jsdom은 그리지 않는다),
+// 여기서는 placeholder가 안내 문구로 지정돼 있고, 입력·삭제·전송으로 입력값이 바뀌어도 별도 안내 요소 없이 그대로인지 검사한다.
 
 const COMPOSER_NOTICE_TEXT = '대화가 길어지면 이전 내용 일부가 답변에 반영되지 않을 수 있어요.'
 
-function composerNotice() {
-  return screen.getByTestId('composer-notice')
-}
-
-function expectNoticeVisible(visible: boolean) {
-  expect(composerNotice().textContent).toBe(COMPOSER_NOTICE_TEXT)
-  expect(composerNotice().getAttribute('data-visible')).toBe(String(visible))
-  expect(composerNotice().getAttribute('aria-hidden')).toBe(String(!visible))
-}
-
-test('입력이 비어 있으면 안내를 보이고, 글자를 넣으면 숨기고, 모두 지우면 다시 보인다', async () => {
-  const user = userEvent.setup()
-  mockApi((url) => {
+function mockEmptyConversation() {
+  return mockApi((url, init) => {
     if (url === '/api/conversations?limit=20') return json(200, page([conversation('501')]))
     if (url === '/api/conversations/501/messages?limit=100') return json(200, page([]))
+    if (url === '/api/conversations/501/messages' && init?.method === 'POST') return acceptQuestion('501', init)
     return undefined
   })
+}
+
+test('입력창의 placeholder가 안내 문구이고, 안내를 따로 그리는 요소는 없다', async () => {
+  mockEmptyConversation()
 
   renderChat()
   await findConversationButton('501')
-  expectNoticeVisible(true)
+
+  expect(textarea().placeholder).toBe(COMPOSER_NOTICE_TEXT)
+  expect(textarea().value).toBe('')
+  // 본문에 같은 문구가 글자로 한 번 더 그려지지 않는다.
+  expect(screen.queryByText(COMPOSER_NOTICE_TEXT)).toBeNull()
+})
+
+test('입력하고 지우고 공백만 넣어도 placeholder는 바뀌지 않는다', async () => {
+  const user = userEvent.setup()
+  mockEmptyConversation()
+
+  renderChat()
+  await findConversationButton('501')
 
   await user.type(textarea(), '가')
-  expectNoticeVisible(false)
-
-  await user.type(textarea(), '나다')
-  expectNoticeVisible(false)
-
-  await user.type(textarea(), '{Backspace}{Backspace}')
-  expectNoticeVisible(false)
-
-  await user.type(textarea(), '{Backspace}')
-  expect(textarea().value).toBe('')
-  expectNoticeVisible(true)
-})
-
-test('공백·줄바꿈만 입력해도 안내를 숨기고, 공백을 제거해 빈 값으로 보지 않는다', async () => {
-  const user = userEvent.setup()
-  mockApi((url) => {
-    if (url === '/api/conversations?limit=20') return json(200, page([conversation('501')]))
-    if (url === '/api/conversations/501/messages?limit=100') return json(200, page([]))
-    return undefined
-  })
-
-  renderChat()
-  await findConversationButton('501')
-
-  await user.type(textarea(), ' ')
-  expectNoticeVisible(false)
+  expect(textarea().placeholder).toBe(COMPOSER_NOTICE_TEXT)
 
   await user.clear(textarea())
-  expectNoticeVisible(true)
+  expect(textarea().value).toBe('')
+  expect(textarea().placeholder).toBe(COMPOSER_NOTICE_TEXT)
 
-  await user.type(textarea(), '{Enter}')
-  expect(textarea().value).toBe('\n')
-  expectNoticeVisible(false)
+  // 공백만 있는 값도 빈 값이 아니다. 브라우저는 value가 ''일 때만 placeholder를 보여 준다.
+  await user.type(textarea(), ' ')
+  expect(textarea().value).toBe(' ')
+  expect(textarea().placeholder).toBe(COMPOSER_NOTICE_TEXT)
 })
 
-test('전송하는 동안 안내는 숨겨져 있다가, 접수되어 입력이 비워지면 다시 보인다', async () => {
+test('전송으로 입력값이 비워진 뒤에도 placeholder가 그대로여서 다시 보인다', async () => {
   const user = userEvent.setup()
-  const accepted = deferred<Response>()
-
-  mockApi((url, init) => {
-    if (url === '/api/conversations?limit=20') return json(200, page([conversation('501')]))
-    if (url === '/api/conversations/501/messages?limit=100') return json(200, page([]))
-    if (url === '/api/conversations/501/messages' && init?.method === 'POST') return accepted.promise
-    return undefined
-  })
+  mockEmptyConversation()
 
   renderChat()
   await findConversationButton('501')
 
   await user.type(textarea(), '안내 확인 질문')
   await user.click(sendButton())
-  await waitFor(() => expect(textarea().disabled).toBe(true))
-  expectNoticeVisible(false)
-
-  await act(async () => {
-    accepted.resolve(acceptQuestion('501', { body: JSON.stringify({ content: '안내 확인 질문', request_key: 'k-1' }) }))
-  })
   await waitFor(() => expect(textarea().value).toBe(''))
-  expectNoticeVisible(true)
-})
 
-test('전송이 실패해 입력이 남아 있으면 안내는 계속 숨겨져 있다', async () => {
-  const user = userEvent.setup()
-  mockApi((url, init) => {
-    if (url === '/api/conversations?limit=20') return json(200, page([conversation('501')]))
-    if (url === '/api/conversations/501/messages?limit=100') return json(200, page([]))
-    if (url === '/api/conversations/501/messages' && init?.method === 'POST')
-      return json(503, { error: { code: 'temporarily_unavailable', message: '일시적인 오류입니다.' } })
-    return undefined
-  })
-
-  renderChat()
-  await findConversationButton('501')
-
-  await user.type(textarea(), '실패할 질문')
-  await user.click(sendButton())
-
-  await screen.findByRole('alert')
-  expect(textarea().value).toBe('실패할 질문')
-  expectNoticeVisible(false)
-})
-
-test('안내는 보일 때와 숨길 때 모두 같은 자리에 있어 입력 영역 구조가 바뀌지 않는다', async () => {
-  const user = userEvent.setup()
-  mockApi((url) => {
-    if (url === '/api/conversations?limit=20') return json(200, page([conversation('501')]))
-    if (url === '/api/conversations/501/messages?limit=100') return json(200, page([]))
-    return undefined
-  })
-
-  renderChat()
-  await findConversationButton('501')
-
-  const form = textarea().form as HTMLFormElement
-  const children = () => Array.from(form.children)
-  const before = children()
-  const noticeBefore = composerNotice()
-  expect(children().indexOf(noticeBefore)).toBe(children().indexOf(textarea()) + 1)
-
-  await user.type(textarea(), '가')
-
-  expect(children()).toEqual(before)
-  expect(composerNotice()).toBe(noticeBefore)
+  expect(textarea().placeholder).toBe(COMPOSER_NOTICE_TEXT)
 })

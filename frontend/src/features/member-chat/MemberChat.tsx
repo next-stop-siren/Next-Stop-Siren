@@ -80,7 +80,10 @@ function Thread({ thread, chat }: { thread: ChatThread; chat: MemberChatState })
   )
 }
 
-/** 입력란 아래 안내. 입력값이 빈 문자열일 때만 보인다(#68). */
+/**
+ * 입력창 안내(#68). textarea의 placeholder로 둔다. 브라우저가 입력값이 빈 문자열일 때만 보여 주고,
+ * 공백·줄바꿈을 포함해 한 글자라도 있으면 숨기며, 모두 지우거나 전송으로 비워지면 다시 보여 준다.
+ */
 const COMPOSER_NOTICE = '대화가 길어지면 이전 내용 일부가 답변에 반영되지 않을 수 있어요.'
 
 /** 맨 아래에서 이 거리 안에 있으면 사용자가 최신 내용을 보고 있다고 본다. */
@@ -136,9 +139,6 @@ function MemberChat({ chat }: MemberChatProps) {
       : chat.resending
         ? '응답을 받지 못한 질문입니다. 다시 보내면 같은 질문으로 확인합니다.'
         : (chat.blockReason ?? '질문은 서버에 저장됩니다.')
-
-  // 공백을 포함해 어떤 문자든 있으면 숨긴다. 공백을 제거해 빈 값으로 보는 규칙은 두지 않는다.
-  const showComposerNotice = chat.question === ''
 
   return (
     <section className={styles.page}>
@@ -202,20 +202,11 @@ function MemberChat({ chat }: MemberChatProps) {
             id="chat-question"
             value={chat.question}
             onChange={(event) => chat.setQuestion(event.target.value)}
-            placeholder="교통법에 관해 궁금한 점을 입력하세요."
+            placeholder={COMPOSER_NOTICE}
             rows={3}
             aria-describedby="chat-question-count"
             disabled={chat.sending}
           />
-          {/* 숨길 때도 글자는 두고 보이지만 않게 해서, 표시·숨김이 바뀌어도 높이가 변하지 않는다. */}
-          <p
-            className={styles.composerNotice}
-            data-testid="composer-notice"
-            data-visible={showComposerNotice}
-            aria-hidden={!showComposerNotice}
-          >
-            {COMPOSER_NOTICE}
-          </p>
           <div className={styles.composerFooter}>
             <span id="chat-question-count">{composerHint}</span>
             <button type="submit" disabled={!chat.canSubmit || chat.sending}>
