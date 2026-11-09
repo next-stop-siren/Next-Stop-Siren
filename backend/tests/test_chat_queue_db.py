@@ -7,12 +7,19 @@ user, question and answer is fake and no real provider is called.
 """
 
 import logging
+import json
+import os
+import socket
+import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from threading import Barrier
 from uuid import uuid4
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 import pytest
 from sqlalchemy import func, make_url, select, text
@@ -339,6 +346,33 @@ def test_waits_expire_after_five_minutes_including_paused_ones_and_refund_once(o
     assert chat_queue.claim_next(session, ledger, user_id, now=at(402))[0] is None
 
 
+def test_an_expired_retry_keeps_the_conversation_held_and_pauses_a_new_question(orm_test_session):
+    session, ledger = orm_test_session, quota.MemberQuota()
+    user_id = add_user(session)
+    conversation_id = add_conversation(session, user_id)
+    failed = ask(session, ledger, user_id, conversation_id, "q1", at(0))
+    run(session, ledger, user_id, PROVIDER_FAILED, at(1))
+    retry = chat_queue.admit_retry(
+        session, ledger, user_id, conversation_id, failed.question_message_id, "r1", now=at(20)
+    ).job
+    reservation = session.get(QuotaReservation, retry.reservation_id)
+    assert reservation.state == "reserved"
+
+    chat_queue.recover(session, ledger, user_id, now=at(20 + 299))
+    assert state(session, retry.id) == "queued" and reservation.state == "reserved"
+    changes = chat_queue.recover(session, ledger, user_id, now=at(20 + 300))
+    assert retry.id in changes.job_ids and state(session, retry.id) == "expired"
+    assert (reservation.state, reservation.refund_reason) == ("refunded", "expired")
+
+    held = session.get(ConversationHold, conversation_id)
+    assert held.job_id == failed.id and held.question_message_id == failed.question_message_id
+    follower = ask(session, ledger, user_id, conversation_id, "q2", at(331))
+    assert (follower.state, follower.paused_by_message_id) == ("paused", failed.question_message_id)
+    chat_queue.recover(session, ledger, user_id, now=at(400))
+    assert state(session, follower.id) == "paused"
+    assert session.get(ConversationHold, conversation_id).job_id == failed.id
+
+
 def test_only_waiting_jobs_are_canceled_and_a_second_cancel_returns_the_same(orm_test_session):
     session, ledger = orm_test_session, FakeLedger()
     user_id = add_user(session)
@@ -609,6 +643,282 @@ def test_after_a_restart_waiting_jobs_run_and_a_cut_off_execution_is_interrupted
         assert reader.get(Message, resumed.answer_message_id).content == "모의 답변입니다."
 
 
+@pytest.mark.parametrize("crash_stage", ["accepted", "claim", "provider", "before_commit", "after_commit"])
+def test_api_process_restart_recovers_committed_work_at_each_boundary(
+    committed_queue_sessions, tmp_path, auth_environment, crash_stage
+):
+    """SIGKILL the API at durable queue boundaries and inspect the same temporary PostgreSQL schema."""
+    from app.security.settings import AuthSettings
+    from app.security.tokens import issue_access_token
+
+    sessions = committed_queue_sessions
+    with sessions() as setup:
+        user_id = add_user(setup, f"process-restart-{uuid4().hex}@example.test")
+        first_conversation = add_conversation(setup, user_id)
+        later_conversation = add_conversation(setup, user_id) if crash_stage != "accepted" else None
+        if crash_stage == "accepted":
+            setup.commit()
+            first_id = later_id = None
+        else:
+            now = quota_repository.database_time(setup)
+            ledger = quota.MemberQuota()
+            first = chat_queue.admit_question(
+                setup, ledger, user_id, first_conversation, "프로세스 장애 전 질문", "process-1", now=now
+            ).job
+            later = chat_queue.admit_question(
+                setup,
+                ledger,
+                user_id,
+                later_conversation,
+                "재시작 뒤 대기 질문",
+                "process-2",
+                now=now + timedelta(seconds=11),
+            ).job
+            setup.commit()
+            first_id, later_id = first.id, later.id
+    schema = sessions.kw["bind"]._execution_options["schema_translate_map"][None]
+    token = issue_access_token(user_id, AuthSettings.from_env(auth_environment)).token
+
+    script = r"""
+import os
+import time
+from sqlalchemy.orm import sessionmaker
+import app.db as db
+
+def record(line):
+    with open(os.environ["QUEUE_TEST_MARKER"], "a", encoding="utf-8") as marker:
+        marker.write(line + "\n")
+
+def hold(stage):
+    record("hook:" + stage)
+    while True:
+        time.sleep(1)
+
+engine = db.create_db_engine(os.environ["TEST_DATABASE_URL"])
+scoped = engine.execution_options(schema_translate_map={None: os.environ["QUEUE_TEST_SCHEMA"]})
+sessions = sessionmaker(bind=scoped, autoflush=False, expire_on_commit=False)
+db.get_session_factory = lambda: sessions
+from app import main
+main.get_session_factory = lambda: sessions
+from app.api.chat_events import ChatEvents
+notify = ChatEvents.notify
+def observed_notify(self, user_id, job_ids):
+    record("notify:" + str(user_id) + ":" + ",".join(str(job_id) for job_id in job_ids))
+    return notify(self, user_id, job_ids)
+ChatEvents.notify = observed_notify
+from app.integrations.provider import MockProvider
+from app.services import chat_queue, chat_runner
+
+class CountingProvider:
+    def complete(self, messages, *, timeout_seconds):
+        raise AssertionError("the runner must stream")
+
+    def stream(self, messages, *, timeout_seconds):
+        record("provider:" + messages[-1].content)
+        yield from MockProvider.PIECES
+
+mode = os.environ["QUEUE_TEST_MODE"]
+if mode == "claim":
+    chat_runner.generate = lambda *args, **kwargs: hold("claim")
+elif mode == "provider":
+    class BlockingProvider:
+        def complete(self, messages, *, timeout_seconds):
+            raise AssertionError("the runner must stream")
+
+        def stream(self, messages, *, timeout_seconds):
+            record("provider:" + messages[-1].content)
+            hold("provider")
+
+    main.get_provider = BlockingProvider
+elif mode == "before_commit":
+    finish = chat_queue.finish
+    def before_commit(*args, **kwargs):
+        changes = finish(*args, **kwargs)
+        hold("before_commit")
+        return changes
+    chat_queue.finish = before_commit
+elif mode == "after_commit":
+    log_quota = chat_queue.log_quota
+    def before_event(changes):
+        if changes.quota:
+            hold("after_commit")
+        log_quota(changes)
+    chat_queue.log_quota = before_event
+
+main.get_provider = main.get_provider if mode == "provider" else CountingProvider
+os.environ["CHAT_WORKER"] = "off" if mode == "accepted" else "on"
+import uvicorn
+uvicorn.run(main.create_app(), host="127.0.0.1", port=int(os.environ["QUEUE_TEST_PORT"]), log_level="critical")
+"""
+
+    def start_api(mode: str, marker_path) -> tuple[subprocess.Popen, int]:
+        with socket.socket() as reserved:
+            reserved.bind(("127.0.0.1", 0))
+            port = reserved.getsockname()[1]
+        environment = os.environ.copy()
+        environment.update(
+            {
+                **auth_environment,
+                "QUEUE_TEST_MARKER": str(marker_path),
+                "QUEUE_TEST_MODE": mode,
+                "QUEUE_TEST_PORT": str(port),
+                "QUEUE_TEST_SCHEMA": schema,
+                "TEST_DATABASE_URL": guarded_live_url(),
+            }
+        )
+        process = subprocess.Popen(
+            [sys.executable, "-c", script],
+            cwd=os.path.dirname(os.path.dirname(__file__)),
+            env=environment,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return process, port
+
+    def get_health(process: subprocess.Popen, port: int) -> None:
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and process.poll() is None:
+            try:
+                with urlopen(f"http://127.0.0.1:{port}/api/health", timeout=0.5) as response:
+                    if response.status == 200:
+                        assert response.read() == b'{"status":"ok"}'
+                        return
+            except (HTTPError, URLError, TimeoutError, OSError):
+                time.sleep(0.05)
+        pytest.fail("the API process did not answer the health request")
+
+    marker = tmp_path / "process-events"
+    crash_mode = "accepted" if crash_stage == "accepted" else crash_stage
+    crashed, first_port = start_api(crash_mode, marker)
+    try:
+        get_health(crashed, first_port)
+        if crash_stage == "accepted":
+            body = json.dumps({"content": "프로세스 장애 전 질문", "request_key": "process-http"}).encode()
+            request = Request(
+                f"http://127.0.0.1:{first_port}/api/conversations/{first_conversation}/messages",
+                data=body,
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(request, timeout=5) as response:
+                assert response.status == 202
+                first_id = int(json.loads(response.read())["job"]["id"])
+        else:
+            hook = f"hook:{crash_stage}"
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                assert crashed.poll() is None
+                if marker.exists() and hook in marker.read_text(encoding="utf-8").splitlines():
+                    break
+                time.sleep(0.05)
+            assert marker.exists() and hook in marker.read_text(encoding="utf-8").splitlines()
+        crashed.kill()
+        assert crashed.wait(timeout=10) < 0
+    finally:
+        if crashed.poll() is None:
+            crashed.kill()
+            crashed.wait(timeout=10)
+
+    before_restart = marker.read_text(encoding="utf-8").splitlines() if marker.exists() else []
+    first_question = "프로세스 장애 전 질문"
+    later_question = "재시작 뒤 대기 질문"
+    with sessions() as reader:
+        first_job = reader.get(ChatJob, first_id)
+        first_answer = reader.get(Message, first_job.answer_message_id) if first_job.answer_message_id else None
+        first_reservation = reader.get(QuotaReservation, first_job.reservation_id)
+        if crash_stage == "accepted":
+            assert (first_job.state, first_answer, first_reservation.state) == ("queued", None, "reserved")
+        elif crash_stage == "after_commit":
+            assert (first_job.state, first_answer.status, first_answer.content, first_reservation.state) == (
+                "completed",
+                "completed",
+                "모의 답변입니다.",
+                "settled",
+            )
+        else:
+            assert (first_job.state, first_answer.status, first_reservation.state) == (
+                "running",
+                "pending",
+                "reserved",
+            )
+            now = quota_repository.database_time(reader)
+            first_job.accepted_at = now - timedelta(minutes=3)
+            first_job.expires_at = first_job.accepted_at + timedelta(minutes=5)
+            first_job.started_at = now - timedelta(minutes=2)
+            first_job.deadline_at = first_job.started_at + timedelta(seconds=30)
+            reader.commit()
+
+    first_start_notice = f"notify:{user_id}:{first_id}"
+    if crash_stage == "accepted":
+        assert not any(line.startswith("notify:") for line in before_restart)
+    else:
+        assert [line for line in before_restart if line.startswith("notify:")] == [first_start_notice]
+    if crash_stage == "after_commit":
+        assert "hook:after_commit" in before_restart
+        assert [line for line in before_restart if line.startswith("provider:")] == [f"provider:{first_question}"]
+
+    restart, restart_port = start_api("restart", marker)
+    try:
+        get_health(restart, restart_port)
+        expected_first = "completed" if crash_stage in {"accepted", "after_commit"} else "interrupted"
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            with sessions() as reader:
+                first_job = reader.get(ChatJob, first_id)
+                later_job = reader.get(ChatJob, later_id) if later_id is not None else None
+                if first_job.state == expected_first and (later_job is None or later_job.state == "completed"):
+                    break
+            time.sleep(0.05)
+        with sessions() as reader:
+            first_job = reader.get(ChatJob, first_id)
+            first_answer = reader.get(Message, first_job.answer_message_id)
+            first_reservation = reader.get(QuotaReservation, first_job.reservation_id)
+            assert first_job.state == expected_first
+            if expected_first == "interrupted":
+                assert (first_answer.status, first_answer.error_code) == ("interrupted", "outcome_unknown")
+                assert (first_reservation.state, first_reservation.refund_reason) == ("refunded", "interrupted")
+            else:
+                assert (first_answer.status, first_answer.content, first_reservation.state) == (
+                    "completed",
+                    "모의 답변입니다.",
+                    "settled",
+                )
+            first_attempts = reader.scalar(
+                select(func.count())
+                .select_from(Message)
+                .where(Message.reply_to_message_id == first_job.question_message_id)
+            )
+            assert first_attempts == 1
+            if later_id is not None:
+                later_job = reader.get(ChatJob, later_id)
+                later_answer = reader.get(Message, later_job.answer_message_id)
+                later_reservation = reader.get(QuotaReservation, later_job.reservation_id)
+                assert (later_job.state, later_answer.status, later_answer.content) == (
+                    "completed",
+                    "completed",
+                    "모의 답변입니다.",
+                )
+                assert (later_reservation.state, later_reservation.refund_reason) == ("settled", None)
+    finally:
+        if restart.poll() is None:
+            restart.terminate()
+            try:
+                restart.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                restart.kill()
+                restart.wait(timeout=10)
+
+    provider_calls = [line for line in marker.read_text(encoding="utf-8").splitlines() if line.startswith("provider:")]
+    if crash_stage == "accepted":
+        assert provider_calls == [f"provider:{first_question}"]
+    elif crash_stage == "claim":
+        assert provider_calls == [f"provider:{later_question}"]
+    elif crash_stage == "provider":
+        assert provider_calls == [f"provider:{first_question}", f"provider:{later_question}"]
+    else:
+        assert provider_calls == [f"provider:{first_question}", f"provider:{later_question}"]
+
+
 def test_a_job_id_traces_the_run_to_the_stored_answer_the_settle_and_the_notice(committed_queue_sessions, caplog):
     """From the start to the settle and the completion notice, every step names the admitted job (#70)."""
     sessions = committed_queue_sessions
@@ -652,7 +962,10 @@ def test_a_real_database_error_in_the_runner_logs_no_sql_values_question_or_conn
     monkeypatch.setattr(chat_queue, "finish", broken_finish)
     from app.integrations.provider import MockProvider
 
-    worker = chat_runner.ChatJobWorker(sessions, MockProvider(), ledger)
+    notified = []
+    worker = chat_runner.ChatJobWorker(
+        sessions, MockProvider(), ledger, notify=lambda member_id, job_ids: notified.append((member_id, list(job_ids)))
+    )
     with caplog.at_level(logging.INFO):
         worker._drain(user_id)
     worker.stop(timeout=10)
@@ -667,5 +980,6 @@ def test_a_real_database_error_in_the_runner_logs_no_sql_values_question_or_conn
     ) in caplog.text
     assert f"Chat job run failed, user_id={user_id}, cause=database_error" in caplog.text
     # Not stored is never reported as stored: the job is still running, for recovery to interrupt.
+    assert notified == [(user_id, [job_id])]
     with sessions() as reader:
         assert reader.get(ChatJob, job_id).state == "running"

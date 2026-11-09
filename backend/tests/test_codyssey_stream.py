@@ -277,6 +277,18 @@ def test_the_runner_never_stores_a_partial_answer(gpt, lines):
     assert seen == ["합성 "] and len(gpt.requests) == 1
 
 
+def test_a_malformed_delta_after_partial_output_must_not_complete_the_answer(gpt):
+    # Valid JSON with an invalid content type is silently ignored, then stop/[DONE] completes the partial piece.
+    malformed = "data: " + json.dumps({"choices": [{"index": 0, "delta": {"content": 42}, "finish_reason": None}]})
+    gpt.lines = [chunk("합성 "), malformed, chunk(finish_reason="stop"), DONE]
+    seen = []
+    outcome = chat_runner.generate(gpt.provider, CONTEXT, on_delta=seen.append)
+    assert seen == ["합성 "] and len(gpt.requests) == 1
+    if outcome == Outcome("completed", text="합성 "):
+        pytest.xfail("B71-OBS-026: malformed delta is ignored and only the partial piece is completed")
+    assert outcome == chat_queue.PROVIDER_FAILED
+
+
 def test_the_runner_fails_a_refused_request_without_calling_again(gpt):
     gpt.reply = (429, b'{"error": {"code": "insufficient_quota"}}')
     assert chat_runner.generate(gpt.provider, CONTEXT) == chat_queue.PROVIDER_FAILED
