@@ -475,10 +475,10 @@ def recovery_snapshot(**changes) -> dict:
 class FakeDatabase(recovery.Database):
     """Records every call; never runs Docker or SQL."""
 
-    def __init__(self, snapshots, *, running=False, existing=(), restored=None):
+    def __init__(self, snapshots, *, running=False, existing=(), restored=None, free=1 << 40):
         super().__init__([], runner=self.unexpected_runner)
         self.snapshots, self.running, self.existing = list(snapshots), running, set(existing)
-        self.restored = restored
+        self.restored, self.free = restored, free
         self.calls = []
 
     @staticmethod
@@ -499,7 +499,7 @@ class FakeDatabase(recovery.Database):
         return self.running
 
     def free_bytes(self):
-        return 1 << 40
+        return self.free
 
     def database_exists(self, name):
         return name in self.existing
@@ -538,13 +538,14 @@ class DataRecoveryChecks(unittest.TestCase):
     def tearDown(self):
         self.directory.cleanup()
 
-    def manifest(self, *, purpose="pre-change", snapshot=None, age_minutes=5, name="backup-x"):
+    def manifest(self, *, purpose="pre-change", snapshot=None, age_minutes=5, name="backup-x", database_bytes=1 << 20):
         from datetime import timedelta
 
         archive = self.work / (name + ".dump")
         archive.write_bytes(b"synthetic archive " + name.encode())
         manifest = {
-            "schema_version": 1,
+            "schema_version": recovery.MANIFEST_VERSION,
+            "database_bytes": database_bytes,
             "file": archive.name,
             "bytes": archive.stat().st_size,
             "sha256": recovery.file_sha256(archive),
@@ -665,6 +666,43 @@ class DataRecoveryChecks(unittest.TestCase):
         with self.assertRaisesRegex(recovery.Failure, "^backup_dump_failed$"):
             recovery.backup(failing, self.work, "pre-change", self.now.replace(minute=1))
         self.assertEqual(len(list(self.work.glob("*.dump"))), 1)  # Only the earlier complete archive remains.
+
+    def test_restore_space_follows_recorded_database_size_not_archive_size(self):
+        database_bytes = 3 << 30  # A 3 GiB database behind a tiny compressed archive.
+        needed = database_bytes * 2 + recovery.RESTORE_HEADROOM
+        expected = recovery_snapshot()
+        path = self.manifest(database_bytes=database_bytes, name="space")
+
+        def run(command, free, second):
+            db = FakeDatabase([expected], restored=expected, free=free)
+            moment = self.now.replace(second=second)
+            if command == "verify":
+                recovery.verify(db, self.work, path, True, moment)
+            else:
+                recovery.restore(db, self.work, path, None, moment)
+            return db
+
+        for second, command in enumerate(("verify", "restore")):
+            with self.subTest(command=command):
+                with self.assertRaisesRegex(recovery.Failure, "^insufficient_volume_space$"):
+                    run(command, needed - 1, second)
+                db = run(command, needed, second + 10)
+                staging = recovery.CHECK_DB if command == "verify" else recovery.STAGING_DB
+                self.assertIn(("create", staging), db.calls)
+        data = json.loads(path.read_text())
+        for value in (None, 0, -1, "1024", True):
+            with self.subTest(database_bytes=value):
+                path.write_text(json.dumps({**data, "database_bytes": value}))
+                with self.assertRaisesRegex(recovery.Failure, "^manifest_invalid$"):
+                    recovery.load_manifest(path)
+
+    def test_backup_manifest_records_the_larger_database_size(self):
+        before, after = recovery_snapshot(database_bytes=100), recovery_snapshot(database_bytes=300)
+        result = recovery.backup(FakeDatabase([before, after]), self.work, "pre-change", self.now)
+        manifest = json.loads(Path(result["manifest"]).read_text())
+        self.assertEqual(manifest["database_bytes"], 300)
+        self.assertEqual(manifest["schema_version"], recovery.MANIFEST_VERSION)
+        recovery.load_manifest(Path(result["manifest"]))
 
     def test_restore_stages_checks_and_swaps_without_dropping_the_live_database(self):
         expected = recovery_snapshot()

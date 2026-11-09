@@ -42,6 +42,10 @@ FK_NAME = "chat_jobs_reservation_fk"
 STAGING_DB = "nss_restore_staging"
 CHECK_DB = "nss_restore_check"
 BACKUP_MAX_AGE = timedelta(hours=1)
+# A restore writes a full copy of the database and about as much WAL again; PostgreSQL's default
+# max_wal_size (1 GiB) bounds the WAL it keeps, so that much headroom is reserved on top.
+RESTORE_HEADROOM = 1 << 30
+MANIFEST_VERSION = 2
 PURPOSES = ("daily", "pre-change")
 MAIN_DB = '"$POSTGRES_DB"'
 # Shell text run inside the DB container; the container supplies user and database names.
@@ -299,6 +303,7 @@ MANIFEST_KEYS = {
     "purpose",
     "backend_running",
     "consistent",
+    "database_bytes",
     "snapshot",
 }
 
@@ -312,8 +317,10 @@ def load_manifest(path: Path) -> tuple[dict, Path]:
     if (
         not isinstance(manifest, dict)
         or set(manifest) != MANIFEST_KEYS
-        or manifest["schema_version"] != 1
+        or manifest["schema_version"] != MANIFEST_VERSION
         or manifest["purpose"] not in PURPOSES
+        or type(manifest["database_bytes"]) is not int
+        or manifest["database_bytes"] <= 0
         or not isinstance(manifest["file"], str)
         or Path(manifest["file"]).name != manifest["file"]
         or not manifest["file"].endswith(".dump")
@@ -337,6 +344,19 @@ def require_stopped_backend(db: Database) -> None:
 def require_space(available: int, needed: int, code: str) -> None:
     if available < needed:
         raise Failure(code)
+
+
+def restore_space_needed(manifest: dict) -> int:
+    """Volume space a staged restore needs, from the DB size measured at backup time.
+
+    The compressed archive size says little about the restored size, and a full disk
+    during a restore would also stop the live database that shares the volume.
+    """
+    return manifest["database_bytes"] * 2 + RESTORE_HEADROOM
+
+
+def require_restore_space(db: "Database", manifest: dict) -> None:
+    require_space(db.free_bytes(), restore_space_needed(manifest), "insufficient_volume_space")
 
 
 def precheck(db: Database, work: Path, now: datetime) -> dict:
@@ -370,7 +390,7 @@ def backup(db: Database, work: Path, purpose: str, now: datetime) -> dict:
     after = db.snapshot()
     consistent = not differences(before, after)
     manifest = {
-        "schema_version": 1,
+        "schema_version": MANIFEST_VERSION,
         "file": archive.name,
         "bytes": archive.stat().st_size,
         "sha256": file_sha256(archive),
@@ -378,6 +398,8 @@ def backup(db: Database, work: Path, purpose: str, now: datetime) -> dict:
         "purpose": purpose,
         "backend_running": running,
         "consistent": consistent,
+        # The larger of the two measurements; restore space checks are based on it.
+        "database_bytes": max(before["database_bytes"], after["database_bytes"]),
         # Writes during the dump leave no trusted expectation; verify --restore-check then provides one.
         "snapshot": before if consistent else None,
     }
@@ -429,7 +451,7 @@ def verify(db: Database, work: Path, manifest_path: Path, restore_check: bool, n
         "restore_check": restore_check,
     }
     if restore_check:
-        require_space(db.free_bytes(), manifest["bytes"] * 8 + (64 << 20), "insufficient_volume_space")
+        require_restore_space(db, manifest)
         started = time.monotonic()
         restored = staged_restore(db, CHECK_DB, archive, expected)
         db.drop(CHECK_DB)
@@ -514,7 +536,7 @@ def restore(db: Database, work: Path, manifest_path: Path, verify_report: Path |
         before = db.snapshot()
     except Failure:
         before = None  # A damaged live database is a reason to restore, not a blocker.
-    require_space(db.free_bytes(), manifest["bytes"] * 8 + (64 << 20), "insufficient_volume_space")
+    require_restore_space(db, manifest)
     retained = "nss_replaced_" + stamp(now).lower()
     if db.database_exists(retained):
         raise Failure("retained_database_exists")
