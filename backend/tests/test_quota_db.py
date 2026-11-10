@@ -17,6 +17,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.schema import CreateSchema, DropSchema
 
 from app.db import create_db_engine
+from app.repositories import quotas as quota_repository
 from app.models.chat_job import ChatJob, ChatQueueMember, ConversationHold
 from app.models.conversation import Conversation, Message
 from app.models.quota import ChatQuota, QuotaReservation
@@ -150,6 +151,106 @@ def test_a_refund_after_a_reset_does_not_raise_the_new_period(orm_test_session):
     assert current.daily.remaining == DAILY_LIMIT - SIX_HOUR_LIMIT
 
 
+@pytest.mark.parametrize("hour,day", [(0, 21), (6, 20), (12, 20), (18, 20)])
+@pytest.mark.parametrize("resolution", ["settle", "refund"])
+def test_a_boundary_resolution_keeps_the_reservation_in_its_original_period(
+    committed_quota_sessions, hour, day, resolution
+):
+    sessions = committed_quota_sessions
+    ledger = quota.MemberQuota()
+    boundary = kst(hour, day=day)
+    before, after = boundary - timedelta(seconds=1), boundary + timedelta(minutes=5)
+    old_period, new_period = periods_at(before), periods_at(after)
+
+    with sessions() as setup:
+        user_id = add_user(setup)
+        reservation_id = ledger.reserve(setup, user_id, now=before)
+        setup.commit()
+
+    # Keep the new six-hour window full in each reset.
+    with sessions() as setup:
+        fill(setup, user_id, SIX_HOUR_LIMIT, after)
+        setup.commit()
+
+    with sessions() as reader:
+        original = reader.get(QuotaReservation, reservation_id)
+        assert original is not None
+        assert (original.state, original.day_start, original.six_hour_start) == (
+            "reserved",
+            old_period.day_start,
+            old_period.six_hour_start,
+        )
+        assert quota_repository.six_hour_usage(reader, user_id, new_period.six_hour_start) == quota_repository.Usage(
+            SIX_HOUR_LIMIT, 0
+        )
+        if hour == 0:
+            assert quota_repository.day_usage(reader, user_id, new_period.day_start) == quota_repository.Usage(
+                SIX_HOUR_LIMIT, 0
+            )
+            assert quota_repository.day_usage(reader, user_id, old_period.day_start) == quota_repository.Usage(0, 1)
+        else:
+            assert old_period.day_start == new_period.day_start
+            assert quota_repository.day_usage(reader, user_id, new_period.day_start) == quota_repository.Usage(
+                SIX_HOUR_LIMIT, 1
+            )
+
+    with sessions() as resolver:
+        changed = (
+            ledger.settle(resolver, reservation_id)
+            if resolution == "settle"
+            else ledger.refund(resolver, reservation_id, "expired")
+        )
+        resolver.commit()
+    assert changed is True
+
+    with sessions() as reader:
+        original = reader.get(QuotaReservation, reservation_id)
+        assert original is not None
+        if resolution == "settle":
+            assert (original.state, original.refund_reason) == ("settled", None)
+            assert quota_repository.six_hour_usage(
+                reader, user_id, old_period.six_hour_start
+            ) == quota_repository.Usage(1, 0)
+            if hour == 0:
+                assert quota_repository.day_usage(reader, user_id, old_period.day_start) == quota_repository.Usage(1, 0)
+        else:
+            assert (original.state, original.refund_reason) == ("refunded", "expired")
+            assert quota_repository.six_hour_usage(
+                reader, user_id, old_period.six_hour_start
+            ) == quota_repository.Usage(0, 0)
+            if hour == 0:
+                assert quota_repository.day_usage(reader, user_id, old_period.day_start) == quota_repository.Usage(0, 0)
+        assert quota_repository.six_hour_usage(reader, user_id, new_period.six_hour_start) == quota_repository.Usage(
+            SIX_HOUR_LIMIT, 0
+        )
+
+        current = quota.limits(reader, user_id, now=after)
+        assert (current.six_hour.used, current.six_hour.reserved, current.six_hour.remaining) == (
+            SIX_HOUR_LIMIT,
+            0,
+            0,
+        )
+        if hour == 0:
+            assert (current.daily.used, current.daily.reserved, current.daily.remaining) == (
+                SIX_HOUR_LIMIT,
+                0,
+                DAILY_LIMIT - SIX_HOUR_LIMIT,
+            )
+        elif resolution == "settle":
+            assert (current.daily.used, current.daily.reserved, current.daily.remaining) == (
+                SIX_HOUR_LIMIT + 1,
+                0,
+                DAILY_LIMIT - SIX_HOUR_LIMIT - 1,
+            )
+        else:
+            # A same-day refund correctly frees the old daily reservation; the new six-hour window stays full.
+            assert (current.daily.used, current.daily.reserved, current.daily.remaining) == (
+                SIX_HOUR_LIMIT,
+                0,
+                DAILY_LIMIT - SIX_HOUR_LIMIT,
+            )
+
+
 def test_members_have_separate_quotas(orm_test_session):
     first = add_user(orm_test_session, "quota-a@example.test")
     second = add_user(orm_test_session, "quota-b@example.test")
@@ -269,6 +370,45 @@ def test_concurrent_refunds_of_one_reservation_resolve_it_once(committed_quota_s
     with sessions() as reader:
         stored = reader.scalars(select(QuotaReservation)).one()
         assert stored.state in ("settled", "refunded") and stored.resolved_at is not None
+
+
+@pytest.mark.parametrize("second_resolution", ["settle", "refund"], ids=["settle-settle", "settle-refund"])
+def test_concurrent_resolution_pairs_update_quota_usage_once(committed_quota_sessions, second_resolution):
+    sessions = committed_quota_sessions
+    ledger = quota.MemberQuota()
+    with sessions() as setup:
+        user_id = add_user(setup)
+        reservation_id = ledger.reserve(setup, user_id, now=kst(8))
+        setup.commit()
+
+    def resolve(index: int):
+        with sessions() as session:
+            result = (
+                ledger.settle(session, reservation_id)
+                if index == 0 or second_resolution == "settle"
+                else ledger.refund(session, reservation_id, "interrupted")
+            )
+            session.commit()
+            return result
+
+    results = run_together(2, resolve)
+    assert results.count(True) == 1 and results.count(False) == 1
+
+    with sessions() as reader:
+        stored = reader.get(QuotaReservation, reservation_id)
+        assert stored is not None and stored.resolved_at is not None
+        limits = quota.limits(reader, user_id, now=kst(8, 0, 20))
+        assert limits.daily.reserved == limits.six_hour.reserved == 0
+        if second_resolution == "settle":
+            assert (stored.state, stored.refund_reason) == ("settled", None)
+        if stored.state == "settled":
+            assert stored.refund_reason is None
+            assert (limits.daily.used, limits.daily.remaining) == (1, DAILY_LIMIT - 1)
+            assert (limits.six_hour.used, limits.six_hour.remaining) == (1, SIX_HOUR_LIMIT - 1)
+        else:
+            assert (stored.state, stored.refund_reason) == ("refunded", "interrupted")
+            assert (limits.daily.used, limits.daily.remaining) == (0, DAILY_LIMIT)
+            assert (limits.six_hour.used, limits.six_hour.remaining) == (0, SIX_HOUR_LIMIT)
 
 
 def test_concurrent_questions_admit_one_job_with_one_reservation_and_store_nothing_else(committed_quota_sessions):
