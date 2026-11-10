@@ -1,8 +1,8 @@
 # 데이터베이스 설계
 
-**Rev 3 · 2026-11-02 (KST)** · 코드 기준: [`308fbba`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/308fbba83acce02adfd19449b0740d4a99bf9c19)
+**Rev 4 · 2026-11-07 (KST)** · 코드 기준: [`308fbba`](https://github.com/next-stop-siren/Next-Stop-Siren/tree/308fbba83acce02adfd19449b0740d4a99bf9c19)
 
-변경 근거: [PR #57](https://github.com/next-stop-siren/Next-Stop-Siren/pull/57) · [PR #59](https://github.com/next-stop-siren/Next-Stop-Siren/pull/59) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62) · [#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66). Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
+변경 근거: [PR #57](https://github.com/next-stop-siren/Next-Stop-Siren/pull/57) · [PR #59](https://github.com/next-stop-siren/Next-Stop-Siren/pull/59) · [PR #62](https://github.com/next-stop-siren/Next-Stop-Siren/pull/62) · [#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66) · [#75](https://github.com/next-stop-siren/Next-Stop-Siren/issues/75). Rev는 이 문서의 계약·상태·범위 변경을 추적한다. 유지 규칙은 [협업 흐름](../03-development/workflow.md#문서-rev와-변경-이력)을 따른다.
 
 현재 등록 모델은 **10개**다. 인증·대화 기반 5개, 한도 2개, 대기열 3개가 `app.models.register_models()`에 등록됐고 PR #62에서 API와 연결됐다. 아래 기반 테이블 그림과 상세 뒤에 한도·대기열 모델을 설명한다. 모델 등록은 실제 DB 생성·기존 스키마 변경·운영 데이터 복원 검증 완료를 뜻하지 않는다.
 
@@ -160,18 +160,20 @@ ORDER BY m.id;
 - 허용 동작(`allowed_actions`)은 저장하지 않고 조회할 때 행에서 계산한다. 구독의 `since`는 작업의 `accepted_at`·`started_at`·`finished_at`·`skipped_at`으로 바뀐 대화를 찾으므로 별도 변경 시각 컬럼이 없다.
 - #53 이전 동기 API가 남긴 작업 없는 `pending` 답변은 그 대화의 다음 실행 시작 트랜잭션에서 `interrupted`/`outcome_unknown`으로 닫아 `messages_one_pending_uq`가 실행을 막지 않게 한다.
 
-적용과 되돌림: 새 테이블은 `db-init`·`db-init-test`의 `create_all()`이 누락분을 만든다. **`create_all()`은 기존 테이블을 바꾸지 않으므로** #52 때 이미 `chat_jobs`를 만든 개발·테스트 DB에는 아래 FK의 적용 여부를 점검하고 백업·적용·복원 계획을 검토한다(CI는 빈 DB라 해당 없음). 기존 행은 바뀌지 않고, #53 이전에 만든 질문에는 작업 행이 없다. 아래 되돌림 SQL은 세 대기열 테이블을 지우므로 그 작업·실행권·정지 기록이 사라진다. 기반 5개 테이블을 직접 지우지는 않지만 운영 데이터의 안전한 복원을 증명하지 않는다. 공유 DB에는 검토 전에 수동 적용하지 않는다.
+적용과 되돌림: 새 테이블은 `db-init`·`db-init-test`의 `create_all()`이 누락분을 만든다. **`create_all()`은 기존 테이블을 바꾸지 않으므로** #52 때 이미 `chat_jobs`를 만든 DB에는 아래 FK가 없다(CI는 빈 DB라 해당 없음). 기존 행은 바뀌지 않고, #53 이전에 만든 질문에는 작업 행이 없다. 첫 파일럿 배포는 빈 DB 초기화라 해당 없다.
+
+#75부터 이 FK는 SQL을 직접 실행하지 않고 [데이터 보존 배포·복구 절차](../../deploy/data-recovery.md)의 `apply-reservation-fk`로만 적용한다. 도구는 backend 정지, 1시간 이내이며 현재 상태와 같은 변경 전 백업, 없는 예약을 가리키는 작업 0개를 확인한 뒤 아래 문장을 `lock_timeout` 5초의 트랜잭션 하나에서 실행하고, 적용 전후의 표별 행 수·행 해시·상태별 개수·인덱스가 같고 제약은 FK 하나만 늘었는지 비교한다. 어긋난 행이 있으면 PostgreSQL이 전체를 되돌린다.
 
 ```sql
--- #52 테이블이 이미 있는 DB에 #53 FK를 더할 때
+-- #52 테이블이 이미 있는 DB에 #53 FK를 더할 때 (도구가 실행)
 ALTER TABLE chat_jobs ADD CONSTRAINT chat_jobs_reservation_fk
   FOREIGN KEY (reservation_id) REFERENCES chat_quota_reservations (id) ON DELETE RESTRICT;
 
--- 되돌림
-DROP TABLE chat_conversation_holds;
-DROP TABLE chat_jobs;
-DROP TABLE chat_queue_members;
+-- 데이터 보존 되돌림 (revert-reservation-fk)
+ALTER TABLE chat_jobs DROP CONSTRAINT chat_jobs_reservation_fk;
 ```
+
+Rev 3까지의 되돌림 SQL(`DROP TABLE` 세 대기열 테이블)은 작업·실행권·정지 기록을 지우므로 **폐기했다**. 되돌림은 앱 → FK 제약 → 백업 복원 순으로, 데이터 손실이 없는 단계에서 멈춘다. 백업 복원은 새 DB에 먼저 풀어 확인한 뒤 이름을 바꾸고 교체된 DB를 남긴다. 격리 합성 데이터 리허설 범위와 결과는 같은 문서를 따른다.
 
 ## 소유자와 초기 적용
 
@@ -179,7 +181,7 @@ DROP TABLE chat_queue_members;
 2. 인증 담당은 `users`, `auth_identities`, `refresh_sessions` ORM 모델과 DB 검사를 맡는다. 채팅 담당은 인증 모델을 인계받아 `conversations`, `messages` ORM 모델과 DB 검사를 맡는다. 직접 선행 관계는 [공정진행도](../02-team/development-flow.md)의 #3 → #9 → #8 → #10을 따른다.
 3. 조회 함수는 사용자 소유권 조건을 포함하고, API 요청·응답의 Pydantic 모델과 ORM 모델을 분리한다. 실제 JWT/Google 보호와 사용자 간 격리는 통합 때 확인한다.
 
-`create_all()`은 기존 테이블을 `ALTER`하지 않는다. 기존 데이터나 스키마를 자동 삭제·재생성하지 않고 요청마다 테이블을 만들지 않는다. 이후 기존 스키마 변경은 적용·복구와 데이터 영향을 검토한 명시적 절차를 먼저 정한다. 도구는 아직 선택하지 않았다.
+`create_all()`은 기존 테이블을 `ALTER`하지 않는다. 기존 데이터나 스키마를 자동 삭제·재생성하지 않고 요청마다 테이블을 만들지 않는다. 이후 기존 스키마 변경은 적용·복구와 데이터 영향을 검토한 명시적 절차를 먼저 정한다. #75는 마이그레이션 도구를 도입하지 않고, 사전 점검 → 변경 전 백업 → 검증 → 단일 트랜잭션 적용 → 비교 → 데이터 보존 되돌림 단계를 [절차](../../deploy/data-recovery.md)에 정했다. 다음 스키마 변경은 이 단계를 도구에 추가해 검토한다.
 
 `/api/ready`(#72)는 `app.readiness`가 등록 제품 모델 10개의 테이블·컬럼 이름을 현재 스키마의 `information_schema.columns`와 비교해 빠진 것이 있으면 준비 안 됨으로 응답한다. 검사 연결은 `default_transaction_read_only=on`이라 테이블을 만들거나 데이터를 바꾸지 않는다. 스키마 버전 표가 없으므로 컬럼 타입·제약·인덱스 차이는 잡지 못한다. 마이그레이션 도구를 정하면 버전 비교로 바꿀지 검토한다. 계약은 [API의 상태 확인](api.md#상태-확인-72)이다.
 
@@ -191,7 +193,7 @@ DROP TABLE chat_queue_members;
 - [ ] 타인 대화의 읽기·쓰기가 거부된다.
 - [ ] 완료 답변만 재조회·문맥에 포함되고 실패·중단 답변은 문맥에서 빠진다.
 
-인증과 대기열 입장·정산·실행·복구·재시도·구독에 대한 단위·DB 검사가 존재한다. 60초 pending 회복과 D4는 현재 API 계약이 아니다. 실제 화면 통합·운영 검증은 [품질 기준](../03-development/quality.md)에 따라 별도 확인한다. 수동 재시도·대기열·한도 결합은 PR #62에서 구현됐다. 운영 데이터의 백업·적용·복원 검증과 자동 마이그레이션 도구 선택은 남아 있다. 이 문서 작업에서는 **SQL을 실행하지 않았다**.
+인증과 대기열 입장·정산·실행·복구·재시도·구독에 대한 단위·DB 검사가 존재한다. 60초 pending 회복과 D4는 현재 API 계약이 아니다. 실제 화면 통합·운영 검증은 [품질 기준](../03-development/quality.md)에 따라 별도 확인한다. 수동 재시도·대기열·한도 결합은 PR #62에서 구현됐다. 백업·적용·복원 절차와 격리 합성 리허설은 #75에서 준비했고, 실제 운영 DB의 백업·복원 실행과 독립 검토는 Owner의 별도 승인 작업으로 남아 있다. 이 문서 작업에서는 공유·운영 DB에 **SQL을 실행하지 않았다**.
 
 ## 변경 이력
 
@@ -200,3 +202,4 @@ DROP TABLE chat_queue_members;
 | 1 | 2026-10-25 | 등록 모델 10개, 한도·대기열 연결과 기존 DB 변경의 한계를 정리했다. 당시 기준 코드는 `2d50da5`다. |
 | 2 | 2026-10-29 | #66에서 `context_before()` 정렬을 `COALESCE(reply_to_message_id, id), id`로 바꿔 문맥 쌍 순서 차이를 해결된 상태로 갱신했다. 스키마·인덱스 변경은 없다. 구현 `308fbba`. |
 | 3 | 2026-11-02 | #72: `/api/ready`의 읽기 전용 제품 테이블·컬럼 존재 검사와 그 한계(타입·제약 미비교, 버전 표 없음)를 추가했다. 스키마 변경은 없다. |
+| 4 | 2026-11-07 | #75: FK 적용을 백업·검증·비교를 강제하는 절차로 옮기고, 데이터를 지우는 `DROP TABLE` 되돌림을 FK 제약만 지우는 되돌림으로 바꿨다. 마이그레이션 도구는 도입하지 않았다. 스키마 변경은 없다. 구현은 #75 PR이다. |
