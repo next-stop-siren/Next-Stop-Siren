@@ -390,7 +390,7 @@ def run_checked(url: str) -> None:
                 "S54_EVIDENCE_FILE": str(evidence_file),
                 "PLAYWRIGHT_BROWSERS_PATH": str(ROOT / ".cache" / "playwright"),
             }
-            local.run(
+            local.run_owned(
                 local.tool(
                     "npm",
                     "run",
