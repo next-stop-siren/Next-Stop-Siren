@@ -342,6 +342,10 @@ for (const ending of retryEndings) {
         await expect(thread(page, failedQuestion)).toContainText(
           ending.finalState === 'failed' ? '답변을 만들지 못했습니다.' : '답변 생성이 중단되었습니다.',
         )
+        expect(await databaseState(followerQuestion)).toMatchObject({
+          job_state: 'paused',
+          reservation_state: 'reserved',
+        })
         const retryTerminal = await expectActions(page, token, failedQuestion, retry.job.id)
         expect(retryTerminal.allowed_actions).toEqual(['retry', 'skip'])
       } else {
