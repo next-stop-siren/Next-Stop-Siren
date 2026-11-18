@@ -91,6 +91,13 @@ test('B3 - 첫 delta 전 모든 탭을 닫아도 서버 작업은 완료되고 �
   const restoredDevice = await deviceContext.newPage()
   await openMemberChat(restoredDevice)
   await expect(restoredDevice.locator(`[data-job-id="${job.id}"]`)).toContainText('첫 조각 저장 답변')
+  expect(await databaseState(question)).toMatchObject({
+    job_id: job.id,
+    job_state: 'completed',
+    answer_status: 'completed',
+    answer_content: '첫 조각 저장 답변',
+    reservation_state: 'settled',
+  })
   const state = await memberState(email)
   expect([state.question_count, state.reservation_count]).toEqual([1, 1])
   await saveEvidence(email, question, job.id)
@@ -152,6 +159,13 @@ test('B4 - 새로고침은 임시 delta를 지우고 완료 뒤 저장된 전체
   await expect.poll(async () => (await databaseState(question)).job_state, { timeout: 12_000 }).toBe('completed')
   await expect(thread(page, question)).toContainText('중간 조각 뒤 저장 답변')
   await expect(thread(page, question)).toContainText('답변 완료 · 저장됨')
+  expect(await databaseState(question)).toMatchObject({
+    job_id: job.id,
+    job_state: 'completed',
+    answer_status: 'completed',
+    answer_content: '중간 조각 뒤 저장 답변',
+    reservation_state: 'settled',
+  })
   await expect(memberState(email)).resolves.toMatchObject({ question_count: 1, reservation_count: 1 })
   await saveEvidence(email, question, job.id)
 })
@@ -312,6 +326,13 @@ test('B6 - A의 임시 출력과 늦은 이력 응답은 같은 탭에서 B로 �
   await expect.poll(async () => (await databaseState(questionB)).job_state, { timeout: 12_000 }).toBe('completed')
   await expect(page.locator(`[data-job-id="${jobB.id}"]`)).toContainText('중간 조각 뒤 저장 답변')
   await expect(pageB.locator(`[data-job-id="${jobB.id}"]`)).toContainText('중간 조각 뒤 저장 답변')
+  expect(await databaseState(questionB)).toMatchObject({
+    job_id: jobB.id,
+    job_state: 'completed',
+    answer_status: 'completed',
+    answer_content: '중간 조각 뒤 저장 답변',
+    reservation_state: 'settled',
+  })
 
   await page.getByRole('button', { name: '로그아웃' }).click()
   await page.getByRole('button', { name: '로그인', exact: true }).click()
@@ -322,6 +343,13 @@ test('B6 - A의 임시 출력과 늦은 이력 응답은 같은 탭에서 B로 �
   await expect(page.getByRole('button', { name: '로그아웃' })).toBeVisible()
   await expect(page.locator(`[data-job-id="${job.id}"]`)).toContainText('중간 조각 뒤 저장 답변')
   await expect(thread(page, question)).toContainText('답변 완료 · 저장됨')
+  expect(await databaseState(question)).toMatchObject({
+    job_id: job.id,
+    job_state: 'completed',
+    answer_status: 'completed',
+    answer_content: '중간 조각 뒤 저장 답변',
+    reservation_state: 'settled',
+  })
   expect(await memberState(emailA)).toMatchObject({ question_count: 1, reservation_count: 1 })
   await saveEvidence(emailA, question, job.id)
   await saveEvidence(emailB, questionB, jobB.id)
