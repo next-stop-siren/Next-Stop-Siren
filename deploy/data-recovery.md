@@ -227,24 +227,26 @@ Windows는 `backend\.venv\Scripts\python.exe`. 리허설은 네트워크 없는(
 | 볼륨 손실 | 서버 밖 사본으로 복사 → 컨테이너·볼륨 삭제 → 새 빈 DB에 복원 → 상태 일치, sequence 복원 |
 | 보고서 | 메시지 본문 canary가 보고서·도구 출력에 없음 |
 
-### 리허설 결과 (2026-11-07 KST, `davekim-dev`)
+### 리허설 결과 (2026-11-15 KST, `davekim-dev`)
 
-`98e1ec1`(main `90961c8` + #70 병합) 위의 #75 변경으로 Windows Docker Desktop(`desktop-linux`, Engine 29.8.0)에서
-`postgres:17.11`(17.11 Debian) 리허설을 실행했다. 위 표의 **13개 항목이 모두 통과**했고 리허설 소유 컨테이너·볼륨이
-제거됐다. 첫 실행은 리허설의 기대값 오류로 중단됐다(일일 백업으로 적용하면 도구가 더 앞선
-`fresh_pre_change_backup_required`로 막는다). 일일 백업과 데이터 변경 전의 변경 전 백업을 각각 검사하도록 고친 뒤 다시 실행했다.
+PR #99 병합 뒤 main `ef24f75`로 Windows Docker Desktop(`desktop-linux`, Engine 29.8.0)에서 `postgres:17.11`
+(17.11 Debian) 리허설을 다시 실행했다. [복원 공간 기준](#복원-공간-기준)과 FK 되돌림 순서를 반영한 마지막 수정이
+포함된 코드다. 위 표의 **13개 항목이 모두 통과**했고, 모든 manifest가 `schema_version` 2로 `database_bytes`를 기록했다.
+리허설 소유 컨테이너·볼륨은 제거됐고 같은 라벨의 리소스가 남지 않았다. 같은 commit의 오프라인 검사
+`check.py DataRecoveryChecks` 13개도 통과했다.
 
 | 측정 | 값 |
 | --- | --- |
 | 합성 행 | users 2, auth_identities 1, refresh_sessions 2, conversations 3, messages 6, chat_quotas 1, chat_quota_reservations 4, chat_queue_members 1, chat_jobs 4, chat_conversation_holds 1 |
-| 별도 DB 복원 검사 | 3.23초 |
-| 적용 실패 후 복원 | 2.25초 (교체된 DB에 고아 작업 포함 chat_jobs 5행 보존) |
-| 볼륨 손실 후 복원 | 1.73초 |
+| 별도 DB 복원 검사 | 0.99초 |
+| 적용 실패 후 복원 | 1.16초 (교체된 DB에 고아 작업 포함 chat_jobs 5행 보존) |
+| 볼륨 손실 후 복원 | 1.24초 |
 
-위 결과는 [복원 공간 기준](#복원-공간-기준) 변경(2026-11-09, manifest `schema_version` 2) 이전 코드의 결과다.
-시간은 극소량 합성 데이터의 절차 자체 소요이며 실제 데이터·t2.micro 성능이나 RTO 근거가 아니다. macOS(Colima)
-실행과 독립 검토자 재현은 아직 없다. 증거 디렉터리(`result.json`, `commands.json`, 보고서)는 합성 데이터만 담지만
-저장소에 넣지 않고 `davekim-dev`가 로컬에 보관한다.
+2026-11-07 KST의 이전 리허설(`98e1ec1`, 13개 통과)은 복원 공간 기준 변경(manifest `schema_version` 2) 이전 코드의
+결과라 이 결과로 대체한다. 시간은 극소량 합성 데이터의 절차 자체 소요이며 실제 데이터·t2.micro 성능이나 RTO 근거가
+아니다. 리허설은 공간 부족(`insufficient_volume_space`) 경로를 실제로 일으키지 않으며 그 판정은 오프라인 검사가 맡는다.
+macOS(Colima) 실행과 독립 검토자 재현은 아직 없다. 증거 디렉터리(`result.json`, `commands.json`, 보고서)는 합성
+데이터만 담지만 저장소에 넣지 않고 `davekim-dev`가 로컬에 보관한다.
 
 ## 11. 미실행·남은 조건
 
