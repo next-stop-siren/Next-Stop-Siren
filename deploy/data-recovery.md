@@ -125,6 +125,7 @@ Owner Mac이나 리허설에서는 `--compose-project` 대신 일회용 컨테�
 | `unexpected_change_after_apply` | 적용 뒤 FK 외 차이 | backend를 멈춘 채 두고 보고서의 차이 이름을 확인한다. 데이터 손상이면 [7. 복원](#7-복원)을 결정한다. |
 | `backup_sha256_mismatch`, `backup_size_mismatch`, `manifest_invalid` | archive가 바뀌었거나 짝이 맞지 않는다. | 그 백업을 쓰지 않는다. 금고 사본과 대조한다. |
 | `insufficient_*` | 디스크 부족 | 오래된 서버 백업 정리 등 공간을 확보한다. 볼륨을 지우지 않는다. |
+| `restore` 중 `restored_snapshot_mismatch`, `snapshot_failed` | 교체 전 staging 비교 실패일 수도, 교체 뒤 재비교 실패일 수도 있다. | backend를 멈춘 채 [교체 후 검증 실패 대응](#교체-후-검증-실패-대응) 1단계로 교체 여부부터 확인한다. |
 
 ## 6. 앱 되돌림과 스키마 호환
 
@@ -154,15 +155,134 @@ Owner Mac이나 리허설에서는 `--compose-project` 대신 일회용 컨테�
 ## 7. 복원
 
 1. backend를 멈춘다. 복원할 manifest를 고른다: 손상 직전의 가장 최근 **검증된** 백업, 서버 사본이 없거나 의심되면 금고 사본.
+   복원 직전에 `precheck`를 한 번 실행해 그 보고서를 남긴다. 교체 후 검증이 실패했을 때 이전 DB를 대조하는 기준이다.
 2. 일일 백업처럼 manifest 스냅샷이 없으면 그 백업의 `verify --restore-check` 보고서를 `--verify-report`로 함께 준다.
 3. `restore <manifest>`: 크기·SHA-256 확인 → [복원 공간](#복원-공간-기준) 확인 → 새 DB `nss_restore_staging`에 단일 트랜잭션 복원 → 기대 스냅샷 비교 →
    한 트랜잭션에서 운영 DB 이름을 `nss_replaced_<UTC>`로, staging을 운영 이름으로 바꾼다 → 다시 비교한다.
    어느 단계든 실패하면 staging을 지우고 운영 DB는 그대로 둔다.
 4. backend를 시작하고 `/api/ready`·기능 확인을 한다. identity sequence도 함께 복원되어 새 행 ID가 겹치지 않는다.
+   교체 뒤 도구의 재비교나 이 확인이 실패하면 [교체 후 검증 실패 대응](#교체-후-검증-실패-대응)을 따른다.
 5. 보고서(`restore-*.json`: 이전·이후 스냅샷, 소요 시간, 보존 DB 이름)를 증거로 남긴다.
 6. **교체 전 DB는 복원 검증이 끝날 때까지 보존한다.** 복원 보고서 비교, `/api/ready`, 기능 확인이 모두 끝난 뒤에만
    Owner가 디스크 여유를 확인하고 `DROP DATABASE nss_replaced_<UTC>;`로 지운다. 그 전까지 DB 디스크를 두 배 쓰므로,
    보존 중에는 `df`로 볼륨 여유를 확인하고 다른 복원·복원 검사를 시작하지 않는다.
+
+### 교체 후 검증 실패 대응
+
+이름 교체 **뒤에** 실패하면 운영 이름은 이미 복원한 DB를 가리키고, 원래 DB는 `nss_replaced_<UTC>`로 남아 있다.
+해당하는 경우는 두 가지다.
+
+- 도구가 교체 뒤 재비교에서 실패했다(`restored_snapshot_mismatch`, `snapshot_failed`).
+- 도구는 성공했지만 backend 시작 뒤 `/api/ready`나 기능 확인이 실패했다.
+
+`restored_snapshot_mismatch`는 교체 전 staging 비교에서도 같은 코드로 나온다. 그래서 출력만으로는 교체 여부를 판단하지 않고
+아래 1번으로 확인한다. **어느 경우든 먼저 backend를 멈추고, 판단이 끝날 때까지 다시 시작하지 않는다.**
+아래 명령의 `$DBX`는 운영 Compose의 DB 컨테이너 실행 접두어다. SQL은 stdin으로 보내 접속 정보가 명령에 나오지 않는다.
+
+```sh
+DBX="docker compose --project-name next-stop-siren --env-file /etc/next-stop-siren/production.env \
+  --env-file $REL/release.env --file $REL/compose.yaml exec -T db"
+```
+
+1단계에서 이번 복원 시각을 확인하면 `STAMP=20261119t010203z`처럼 호스트 변수로 정한다. 형식은 `nss_replaced_` 뒤의
+소문자 UTC 값이다. DB 이름은 `sh -c`의 위치 인수(`"$1"`)로 넘겨 컨테이너 셸이 다시 해석하지 않게 한다.
+
+**1. 운영 이름을 쓰는 DB가 무엇인지 확인한다**
+
+```sh
+$DBX sh -c 'exec psql -X -At -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres -v target="$POSTGRES_DB"' <<'SQL'
+SELECT datname, datname = :'target' AS live FROM pg_database WHERE datname = :'target' OR datname LIKE 'nss\_%' ORDER BY datname;
+SQL
+```
+
+| 확인 결과 | 뜻 |
+| --- | --- |
+| 이번 복원 시각(UTC)의 `nss_replaced_<UTC>`가 있고, 작업 디렉터리에 시각이 초까지 같은 `restore-*.json`이 있다. DB 이름은 `20261118t222132z`(소문자, 초까지), 보고서는 `restore-20261118T222132186540Z.json`(대문자, 마이크로초까지)이라 앞 15자리를 비교한다. | 교체가 끝났다. 운영 이름 = 복원한 DB, `nss_replaced_<UTC>` = 원래 DB |
+| 이번 시각의 `nss_replaced_<UTC>`가 없다 | 교체되지 않았다. 운영 DB는 그대로다. 이 절이 아니라 [5.](#5-실패-시-판단)를 따른다. |
+| `nss_restore_staging`이 남아 있다 | 도구가 중간에 강제 종료됐다. 운영 이름은 위 두 줄로 판단하고, staging은 원인 확인 뒤 지운다. |
+
+교체 뒤 상태 읽기(`snapshot_failed`)가 실패하면 `restore-*.json`이 만들어지지 않는다. 이때는 `nss_replaced_<UTC>`의
+시각이 이번 실행 시각과 같은지로 판단한다.
+
+**2. 이전 DB가 보존됐는지 확인한다**
+
+`nss_replaced_$STAMP`의 표별 행 수를 읽는다. 이 값이 복원 직전에 남긴 `precheck` 보고서의 `snapshot.tables.*.rows`와
+같아야 한다. 같은 값은 restore 보고서의 `before`에도 있다.
+
+```sh
+$DBX sh -c 'exec psql -X -At -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$1"' sh "nss_replaced_$STAMP" <<'SQL'
+SELECT 'users', count(*) FROM users UNION ALL SELECT 'auth_identities', count(*) FROM auth_identities
+UNION ALL SELECT 'refresh_sessions', count(*) FROM refresh_sessions UNION ALL SELECT 'conversations', count(*) FROM conversations
+UNION ALL SELECT 'messages', count(*) FROM messages UNION ALL SELECT 'chat_quotas', count(*) FROM chat_quotas
+UNION ALL SELECT 'chat_quota_reservations', count(*) FROM chat_quota_reservations
+UNION ALL SELECT 'chat_queue_members', count(*) FROM chat_queue_members
+UNION ALL SELECT 'chat_jobs', count(*) FROM chat_jobs UNION ALL SELECT 'chat_conversation_holds', count(*) FROM chat_conversation_holds;
+SQL
+```
+
+볼륨 손실 뒤 복원이었다면 원래 DB는 빈 DB다. 이 경우 돌아갈 대상이 아니다.
+
+**3. 어떤 검증이 실패했는지 확인한다**
+
+| 실패한 검증 | 보는 곳 | 원인 위치 |
+| --- | --- | --- |
+| 도구 재비교 `restored_snapshot_mismatch` | `restore-*.json`의 `unexpected_changes`(다른 표·제약 이름) | 복원한 DB |
+| 도구 재비교 `snapshot_failed` | 작업 디렉터리의 `diagnostics-*.txt`, `docker compose ... ps db` | DB 컨테이너 또는 복원한 DB |
+| `/api/ready` `schema` 가 `ok`가 아님 | 응답 `checks`와 backend의 `Service not ready` 로그(누락 표·열 이름) | 복원한 DB |
+| `/api/ready` `database` 가 `ok`가 아님 | DB 컨테이너 상태·healthcheck | DB 컨테이너 |
+| `/api/ready` `auth`·`worker` 가 `ok`가 아님 | 응답 `checks`, runtime env 검증 | 설정·앱 (DB 아님) |
+| 기능 확인만 실패 | 기능 확인 출력 | 앱 버전 또는 데이터 |
+
+**4. 이전 DB로 돌아갈지 판단한다**
+
+이전 DB로 돌아가는 경우는 아래 조건을 **모두** 만족할 때다. 돌아가면 복원 직전 상태가 되므로 추가 데이터 손실은 없다.
+
+- 원인이 복원한 DB 자체에 있다. 다음 중 하나에 해당하는 경우다.
+  - `unexpected_changes`에 표·제약이 있다.
+  - `schema`가 `ok`가 아니다.
+  - 복원한 DB는 읽히지 않는데 다른 DB는 읽힌다.
+- 2단계에서 `nss_replaced_<UTC>`가 보존돼 있고, 행 수가 복원 전 `precheck`와 같다.
+- 원래 DB가 빈 DB(볼륨 손실)가 아니다.
+
+다음 경우에는 돌아가지 않는다.
+
+- 복원한 DB가 백업과 일치하는데 `auth`·`worker`·앱 버전 때문에 실패했다. DB는 그대로 두고 설정을 고치거나 [앱 되돌림](#6-앱-되돌림과-스키마-호환)을 한다.
+- DB 컨테이너 자체가 응답하지 않는다. 먼저 컨테이너를 복구하고 1단계부터 다시 한다.
+- 이전 DB의 보존이나 행 수를 확인할 수 없다. 이름을 바꾸지 않고 Owner와 `davekim-dev`가 함께 판단한다.
+
+**5. 이전 DB로 돌아가는 절차** (backend 정지 유지, Owner 승인)
+
+한 트랜잭션에서 운영 이름의 DB(실패한 복원본)는 `nss_failed_restore_<UTC>`로, `nss_replaced_<UTC>`는 운영 이름으로 바꾼다.
+트랜잭션이므로 둘 다 바뀌거나 둘 다 그대로다. 실패한 복원본은 원인을 확인할 때까지 지우지 않는다.
+```sh
+$DBX sh -c 'exec psql -X -At -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres -v target="$POSTGRES_DB" \
+  -v retained="$1" -v failed="$2"' sh "nss_replaced_$STAMP" "nss_failed_restore_$STAMP" <<'SQL'
+SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity
+  WHERE datname IN (:'target', :'retained') AND pid <> pg_backend_pid();
+BEGIN;
+ALTER DATABASE :"target" RENAME TO :"failed";
+ALTER DATABASE :"retained" RENAME TO :"target";
+COMMIT;
+SQL
+```
+
+`database ... is being accessed by other users`로 실패하면 트랜잭션 전체가 취소된 것이다. backend가 멈춰 있는지
+다시 확인하고 같은 명령을 다시 실행한다.
+
+**6. 복귀 후 확인 순서**
+
+1. 1단계 조회로 운영 이름 = 원래 DB, `nss_failed_restore_<UTC>` 존재, `nss_replaced_<UTC>` 없음을 확인한다.
+2. `precheck`를 실행해 표별 행 수·행 해시(`snapshot.tables`)와 제약이 복원 전 `precheck` 보고서와 같은지 비교한다.
+3. backend를 시작하고 `/api/ready` 200을 확인한다.
+4. 기능 확인(`verify-pilot-readiness`)을 한다.
+5. 다음을 #75에 남긴다. 복원·복귀 시각, 실패한 검증과 원인 위치, 1·2단계 결과, 복귀 후 `precheck` 비교 결과, 남긴 DB 이름.
+6. 다른 백업(금고 사본 등)으로 다시 복원할지 Owner와 `davekim-dev`가 결정한다. `nss_failed_restore_<UTC>`는 원인을
+   확인하고 디스크 여유를 본 뒤 Owner가 `DROP DATABASE`로 지운다.
+
+2026-11-19 `davekim-dev` 자체 확인: 일회용 `postgres:17.11` 컨테이너에서 실제 `restore`로 교체 후 상태를 만들고
+1·2·5·6단계 명령을 `$DBX`만 `docker exec -i <컨테이너>`로 바꿔 실행했다. 복귀 뒤 `precheck`가 복원 직전과 행 수·행 해시·제약·
+인덱스까지 같았다. 운영 Compose 경로, backend `/api/ready`·기능 확인, 이름 변경 중 재접속 경합은 시험하지 않았다.
+자동 격리 리허설 항목이 아니며, 독립 검토자가 격리 환경에서 절차대로 다시 확인한다.
 
 ### 복원 공간 기준
 
@@ -254,4 +374,6 @@ macOS(Colima) 실행과 독립 검토자 재현은 아직 없다. 증거 디렉�
 - 분석용 로그 별도 보관의 실제 위치와 삭제 시점 — Owner.
 - `deploy-gates.json`의 `data_recovery` 승인 증거는 이 절차의 실제 서버 결과와 독립 검토로 Owner가 준비한다.
 - 독립 복원 검토(`yejoo0310` 또는 구현하지 않은 운영 검토자)와 #76 인계: 확인자, 대상, 시각, 결과, 남은 조건.
+- [교체 후 검증 실패 대응](#교체-후-검증-실패-대응)의 확인·복귀 명령은 격리 리허설에 포함되지 않았다. 독립 검토자가 격리
+  환경에서 교체 후 실패 → 이전 DB 복귀 → 복귀 후 확인을 시험하고 대상·시각·결과를 #75에 남긴다.
 - 대량 데이터의 백업·복원 시간과 t2.micro 부하는 #76에서 측정한다. 스냅샷은 표 전체를 한 번에 해시하므로 파일럿 규모를 전제로 한다.
