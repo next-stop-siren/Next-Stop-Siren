@@ -2,48 +2,47 @@
 
 ## 현재 수정 작업과 인계 (2026-11-25)
 
-아래는 이번에 승인된 수정 범위다. 이슈 번호는 구현 순서가 아니다. 기존 완료 범위와 실제 운영 실행을 구분하고, 각 작업의 자체검사 뒤 구현자와 분리된 검토자가 변경 결과를 확인한다. 이 표는 완료·배포 선언이 아니다.
+현재 담당은 Owner `xifoxy-ru` 한 명이며 운영 실행은 PM-2/Owner가 관리한다. 아래는 main `f3df305a`의 병합 결과와 후속 운영 확인을 구분한 인계다. 과거 팀원 기여·검토자는 아래 날짜별 역사적 기록에 보존하며 새 공동 담당을 배정하지 않는다.
 
 ## 담당별 우선순서와 병렬 진행
 
-| 작업 | 담당·실행 경계 | 시작·완료 인계 |
+| 범위 | 완료한 범위 | 남은 확인 |
 | --- | --- | --- |
-| [#106 실제 AI 선택·불완전 응답 처리](https://github.com/next-stop-siren/Next-Stop-Siren/issues/106) · B71-OBS-026 | Owner `xifoxy-ru` | 기본 mock을 유지하고 서버의 명시적 Codyssey 선택과 잘못된 설정의 실패, 비정상 스트림의 미완료 처리를 구현·모의 검증한다. 기존 [#68](https://github.com/next-stop-siren/Next-Stop-Siren/issues/68)의 완료 이력은 유지한다. 실제 AI 호출은 별도 승인이다. |
-| [#107 Google 가입·로그인 준비](https://github.com/next-stop-siren/Next-Stop-Siren/issues/107) · B71-OBS-057 | Owner `xifoxy-ru` | 기존 [#69](https://github.com/next-stop-siren/Next-Stop-Siren/issues/69) 실패 복귀를 보존하고 설정·callback·남은 운영자 작업을 정리한다. [실행 체크리스트](../03-development/google-login-readiness.md)에 따라 Console 설정, 서버 비밀 주입·backend 재생성, 실제 계정 확인을 문서·합성 검사와 구분한다. 이 문서 변경은 그 운영 실행의 승인이 아니다. |
-| [#108 공통 환영·시작 화면](https://github.com/next-stop-siren/Next-Stop-Siren/issues/108) + [#109 중립 회원 홈](https://github.com/next-stop-siren/Next-Stop-Siren/issues/109) · B71-OBS-058/059 | Owner `xifoxy-ru`, 함께 구현·검토 | 로그인 전후 공통 환영 화면과 Home 동작을 연결한다. 로그인·새로고침·Home에서 대화를 자동 생성·선택·열지 않고, 새 대화·이력을 명시적으로 고른 뒤 연다. 완료 기준은 각 이슈별로 확인한다. |
-| [#110 오래된 실패·중단 질문 복구](https://github.com/next-stop-siren/Next-Stop-Siren/issues/110) · B71-OBS-060 | Owner `xifoxy-ru`, 위 UI 작업과 별도 범위 | 100건 밖 이력을 커서로 읽어 질문·작업·allowed_actions를 복구한다. 마지막/빈 페이지·종료 경계, 재시도 키·SSE·회원 격리를 검증한다. #108/#109 완료를 구현 시작의 선행으로 요구하지 않는다. |
+| [#106](https://github.com/next-stop-siren/Next-Stop-Siren/issues/106) / [PR #111](https://github.com/next-stop-siren/Next-Stop-Siren/pull/111) | AI opt-in·설정 오류 안전 실패·불완전 스트림 처리 코드/모의 회귀 병합 | 새 이미지 배포·승인된 실제 AI 활성화/호출은 미확인. 기본 mock 유지 |
+| [#107](https://github.com/next-stop-siren/Next-Stop-Siren/issues/107) / [PR #112](https://github.com/next-stop-siren/Next-Stop-Siren/pull/112) | 준비 문서·합성 검증 병합. Owner가 Google Web client 생성·EC2 설정 반영·start302/정확한 callback을 보고 | 실제 신규 가입·재로그인·세션과 비구현자의 독립 확인 ([체크리스트](../03-development/google-login-readiness.md)) |
+| [#108](https://github.com/next-stop-siren/Next-Stop-Siren/issues/108) + [#109](https://github.com/next-stop-siren/Next-Stop-Siren/issues/109) / [PR #113](https://github.com/next-stop-siren/Next-Stop-Siren/pull/113) | 공통 환영·Home·명시적 선택 전 자동 대화 미선택, 로컬/독립 fixture 확인 병합 | 실제 운영 이미지 적용·DB 기반 전체 브라우저 확인 |
+| [#110](https://github.com/next-stop-siren/Next-Stop-Siren/issues/110) / [PR #114](https://github.com/next-stop-siren/Next-Stop-Siren/pull/114) | 100건 밖 실패·중단 작업 복구·회원 격리 회귀 병합 | 실제 운영 적용·DB 기반 전체 브라우저 확인 |
+| [#73](https://github.com/next-stop-siren/Next-Stop-Siren/issues/73) | 실제 시험 배포·HTTPS/readiness·모의 답변 저장/복구·한도1회 차감·로그아웃 보고 | [다음 배포 체크리스트](../../deploy/README.md#다음-배포-체크리스트--이번-작업에서는-실행하지-않음). 최신 main과 배포 앱 `fe2ae6d`를 구분 |
+| [#74](https://github.com/next-stop-siren/Next-Stop-Siren/issues/74) | Owner/PM-2 A/B Nginx 주소 구분·격리34개 검사 보고 | 운영 제한·주소 변화·접근 경계·비구현자의 독립 확인 등 미수행 항목 |
+| [#75](https://github.com/next-stop-siren/Next-Stop-Siren/issues/75) | #105 복구 독립 재검토, 수동 백업/서버 밖 사본 무결성·Discord 실패 알림 보고 | 11/26 04:00 KST 첫 timer 실제 결과, 운영 복원·보존·로그 검증 |
+| [#76](https://github.com/next-stop-siren/Next-Stop-Siren/issues/76) | [로컬 3인 mock 리허설](../../deploy/README.md#76-로컬-3인-mock-리허설-2026-11-25) 자체검사 | #74/#75의 해당 운영 결과 뒤 실제 EC2 측정·장애/알림·독립 확인 |
 
-네 범위는 병렬로 준비할 수 있다. #108/#109는 Owner 선택에 따라 같은 회원 홈 흐름으로 묶고, #106·#107·#110은 각각의 계약과 검증을 남긴다. 합칠 때는 공통 파일 충돌을 검토하고 회원 전환·이력·인증 회귀를 독립 확인한다. 검토된 변경만 병합하며 원격 게시·배포·실제 AI 및 Google 실행은 해당 승인 범위를 별도로 확인한다.
+#106–110은 병합된 수정·문서 범위로 닫혔고 #73–76은 열려 있다. 최신 main의 CI·로컬 통과가 최신 이미지 배포를 뜻하지 않는다. 현재 배포 앱 source·workflow SHA·최신 main 및 Owner 운영 보고의 범위는 [운영 인계](../../deploy/README.md#현재-운영-인계-2026-11-25-kst)를 따른다. 새 [#115](https://github.com/next-stop-siren/Next-Stop-Siren/issues/115) 같은 retry_key 복구·[#116](https://github.com/next-stop-siren/Next-Stop-Siren/issues/116) 대화 목록 잘림은 별도 구현 중이며 이 문서나 배포 완료로 세지 않는다.
 
 ```mermaid
 flowchart LR
-  AI["#106 AI 선택·스트림 검증"]
-  GOOGLE["#107 Google 설정·callback 인계"]
-  subgraph MEMBER_HOME["함께 구현·검토"]
-    HOME108["#108 공통 환영·시작"]
-    HOME109["#109 중립 회원 홈"]
-  end
-  HISTORY["#110 오래된 실패·중단 작업 복구"]
-  REVIEW["범위별 자체검사 → 구현자와 분리된 검토"]
-  INTEGRATE["공통 파일 대조·회귀 확인 후 병합 판단"]
-  OPERATOR["승인된 운영자 설정·비밀 주입·backend 재생성"]
-  ACCOUNT["실제 Google 가입·재로그인·세션 독립 확인"]
-  AI --> REVIEW
-  GOOGLE --> REVIEW
-  HOME108 --> REVIEW
-  HOME109 --> REVIEW
-  HISTORY --> REVIEW
-  REVIEW --> INTEGRATE
-  GOOGLE -->|"문서·합성 검사와 별도"| OPERATOR
-  OPERATOR --> ACCOUNT
-  click AI "https://github.com/next-stop-siren/Next-Stop-Siren/issues/106"
+  MERGED["#106–110 · PR111–114 병합"]
+  NEXT["Owner: 다음 이미지·source별 gate·배포 검토"]
+  P73["#73 기존 시험 배포 · mock 저장/한도 확인"]
+  P74["#74 A/B 주소·격리 검사 보고 / 운영 잔여"]
+  P75["#75 수동 사본·알림 보고 / 첫 timer·복원 잔여"]
+  LOCAL["#76 로컬 3인 mock 자체검사"]
+  FINAL["#76 EC2 측정·장애/알림·비구현자 독립 확인"]
+  GOOGLE["Google 설정·start302 보고 / 실제 가입·재로그인 잔여"]
+  MERGED -. 새 이미지 배포와 별도 .-> NEXT
+  P73 -. 시험 배포 선행 충족 .-> P74
+  P74 --> FINAL
+  P75 --> FINAL
+  LOCAL -. 로컬 증거만 .-> FINAL
+  NEXT -. 승인된 실행 뒤 .-> GOOGLE
+  click P73 "https://github.com/next-stop-siren/Next-Stop-Siren/issues/73"
+  click P74 "https://github.com/next-stop-siren/Next-Stop-Siren/issues/74"
+  click P75 "https://github.com/next-stop-siren/Next-Stop-Siren/issues/75"
+  click FINAL "https://github.com/next-stop-siren/Next-Stop-Siren/issues/76"
   click GOOGLE "https://github.com/next-stop-siren/Next-Stop-Siren/issues/107"
-  click HOME108 "https://github.com/next-stop-siren/Next-Stop-Siren/issues/108"
-  click HOME109 "https://github.com/next-stop-siren/Next-Stop-Siren/issues/109"
-  click HISTORY "https://github.com/next-stop-siren/Next-Stop-Siren/issues/110"
 ```
 
-[#73 운영 구성](https://github.com/next-stop-siren/Next-Stop-Siren/issues/73)·[#74 프록시 제한](https://github.com/next-stop-siren/Next-Stop-Siren/issues/74)·[#75 데이터·복구](https://github.com/next-stop-siren/Next-Stop-Siren/issues/75)·[#76 운영 측정](https://github.com/next-stop-siren/Next-Stop-Siren/issues/76)의 기존 담당·직접 선행·진행 상태는 이번 수정으로 바꾸지 않는다. 운영 환경은 PM-2/Owner가 관리한다. 아래 이전 공정은 당시 의존 관계를 보존한 기록이며 현재 미완료 목록이 아니다. 실제 완료·검토·운영 결과는 각 이슈와 연결 PR에서 확인한다.
+Owner가 실제 운영 결과를 준비한 뒤 해당 변경을 구현하지 않은 검증자가 독립 확인한다. 이 문서는 담당자의 자체검사를 독립 운영 검증으로 승격하거나 새 배포/DB/Google/AI 실행을 승인하지 않는다. 아래 공정은 당시 의존 관계의 기록이며 현재 미완료 목록이 아니다.
 
 ## 2차 직접 선행
 

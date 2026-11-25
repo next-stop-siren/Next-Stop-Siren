@@ -1,6 +1,6 @@
 # 문서 지도
 
-문서의 코드 기준은 main `2d50da5976548db7b85c5b0b931b7c43e622fa15` (2026-10-25 KST)이다. 현재 백엔드는 인증·대기열·한도·회원 구독을 구현했다. 인증 화면과 기본 HTTP 채팅은 있지만 실제 MemberChat 대기열·SSE 연결은 남았다. PR #58·#60·#61의 목업 통과는 실제 통합 완료가 아니다. 공개 제공자는 mock이며 운영 배포는 미구현이다.
+현재 코드/운영 인계는 main `f3df305a` (2026-11-25 KST)의 [공정진행도](02-team/development-flow.md)와 [배포 증거·리허설·다음 확인](../deploy/README.md)을 따른다. 실제 회원 채팅·SSE는 연결됐으며 시험 배포 앱은 `fe2ae6d`의 mock이다. 최신 main 병합과 운영 이미지 적용은 다르다. 실제 AI와 Google 신규 가입·재로그인은 미검증이다. 각 문서의 날짜·Rev·고정 SHA는 해당 시점의 기준/역사를 보존한다.
 
 HTTP 경로·요청·응답·오류·이벤트의 단일 계약은 [API](04-reference/api.md), 수량·기간·정산·대기·재시도 정책과 알려진 차이는 [회원 채팅 정책](04-reference/chat-policy.md), 고유 예시와 화면 확인 목록은 [채팅 시나리오](04-reference/chat-queue-api-draft.md)에 둔다. [팀 인계](02-team/team-handoff.md)에서 현재 담당별 다음 작업을 확인한다.
 

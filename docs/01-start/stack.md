@@ -33,4 +33,4 @@ AWS 단일 EC2에서 Docker Compose의 세 서비스를 실행한다. PM이 배�
 | `backend` | 내부 Docker 네트워크의 FastAPI·Uvicorn |
 | `db` | 내부 Docker 네트워크의 PostgreSQL. 데이터는 이름 있는 영속 볼륨에 저장 |
 
-배포 구현에서는 Nginx의 SPA 경로 대체, `/api/*` 전달, 스트리밍 응답의 버퍼링·시간 제한, HTTPS와 인증 쿠키·Google callback의 호환성을 확인해야 한다. 현재 API 목록과 사용법은 [API 기준](../04-reference/api.md)과 [온보딩](onboarding.md)에 있다. 호스트 이름·인증서·EC2 사양은 아직 정하지 않았고, 운영 Compose·이미지·배포 실행은 구현되지 않았다. GitHub Actions CI는 있지만 EC2 빌드·배포 자동화는 없다.
+배포 구현에서는 Nginx의 SPA 경로 대체, `/api/*` 전달, 스트리밍 응답의 버퍼링·시간 제한, HTTPS와 인증 쿠키·Google callback의 호환성을 확인해야 한다. 현재 API 목록과 사용법은 [API 기준](../04-reference/api.md)과 [온보딩](onboarding.md)에 있다. 현재 `next-stop-siren.duckdns.org`의 단일 EC2·HTTPS 시험 배포와 운영 Compose/이미지·수동 Actions/OIDC/SSM 경로가 있다. [현재 운영 인계](../../deploy/README.md#현재-운영-인계-2026-11-25-kst)에서 실제 배포 source와 최신 main, 미수행 운영 검증을 구분한다.

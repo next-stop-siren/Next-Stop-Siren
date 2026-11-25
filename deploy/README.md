@@ -1,4 +1,61 @@
-# 단일 EC2 파일럿 운영 파일 — #73 phase 1
+# 단일 EC2 파일럿 운영 파일
+
+## 현재 운영 인계 (2026-11-25 KST)
+
+현재 담당은 Owner `xifoxy-ru` 한 명이며 운영 환경 실행은 PM-2/Owner가 관리한다. 아래 운영 관찰은 Owner·PM-2의 인계 보고이고, 이번 문서 Worker가 EC2·Google·금고·Discord에 다시 접속해 검증한 결과가 아니다. [#73](https://github.com/next-stop-siren/Next-Stop-Siren/issues/73)·[#74](https://github.com/next-stop-siren/Next-Stop-Siren/issues/74)·[#75](https://github.com/next-stop-siren/Next-Stop-Siren/issues/75)·[#76](https://github.com/next-stop-siren/Next-Stop-Siren/issues/76)은 열려 있으며 남은 운영 확인을 추적한다.
+
+| 증거 | 확인한 범위 | 아직 대신하지 않는 확인 |
+| --- | --- | --- |
+| #73 실제 시험 배포 | HTTPS·readiness와 비밀번호 로그인/새로고침, 모의 질문·답변 저장/복구, 한도 1회 차감, 로그아웃 유지 확인 보고 | 실제 AI 생성·미확인 운영 조건 |
+| #74 A/B 프록시 관찰 | A/B 요청이 Nginx에서 서로 다른 클라이언트 주소로 관찰됐다는 보고, 별도 격리 검사 34개 통과 보고 | 운영에서 제한 상한까지 소진하는 반복 요청·주소 변경·전체 장애/독립 운영 검사. 34개를 운영 부하 결과로 세지 않음 |
+| #75 수동 백업·서버 밖 사본 | 수동 백업 1회와 Owner Mac 암호화 금고 사본의 무결성 일치 보고 | 금고 사본으로 실제 운영 DB 복원, 자동 실행 성공·보존/디스크 수용 검증 |
+| #75 timer·알림 | 첫 정기 실행 예정 **2026-11-26 04:00 KST**, Discord 실패 알림 수신 보고 | 11/25 현재 첫 정기 백업은 아직 실행 시각 전. 알림 수신을 정기 백업 성공으로 표시하지 않음 |
+| Google 설정 | 동일 backend 이미지에 설정 반영, DB/Nginx 유지, public `/api/ready` 200, start 302→`accounts.google.com`, 정확한 callback 확인 보고 | 실제 신규 Google 가입·재로그인·세션과 비구현자의 독립 확인 ([체크리스트](../docs/03-development/google-login-readiness.md)) |
+
+### 최신 main과 실제 배포 이미지는 다르다
+
+- 이번 문서의 코드 기준은 main **`f3df305ad1b22283fd35b3163ec0df3a17b29dc9`**다. [PR #111](https://github.com/next-stop-siren/Next-Stop-Siren/pull/111) AI opt-in·불완전 스트림 처리, [#112](https://github.com/next-stop-siren/Next-Stop-Siren/pull/112) Google 준비 문서, [#113](https://github.com/next-stop-siren/Next-Stop-Siren/pull/113) 공통 환영·중립 회원 홈, [#114](https://github.com/next-stop-siren/Next-Stop-Siren/pull/114) 오래된 실패 작업 복구가 병합됐고 main push CI 성공이 확인됐다. 각각의 로컬 검사와 실제 운영 적용을 구분한다.
+- 확인된 배포 앱의 source는 **`fe2ae6d8993cdf1821588ac0023bca20e74613d8`**다([이미지 게시 run 44274974640](https://github.com/next-stop-siren/Next-Stop-Siren/actions/runs/44274974640), 성공). Google 설정 반영도 이 이미지를 재사용했다는 Owner 보고다.
+- [배포 workflow run 45115438120](https://github.com/next-stop-siren/Next-Stop-Siren/actions/runs/45115438120)의 workflow SHA **`9e003adfa5c38e168ce34434e33dace541c28026`**를 앱 이미지 source로 쓰지 않는다. 수동 배포는 이전 publication을 선택할 수 있다. 최신 main 병합·CI 성공은 새 이미지 게시·배포를 뜻하지 않는다.
+- 시험 배포에서 저장된 답변은 mock이다. 최신 코드에 Codyssey opt-in이 있어도 현재 서버가 그 코드를 배포·활성화했거나 실제 AI 호출을 확인했다는 증거는 없다.
+
+### 다음 배포 체크리스트 — 이번 작업에서는 실행하지 않음
+
+1. Owner가 대상 source·변경 범위·실행 승인을 확인한다. 최신 main과 현재 이미지 source의 차이, #111–114의 변경과 실제 호출 제외 범위를 검토한다.
+2. 같은 source의 신뢰된 main push CI, public GHCR frontend/backend digest 쌍, publication run/attempt·release manifest를 확인한다. workflow SHA와 release source를 따로 기록한다. 기존 helper/contract/readiness hash와 source별 gates도 재대조하며 자동 우회하지 않는다.
+3. 현재 데이터와 이전 릴리스·이미지, #75의 변경 전 백업·서버 밖 사본, 스키마 호환·복구/로그 보관과 inflight 상태를 확인한다. [#105](https://github.com/next-stop-siren/Next-Stop-Siren/pull/105)의 교체 후 실패 대응은 병합·독립 재검토 완료이며, 실제 서버 DB 복원 성공으로 확대하지 않는다.
+4. 승인된 비밀값·Origin·proxy·Google 설정의 유지와 컨테이너 재생성을 확인한다. Codyssey 사용은 별도 실제 호출 승인·비밀 주입이 필요하다. mock 유지와 실제 제공자 설정 오류의 안전 실패를 혼동하지 않는다.
+5. 기존 수동 Actions/OIDC/SSM 경로로 승인된 버전을 배포하고 readiness·실제 image ID/source를 확인한다. 별도 승인 없이 이 문서에서 배포·DB 변경·실제 Google/AI 호출을 실행하지 않는다.
+6. 사용자 관점에서 중립 회원 홈·명시적 대화 선택, 저장 이력·100건 밖 실패 작업 동작·SSE/재접속·한도·로그아웃을 확인한다. 실제 Google 가입/재로그인과 AI 확인은 각각 승인된 별도 항목으로 기록한다. 실패 시 inflight를 보존하고 상태를 조정한 뒤 이전 앱/DB 호환성을 검토하며 자동 DB 복원하지 않는다.
+7. 첫 timer의 실제 결과(11/26 04:00 이후), 서버 밖 사본·실패 알림·분석 로그, 미수행 #74/#75/#76 항목을 기록한다. 측정·검토는 수행자/환경/시각과 함께 남기며 아래 로컬 리허설을 EC2 성능 증거로 쓰지 않는다.
+
+### #76 로컬 3인 mock 리허설 (2026-11-25)
+
+기존 [`scripts/issue54_test_app.py`](../scripts/issue54_test_app.py)의 `Issue54Provider(MockProvider)`와 [`issue54_e2e.py`](../scripts/issue54_e2e.py)의 격리 engine/probe를 사용했다. 검토용 외부 driver만 추가했고 제품 코드·설정은 바꾸지 않았다. macOS arm64·Python 3.13.15·기존 Colima Engine 29.5.2·캐시 `postgres:17.11`에서 합성 회원 3명, 일회용 DB/임시 schema, 별도 network와 `127.0.0.1` 임시 API/DB 포트를 사용했다. 이미지 pull·실제 키·Google/AI/EC2는 사용하지 않았다.
+
+실행 전에 로컬 이상 징후 기준을 API 응답 경험적 p95 2초 미만, 단일 가입 최대 5초 미만, 접수부터 mock 종결 최대 8초 미만, 시나리오와 다른 HTTP 상태 0건, API RSS 관찰 경계 512MiB 미만으로 고정했다. 이 작은 표본의 기준은 EC2 수용/출시 기준이 아니다.
+
+| 관찰 | 결과 |
+| --- | --- |
+| 합성 HTTP 요청 | 39건: 200 23건 / 201 6건 / 202 5건 / 예상 interval429 3건 / 타인404 1건 / 시작 대기 중 ready503 1건 |
+| API 경험적 p95 (startup ready 제외, 가입 포함) | 0.292초 (< 2초); 작은 표본의 정렬 위치 `floor(.95 × (n−1))` |
+| 단일 가입 최대 | 0.292초 (< 5초) |
+| 접수부터 mock 종결 최대 | 1.535초 (< 8초) |
+| API process 관찰 | 0.25초 간격 19개 표본, RSS 최대 164.61MiB (< 512MiB), `ps %cpu` 최대 72.1. DB/컨테이너 합산이나 t2 CPU credit 값이 아님 |
+| 제공자 시작 | 5회: 정상 3회 + 명시적 합성 실패 1회 + 사용자 수동 재시도 1회. 자동 재시도 없음 |
+| 정리 | API 종료·해당 임시 schema 부재·자기 container/일회용 DB 저장소·network 부재 확인 |
+
+동시 접수 3건의 mock 답변이 실제 로컬 PostgreSQL에 저장·재조회되고 회원별 SSE completed가 전달됐다. 각 회원의 일일 used=1/reserved=0, 동일 키의 기존 작업 반환, 10초 내 새 키 429, 타인 이력404를 확인했다. 기존 test-only interval probe로 합성 DB의 시각만 조절해 scripted 실패 뒤 예약 해제(used=1/reserved=0)와 명시적 재시도 성공 후 used=2/reserved=0을 확인했다. 이 시간 조절은 실제 10초 대기·기간 경계 부하 측정이 아니다.
+
+최초 두 준비 시도는 포트 매핑 부재와 임시 schema/role 기본 search_path 불일치로 트래픽 시나리오 전에 실패했다. 실패 로그와 매 시도 cleanup을 보존하고 외부 driver의 일회용 DB 설정만 보완한 세 번째 실행에서 통과했다. `/api/ready`의 스키마 조건을 생략하거나 성공으로 대체하지 않았다.
+
+실행 명령은 기존 venv의 Python으로 `rehearse.py <isolated-checkout>`였고, 외부 driver·사전 thresholds·요청별 지연·결과·원본 fixture hash는 이번 작업의 검토 증거에 보존한다. [`deploy/actions/tests`](actions/tests)의 `python3 -m unittest discover -s deploy/actions/tests -v`는 별도로 **60개 통과**했다. scripts stdlib suite는 **43개 실행, 41 통과·1 실패·1 skip**이며 실패는 macOS `os.killpg(..., 0)`의 `PermissionError` 때문에 예상 timeout 문구와 달라진 자식 프로세스 정리 검사다. 기존 Python 3.13 venv의 sandbox 밖 재검사에도 남았다. 같은 테스트 1개를 일반 시스템 Python 3.14로 다시 실행하면 16.631초에 통과했고 소유 fixture 프로세스 잔류 0건을 확인했다. 서로 다른 환경의 결과를 구분하며 전체 scripts 통과로 표시하지 않는다. 제품 코드는 수정하지 않았다.
+
+리허설은 FastAPI·worker·DB·TCP SSE의 제한된 로컬 자체검사다. 브라우저 UI·Nginx/TLS·서로 다른 외부 source IP·장시간 구독·EC2 재시작/자원 압박·알림·복원·실제 AI/Google·운영 독립 확인은 수행하지 않았다. #76 전체 완료나 2~3인 EC2 수용 보장으로 확대하지 않는다.
+
+## phase 1 준비 기록 (2026-10-29 기준)
+
+아래 기준 SHA·미실행 설명·당시 담당/검증 결과는 준비 Phase의 기록이다. 현재 운영 여부는 위 인계를 따른다.
 
 기준: `7b82fefce1c3953df9d92dd40d6904e0d981ccdf`, Work-Item `B71-OBS-028`.
 이 디렉터리는 이미지·운영 구성과 격리 로컬 검증을 준비한다. AWS 생성, DNS 변경,
@@ -206,16 +263,15 @@ Nginx→backend→disposable PostgreSQL의 **13개 통합 항목**을 통과했�
   운영 구성 확인과 독립 검토를 마친 뒤 #76 및 trusted_proxy 게이트의 실제 증거에 연결해야 한다.
 - #75: 아래 [백업 결정과 인계](#75-백업-결정과-인계)의 주기·보존·RPO는 결정됐다. 빈 DB 초기화/기존
   스키마 적용·백업/검증/복원 절차와 도구, 격리 합성 리허설은 [데이터 보존 배포·복구 절차](data-recovery.md)에 있다.
-  RTO·로그 보존·교체 전 DB 보존 기준은 2026-11-09에 정했다. 실제 서버 실행·금고 복사 검증·독립 검토는 미완료다. 볼륨이나 create_all을
+  RTO·로그 보존·교체 전 DB 보존 기준은 2026-11-09에 정했다. 수동 백업·금고 사본 확인 보고와 첫 timer 예정/실제 운영 복원 미확인은 위 현재 인계를 따른다. 볼륨이나 create_all을
   백업/마이그레이션으로 세지 않는다. 개발 db-init 보호를 우회하지 않는다.
 - Owner가 Actions workflow_dispatch + OIDC 단기 AWS 인증 + SSM Run Command를 실행하는
-  다음 범위는 여기서 구현하지 않는다. 공개 SSH22/self-hosted runner/장기 AWS키/SSH키/
+  경로는 [Actions 구현](actions/README.md)을 따른다. 아래 phase 1 선택을 유지한다. 공개 SSH22/self-hosted runner/장기 AWS키/SSH키/
   NAT gateway/유료 private endpoint를 도입하지 않는다. 실제 account/role/instance/branch/
-  environment/document/policy는 미정이다.
+  environment/document/policy와 실행 결과는 PM-2/Owner의 승인된 운영 기록으로 대조한다.
 - 수동 rollout concurrency1/cancel-in-progress:false, readiness+기능 확인, 실패 중단·보고,
   Owner의 #75 연계 이전 버전 수동 rollback이 필요하며 DB를 맹목 자동 복원하지 않는다.
-- Owner와 yejoo0310 검토에서 각 부분의 nonimplementer가 확인한다. yejoo 작성 인증 부분의
-  다른 검토자는 미정이다. 최종 파일과 검증 증거를 독립 검토한 뒤에만 로컬 커밋한다.
+- 현재 담당은 Owner xifoxy-ru이며 독립 운영 검증은 해당 변경을 구현하지 않은 검증자가 수행한다. 과거 검토자 이름은 당시 증거의 귀속이며 새 배정이 아니다.
 
 ## #75 백업 결정과 인계
 
@@ -234,25 +290,6 @@ Nginx→backend→disposable PostgreSQL의 **13개 통합 항목**을 통과했�
 | 로그 보존 | 기존 크기 제한 회전 유지. 장애 분석에 필요한 로그는 컨테이너 재생성 전에 별도 보관한다. 백업 보존 기간을 로그에 자동 적용하지 않는다 (2026-11-09 운영 기준). |
 | 교체 전 DB | 복원 시 디스크 여유를 확인하고, 복원 검증이 끝날 때까지 보존한다 (2026-11-09 운영 기준). |
 
-다음 자료를 역할별로 인계하고 확인한다. 비밀값·실제 DB 내용·금고 경로는 저장소나 공개 증거에 넣지 않는다.
+현재 인계·실행 담당은 Owner `xifoxy-ru`다. 과거 `davekim-dev`/`yejoo0310`의 구현·독립 검토 증거는 [데이터 보존 절차](data-recovery.md)의 날짜별 기록으로 보존하며 새 팀 배정으로 읽지 않는다. Owner는 실제 구성·DB/볼륨·권한과 파일럿 날짜, 변경 전 백업·복원 대상·호환성·실패 중단·로그 보관 조건을 대조한다. 실제 운영 DB 복원과 첫 timer 성공은 미확인이고, 독립 운영 확인자는 해당 변경 구현자와 분리해 결과에 기록한다. 비밀값·실제 DB 내용·금고 경로는 공개 자료에 넣지 않는다.
 
-1. **Owner → `davekim-dev`:** #73의 실제 실행 구성, PostgreSQL 버전·접속 방식·볼륨과 권한 경계,
-   백업 실행 시각·서버 밖 복사 방법·파일럿 시작/종료일 등 운영 조건을 전달한다.
-   RTO·로그 보존의 남은 결정과 별도 승인 범위도 명시한다. #53의 적용 대상 스키마·데이터와
-   #73 구성이 일치하는지 확인한 뒤 구현에 착수하며, 이 문서만으로 선행 충족을 선언하지 않는다.
-2. **`davekim-dev` → Owner:** 빈 DB 초기화와 기존 스키마 적용을 구분하고, 변경 전 백업,
-   적용·실패 중단·이전 앱 버전과의 호환성·수동 복원 절차를 준비한다. 백업 생성·식별·무결성 확인과
-   복원 대상 선택, 복원 후 스키마·데이터·기능 확인 기준을 포함한다. 먼저 운영 DB와 분리된
-   합성 데이터 환경에서 백업/복원을 검증하고 사용한 기준 commit, 절차·명령, 예상/실제 결과,
-   실패 조건과 미실행 항목을 인계한다. 아직 검증한 명령이나 복구된 상태가 있다고 간주하지 않는다.
-3. **Owner 후속 운영 확인:** 인계된 절차와 별도 승인 범위에 따라 실제 백업을 서버 밖 암호화 금고로
-   복사하고 사본의 식별·무결성·복원 가능성을 확인해 결과를 남긴다. 정기·변경 전 실행과 보존을
-   확인할 담당·기록 위치를 확정한다. 실제 DB 작업·배포는 별도 승인 후에만 실행한다.
-   독립 확인과 #76 인계에는 구현자가 아닌 확인자, 대상·시각·결과와 남은 조건을 남긴다.
-
-선행이 충족되면 위 범위의 구현을 진행할 수 있지만, 이 문서 수정은 #75 전체 완료나 실제 운영 실행을
-뜻하지 않는다. RTO·로그 보존 및 운영 검증은 후속 결정·증거로 남기며 자동 DB 복원은 하지 않는다.
-
-2번 인계의 절차·명령·실패 판단·앱/스키마/데이터 되돌림 순서·복원 공간 기준·격리 리허설은
-[데이터 보존 배포·복구 절차](data-recovery.md)에 정리했다. RTO·로그 보존·교체 전 DB 기준은 2026-11-09에 위 표대로
-정했다. 3번 Owner 확인과 독립 검토는 남아 있다.
+수동 백업 1회·서버 밖 사본 무결성 일치와 Discord 실패 알림 수신 보고는 위 현재 인계에 구분했다. 정기 백업은 첫 예정 시각 뒤 실제 결과를 확인해야 하며 사본 무결성만으로 복원 가능성을 완료 처리하지 않는다. #105의 교체 후 실패 대응 재검토 완료와 #75 전체 완료도 구분한다. 앱 되돌림·DB 복원은 자동으로 수행하지 않는다.
