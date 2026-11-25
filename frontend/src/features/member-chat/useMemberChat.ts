@@ -226,8 +226,6 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
   const loadSeqRef = useRef(0)
   // 진행 중인 대화 조회. 다른 대화를 열거나 새 대화를 시작하거나 화면을 떠나면 끊는다.
   const loadAbortRef = useRef<AbortController | null>(null)
-  // 사용자가 목록을 읽는 동안 대화를 고르거나 새로 만들었는지 나타낸다. 그렇다면 첫 목록이 선택을 덮어쓰지 않는다.
-  const navigatedRef = useRef(false)
   // 전송 중 여부를 동기적으로 막는 가드다. state는 다시 그려져야 바뀌므로, 엔터 연타나 더블클릭이 겹치면
   // 두 번째 제출이 통과해 (대화가 없을 때) 대화가 둘 만들어질 수 있다.
   const sendingRef = useRef(false)
@@ -316,16 +314,7 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
         // 목록을 읽는 동안 새로 만든 대화가 있으면 그대로 두고, 서버 목록에서 아직 없는 것만 뒤에 붙인다.
         setConversations((current) => [...current, ...items.filter((item) => !current.some((c) => c.id === item.id))])
 
-        // 목록을 읽는 동안 사용자가 대화를 고르거나 새로 만들었다면 그 선택을 존중한다.
-        if (navigatedRef.current) return
-
-        const latest = items[0]
-
-        if (latest) {
-          selectId(latest.id)
-          await loadConversation(latest.id)
-          if (!stale) setScrollRequest((count) => count + 1)
-        }
+        // 홈에서는 목록만 준비한다. 대화 선택·이력 조회는 사용자가 기록을 누른 뒤 시작한다.
       } catch (err) {
         if (!stale) setLoadError(errorText(err, '대화 목록을 불러오지 못했습니다.'))
       } finally {
@@ -339,12 +328,11 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
       stale = true
       controller.abort()
     }
-  }, [userId, selectId, loadConversation, setLoadError])
+  }, [userId, setLoadError])
 
   const selectConversation = async (id: string) => {
     if (!accessTokenRef.current || sendingRef.current) return
 
-    navigatedRef.current = true
     selectId(id)
     setMessages([])
     setError('')
@@ -379,7 +367,6 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
 
     // 보관 중인 요청 키는 지우지 않는다. 키는 대화별로 보관되어 같은 대화·같은 질문일 때만 다시 쓰이므로
     // 다른 대화로 잘못 전송되지 않고, 응답을 잃은 질문의 키도 잃지 않는다.
-    navigatedRef.current = true
     loadSeqRef.current += 1
     loadAbortRef.current?.abort()
     selectId(null)
@@ -465,7 +452,6 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
         if (!alive()) return
 
         activeId = conversation.id
-        navigatedRef.current = true
         loadSeqRef.current += 1
         selectId(activeId)
         setConversations((previous) => [conversation, ...previous.filter((item) => item.id !== conversation.id)])

@@ -1,3 +1,4 @@
+import { chooseMemberChat } from './member-home.helpers'
 import { appendFileSync, existsSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { join } from 'node:path'
@@ -91,6 +92,7 @@ export async function signIn(page: Page, email: string) {
 export async function openMemberChat(page: Page) {
   await page.goto('/')
   await expect(page.getByRole('button', { name: '로그아웃' })).toBeVisible()
+  await chooseMemberChat(page)
   await expect(page.getByRole('status', { name: '실시간 연결 상태' })).toHaveText('실시간 연결됨')
 }
 
