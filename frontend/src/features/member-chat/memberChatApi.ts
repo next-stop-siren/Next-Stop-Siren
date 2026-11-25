@@ -142,15 +142,21 @@ export async function listAllMessages(
   const items: ApiMessage[] = []
   let cursor: string | undefined
 
-  for (let page = 0; page < MAX_PAGES; page += 1) {
+  while (true) {
     const result = await listMessages(accessToken, conversationId, MESSAGE_PAGE_SIZE, cursor, signal)
     items.push(...result.items)
 
-    if (!result.next_cursor) break
+    if (!result.next_cursor) return items
+    // 양의 숫자 ID 커서가 계속 증가해야 한다. 정상 이력은 끝까지 읽고 잘못된 페이지는 중단한다.
+    if (
+      !result.items.length ||
+      !/^[1-9]\d*$/.test(result.next_cursor) ||
+      (cursor && BigInt(result.next_cursor) <= BigInt(cursor))
+    ) {
+      throw new Error('메시지 이력의 다음 페이지를 확인하지 못했습니다.')
+    }
     cursor = result.next_cursor
   }
-
-  return items
 }
 
 // 대화는 생성 ID 내림차순이고 다음 페이지는 before_id로 읽는다.

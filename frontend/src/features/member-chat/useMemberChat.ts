@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '../auth/AuthContext'
-import { cancelChatJob, listConversationJobs } from './chatQueueApi'
+import { cancelChatJob, listAllConversationJobs } from './chatQueueApi'
 import type { ChatAdmission, ChatJob, ChatJobEnvelope } from './chatQueueTypes'
 import { isTerminalState } from './chatQueueTypes'
 import { questionBlockReason } from './chatRetryRules'
@@ -29,9 +29,6 @@ export const REQUEST_TIMEOUT_MS = 15_000
 /** 대화 이력은 읽었지만 그 대화의 작업 목록을 읽지 못했을 때의 안내 */
 export const JOBS_LOAD_ERROR =
   '답변 상태를 불러오지 못해 재시도·건너뛰기 버튼과 대기 중인 질문의 상태가 보이지 않을 수 있습니다. 대화를 다시 불러와 주세요.'
-
-/** 한 대화에서 함께 읽는 작업 수. 서버 한 페이지의 최대값이다. */
-const CONVERSATION_JOBS_LIMIT = 100
 
 type PendingRequest = {
   conversationId: string
@@ -269,7 +266,7 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
       try {
         const [items, jobs] = await Promise.all([
           listAllMessages(token, id, controller.signal),
-          listConversationJobs(token, id, CONVERSATION_JOBS_LIMIT, controller.signal).catch(() => null),
+          listAllConversationJobs(token, id, controller.signal).catch(() => null),
         ])
 
         if (!isCurrent()) return

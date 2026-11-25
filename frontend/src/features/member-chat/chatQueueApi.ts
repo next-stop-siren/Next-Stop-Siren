@@ -4,7 +4,7 @@
  */
 
 import { isEnvelope } from './chatEventStream'
-import type { ChatCancelResult, ChatJobEnvelope, ChatJobPage } from './chatQueueTypes'
+import type { ChatCancelResult, ChatJob, ChatJobEnvelope, ChatJobPage } from './chatQueueTypes'
 import { ChatApiError, requestJson } from './memberChatApi'
 
 /**
@@ -40,9 +40,39 @@ export async function listConversationJobs(
   conversationId: string,
   limit = 50,
   signal?: AbortSignal,
+  beforeId?: string,
 ): Promise<ChatJobPage> {
   const params = new URLSearchParams({ conversation_id: conversationId, limit: String(limit) })
+  if (beforeId) params.set('before_id', beforeId)
   return requestJson(`/api/chat/jobs?${params.toString()}`, accessToken, { signal })
+}
+
+const CONVERSATION_JOBS_PAGE_SIZE = 100
+
+/** 종결된 작업도 다음 커서까지 읽어 긴 이력의 실패·중단 질문 동작을 복구한다. */
+export async function listAllConversationJobs(
+  accessToken: string,
+  conversationId: string,
+  signal?: AbortSignal,
+): Promise<ChatJobPage> {
+  const items: ChatJob[] = []
+  let cursor: string | undefined
+
+  while (true) {
+    const result = await listConversationJobs(accessToken, conversationId, CONVERSATION_JOBS_PAGE_SIZE, signal, cursor)
+    items.push(...result.items)
+    if (!result.next_cursor) return { ...result, items }
+
+    // 끝나지 않는 조회를 성공한 일부 이력으로 취급하지 않는다. 화면의 다시 불러오기 안내로 이어진다.
+    if (
+      !result.items.length ||
+      !/^[1-9]\d*$/.test(result.next_cursor) ||
+      (cursor && BigInt(result.next_cursor) >= BigInt(cursor))
+    ) {
+      throw new Error('작업 목록의 다음 페이지를 확인하지 못했습니다.')
+    }
+    cursor = result.next_cursor
+  }
 }
 
 /** 실행 전(`queued`·`paused`) 작업을 취소한다. 실행 중인 작업은 취소할 수 없다. */
