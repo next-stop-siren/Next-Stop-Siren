@@ -1,59 +1,53 @@
 # 공정진행도
 
-## 2차 작업과 현재 인계 (2026-10-25)
+## 현재 수정 작업과 인계 (2026-11-25)
 
-[2차 마일스톤](https://github.com/next-stop-siren/Next-Stop-Siren/milestone/2)에 새 구현·운영 작업 12개와 기존 #19·#54 최종검증을 연결했다. 등록 상태는 대기이며 개발을 시작했다는 뜻은 아니다. 기존 S01–S20 번호와 닫힌 목업의 완료 이력은 유지한다.
-
-- `gittul-123`: [#65](https://github.com/next-stop-siren/Next-Stop-Siren/issues/65) 실제 회원 채팅 연결, [#67](https://github.com/next-stop-siren/Next-Stop-Siren/issues/67) 인증 모달, [#69](https://github.com/next-stop-siren/Next-Stop-Siren/issues/69) Google 실패 화면을 맡는다.
-- `davekim-dev`: [#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66) 문맥 쌍 순서, [#70](https://github.com/next-stop-siren/Next-Stop-Siren/issues/70) 민감 로그 차단을 먼저 준비할 수 있다. [#68](https://github.com/next-stop-siren/Next-Stop-Siren/issues/68) 실제 AI·긴 대화, [#72](https://github.com/next-stop-siren/Next-Stop-Siren/issues/72) 서비스 준비 확인, [#75](https://github.com/next-stop-siren/Next-Stop-Siren/issues/75) 데이터·복구 작업도 맡는다. #70의 전체 추적은 [#65](https://github.com/next-stop-siren/Next-Stop-Siren/issues/65)·[#68](https://github.com/next-stop-siren/Next-Stop-Siren/issues/68) 기능 연결 뒤 완성한다.
-- `yejoo0310`: [#69](https://github.com/next-stop-siren/Next-Stop-Siren/issues/69) Google 실패 서버, [#71](https://github.com/next-stop-siren/Next-Stop-Siren/issues/71) 가입 요청·해시 제한, [#74](https://github.com/next-stop-siren/Next-Stop-Siren/issues/74) 프록시 뒤 로그인 제한을 맡는다. 본인 인증 변경은 다른 담당자가 독립 확인한다.
-- Owner `xifoxy-ru`가 [#73](https://github.com/next-stop-siren/Next-Stop-Siren/issues/73) 운영 구성과 [#76](https://github.com/next-stop-siren/Next-Stop-Siren/issues/76) 측정·장애·검증 자료 준비를 맡는다. [#74](https://github.com/next-stop-siren/Next-Stop-Siren/issues/74)는 `yejoo0310`, [#75](https://github.com/next-stop-siren/Next-Stop-Siren/issues/75)는 `davekim-dev`와 운영 역할을 나눠 협업한다. #76의 실제 독립 확인은 구현자가 아닌 팀원이 수행하고 확인자·결과를 남긴다.
-
-#19·#54는 관련 기능 구현과 담당 자체검사가 끝난 뒤 최종 통합검증을 진행한다. [PR #63](https://github.com/next-stop-siren/Next-Stop-Siren/pull/63)에 일부 결과가 제출돼 있으며 검토된 결과를 해당 범위에서 재사용한다. 실제 화면 격리와 전체 대기열 검증은 남아 있다. 운영·선택 리팩터링 전체를 기능 QA 선행으로 묶지 않는다.
-
-PR #62의 서버 대기열과 PR #64의 Rev 1 문서는 완료된 기반이다. #18·#20·#21 닫힘은 목업 완료이며 실제 화면 연결은 #65에서 진행한다. 실제 AI·배포는 완료되지 않았다. 세부 동작과 고정 commit·Rev 참조는 각 이슈를 따른다.
+아래는 이번에 승인된 수정 범위다. 이슈 번호는 구현 순서가 아니다. 기존 완료 범위와 실제 운영 실행을 구분하고, 각 작업의 자체검사 뒤 구현자와 분리된 검토자가 변경 결과를 확인한다. 이 표는 완료·배포 선언이 아니다.
 
 ## 담당별 우선순서와 병렬 진행
 
-이 표는 같은 담당자가 작업을 고르는 권장 순서다. 아래의 **직접 선행 표는 그대로**이며 우선순서 때문에 새 선행 관계를 추가하지 않는다. 결정이나 검토를 기다리면 준비 가능한 다음 작업으로 옮길 수 있다. 다른 담당자끼리는 병렬로 진행하되 한 사람이 여러 작업을 동시에 끝내야 한다는 뜻은 아니다.
+| 작업 | 담당·실행 경계 | 시작·완료 인계 |
+| --- | --- | --- |
+| [#106 실제 AI 선택·불완전 응답 처리](https://github.com/next-stop-siren/Next-Stop-Siren/issues/106) · B71-OBS-026 | Owner `xifoxy-ru` | 기본 mock을 유지하고 서버의 명시적 Codyssey 선택과 잘못된 설정의 실패, 비정상 스트림의 미완료 처리를 구현·모의 검증한다. 기존 [#68](https://github.com/next-stop-siren/Next-Stop-Siren/issues/68)의 완료 이력은 유지한다. 실제 AI 호출은 별도 승인이다. |
+| [#107 Google 가입·로그인 준비](https://github.com/next-stop-siren/Next-Stop-Siren/issues/107) · B71-OBS-057 | Owner `xifoxy-ru` | 기존 [#69](https://github.com/next-stop-siren/Next-Stop-Siren/issues/69) 실패 복귀를 보존하고 설정·callback·남은 운영자 작업을 정리한다. [실행 체크리스트](../03-development/google-login-readiness.md)에 따라 Console 설정, 서버 비밀 주입·backend 재생성, 실제 계정 확인을 문서·합성 검사와 구분한다. 이 문서 변경은 그 운영 실행의 승인이 아니다. |
+| [#108 공통 환영·시작 화면](https://github.com/next-stop-siren/Next-Stop-Siren/issues/108) + [#109 중립 회원 홈](https://github.com/next-stop-siren/Next-Stop-Siren/issues/109) · B71-OBS-058/059 | Owner `xifoxy-ru`, 함께 구현·검토 | 로그인 전후 공통 환영 화면과 Home 동작을 연결한다. 로그인·새로고침·Home에서 대화를 자동 생성·선택·열지 않고, 새 대화·이력을 명시적으로 고른 뒤 연다. 완료 기준은 각 이슈별로 확인한다. |
+| [#110 오래된 실패·중단 질문 복구](https://github.com/next-stop-siren/Next-Stop-Siren/issues/110) · B71-OBS-060 | Owner `xifoxy-ru`, 위 UI 작업과 별도 범위 | 100건 밖 이력을 커서로 읽어 질문·작업·allowed_actions를 복구한다. 마지막/빈 페이지·종료 경계, 재시도 키·SSE·회원 격리를 검증한다. #108/#109 완료를 구현 시작의 선행으로 요구하지 않는다. |
 
-| 담당 | 권장 순서와 기다리는 지점 |
-| --- | --- |
-| `gittul-123` | [#65](https://github.com/next-stop-siren/Next-Stop-Siren/issues/65) 회원 채팅 → [#67](https://github.com/next-stop-siren/Next-Stop-Siren/issues/67) 모달 → [#69](https://github.com/next-stop-siren/Next-Stop-Siren/issues/69) 실패 화면. #65가 결정을 기다리면 모달 등 준비 가능한 일을 먼저 할 수 있다. |
-| `davekim-dev` | [#70](https://github.com/next-stop-siren/Next-Stop-Siren/issues/70) **민감 로그 차단 단계** → [#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66) 문맥 → [#68](https://github.com/next-stop-siren/Next-Stop-Siren/issues/68) AI 연결. 값 결정을 기다릴 때 [#72](https://github.com/next-stop-siren/Next-Stop-Siren/issues/72) 준비 상태를 확인한다. #75는 Owner 환경과 협업하고, [#70](https://github.com/next-stop-siren/Next-Stop-Siren/issues/70) **전체 추적**은 [#65](https://github.com/next-stop-siren/Next-Stop-Siren/issues/65)·[#68](https://github.com/next-stop-siren/Next-Stop-Siren/issues/68) 연결 뒤 완성한다. |
-| `yejoo0310` | [#71](https://github.com/next-stop-siren/Next-Stop-Siren/issues/71) 가입 제한 → [#69](https://github.com/next-stop-siren/Next-Stop-Siren/issues/69) 실패 서버 → [#74](https://github.com/next-stop-siren/Next-Stop-Siren/issues/74) 프록시 협업. [#74](https://github.com/next-stop-siren/Next-Stop-Siren/issues/74) 실제 확인은 Owner의 [#73](https://github.com/next-stop-siren/Next-Stop-Siren/issues/73) 프록시·실행 프로세스 구성 결과를 사용한다. |
-| Owner `xifoxy-ru` | [#73](https://github.com/next-stop-siren/Next-Stop-Siren/issues/73) 운영 구성 → [#74](https://github.com/next-stop-siren/Next-Stop-Siren/issues/74) 프록시 확인·[#75](https://github.com/next-stop-siren/Next-Stop-Siren/issues/75) 백업과 복구를 각 담당자와 진행 → [#76](https://github.com/next-stop-siren/Next-Stop-Siren/issues/76) 측정·장애·검증 자료 준비. #76의 실제 독립 확인은 구현하지 않은 팀원이 수행한다. |
-
-아래는 **현재 열린 작업의 진행·인계 요약**이다. 각 박스 안의 전체 작업이 끝나야 다음 박스를 시작한다는 뜻이 아니다. 화살표에 적힌 해당 작업 결과만 기다리며, 정확한 직접 선행은 다음 절의 표를 따른다.
+네 범위는 병렬로 준비할 수 있다. #108/#109는 Owner 선택에 따라 같은 회원 홈 흐름으로 묶고, #106·#107·#110은 각각의 계약과 검증을 남긴다. 합칠 때는 공통 파일 충돌을 검토하고 회원 전환·이력·인증 회귀를 독립 확인한다. 검토된 변경만 병합하며 원격 게시·배포·실제 AI 및 Google 실행은 해당 승인 범위를 별도로 확인한다.
 
 ```mermaid
 flowchart LR
-  subgraph PAR["서로 병렬로 시작 가능한 준비 · 각 담당은 위 우선순서대로"]
-    F["gittul: #65 실제 화면"]
-    B["dave: #70 민감 로그부터, 다음 #66·#68"]
-    A["yejoo: #71 가입·#69 서버"]
-    O["Owner: #73 운영 구성"]
+  AI["#106 AI 선택·스트림 검증"]
+  GOOGLE["#107 Google 설정·callback 인계"]
+  subgraph MEMBER_HOME["함께 구현·검토"]
+    HOME108["#108 공통 환영·시작"]
+    HOME109["#109 중립 회원 홈"]
   end
-  F -->|"#65·#67·#69 화면과 자체검사"| Q19["#19 인증·소유권 통합"]
-  A -->|"#69·#71과 다른 담당자 확인"| Q19
-  Q19 --> Q54["#54 대기열·장애 통합"]
-  B -->|"#66·#68 결과"| Q54
-  F -->|"#65 연결 결과"| TRACE["#70 전체 추적 · #65·#68 뒤"]
-  B -->|"#68 연결 결과"| TRACE
-  O --> OPS["Owner와 #74·#75 담당자 협업"]
-  OPS --> FINAL["Owner #76 측정·검증 준비 → 다른 팀원 독립 확인"]
-  TRACE --> FINAL
-  Q54 --> FINAL
-  B -->|"#72 준비 확인 결과"| FINAL
+  HISTORY["#110 오래된 실패·중단 작업 복구"]
+  REVIEW["범위별 자체검사 → 구현자와 분리된 검토"]
+  INTEGRATE["공통 파일 대조·회귀 확인 후 병합 판단"]
+  OPERATOR["승인된 운영자 설정·비밀 주입·backend 재생성"]
+  ACCOUNT["실제 Google 가입·재로그인·세션 독립 확인"]
+  AI --> REVIEW
+  GOOGLE --> REVIEW
+  HOME108 --> REVIEW
+  HOME109 --> REVIEW
+  HISTORY --> REVIEW
+  REVIEW --> INTEGRATE
+  GOOGLE -->|"문서·합성 검사와 별도"| OPERATOR
+  OPERATOR --> ACCOUNT
+  click AI "https://github.com/next-stop-siren/Next-Stop-Siren/issues/106"
+  click GOOGLE "https://github.com/next-stop-siren/Next-Stop-Siren/issues/107"
+  click HOME108 "https://github.com/next-stop-siren/Next-Stop-Siren/issues/108"
+  click HOME109 "https://github.com/next-stop-siren/Next-Stop-Siren/issues/109"
+  click HISTORY "https://github.com/next-stop-siren/Next-Stop-Siren/issues/110"
 ```
 
-실제 데이터 사용·외부 로그 수집 전에는 #70의 민감 로그 차단 결과를 확인한다. 전체 처리 단계 추적은 기능 연결이 끝난 뒤 완성하므로 앞의 안전 수정을 막지 않는다. [#66](https://github.com/next-stop-siren/Next-Stop-Siren/issues/66) 문맥 수정은 #68의 입력 길이·토큰 한도 결정을 기다리지 않는다. [#19](https://github.com/next-stop-siren/Next-Stop-Siren/issues/19)·#54는 관련 기능과 자체검사 뒤 진행하며 운영·선택 리팩터링 전체를 선행으로 묶지 않는다.
-
-아직 정하지 않은 값·운영 설정은 각 이슈에서 결정한다. #76의 독립 확인자 이름은 실제로 맡은 팀원과 확인 결과에 기록하며 Owner의 자체검사로 대신하지 않는다.
+[#73 운영 구성](https://github.com/next-stop-siren/Next-Stop-Siren/issues/73)·[#74 프록시 제한](https://github.com/next-stop-siren/Next-Stop-Siren/issues/74)·[#75 데이터·복구](https://github.com/next-stop-siren/Next-Stop-Siren/issues/75)·[#76 운영 측정](https://github.com/next-stop-siren/Next-Stop-Siren/issues/76)의 기존 담당·직접 선행·진행 상태는 이번 수정으로 바꾸지 않는다. 운영 환경은 PM-2/Owner가 관리한다. 아래 이전 공정은 당시 의존 관계를 보존한 기록이며 현재 미완료 목록이 아니다. 실제 완료·검토·운영 결과는 각 이슈와 연결 PR에서 확인한다.
 
 ## 2차 직접 선행
 
-아래는 현재 등록된 작업의 직접 선행이다. 닫힌 기반 이슈도 재사용 관계를 표시한다. 아래 표와 그림은 같은 간선이며, 뒤의 과거 공정 기록과 구분한다. 미정인 입력 길이·토큰 상한, 가입 제한값과 운영 설정은 각 이슈에서 결정한다.
+아래는 2026-10-25에 등록한 작업의 직접 선행 기록이다. 현재 수정 작업은 위 2026-11-25 인계를 따른다. 닫힌 기반 이슈도 재사용 관계를 표시한다. 아래 표와 그림은 같은 간선이며, 뒤의 과거 공정 기록과 구분한다. 미정인 입력 길이·토큰 상한, 가입 제한값과 운영 설정은 각 이슈에서 결정한다.
 
 | 작업 | 담당 | 직접 선행 |
 | --- | --- | --- |
