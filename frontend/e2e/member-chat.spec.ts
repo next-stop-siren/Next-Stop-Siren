@@ -1,3 +1,4 @@
+import { chooseMemberChat } from './member-home.helpers'
 import { expect, type Page, test } from '@playwright/test'
 
 // 실제 API·DB·대기열 실행기(무료 모의 제공자)와 연결한 회원 채팅 검사다. `local test-e2e`의 전체 환경에서 실행한다.
@@ -27,6 +28,7 @@ async function signUp(page: Page, name: string) {
 async function openMemberChat(page: Page) {
   await page.goto('/')
   await expect(page.getByRole('button', { name: '로그아웃' })).toBeVisible()
+  await chooseMemberChat(page)
   await expect(page.getByRole('status', { name: '실시간 연결 상태' })).toHaveText('실시간 연결됨')
 }
 
@@ -55,6 +57,7 @@ test('질문을 접수하면 구독으로 저장된 답변을 받고, 새로고�
   await expect(sidebar.getByRole('button')).toHaveAttribute('aria-current', 'page')
 
   await page.reload()
+  await chooseMemberChat(page)
   await expect(thread(page, '어린이보호구역 제한속도는?')).toContainText(ANSWER)
   await expect(sidebar.getByRole('button')).toHaveAttribute('aria-current', 'page')
 })
@@ -94,6 +97,7 @@ test('서버가 접수한 뒤 응답을 잃어도 입력이 풀리고, 구독으
   // 새로고침해도 서버에는 질문이 하나뿐이다.
   await page.unroute('**/api/conversations/*/messages')
   await page.reload()
+  await chooseMemberChat(page)
   await expect(thread(page, '응답을 잃을 질문')).toHaveCount(1)
   await expect(page.getByText(/오늘 남은 질문 399\/400/)).toBeVisible()
 })
