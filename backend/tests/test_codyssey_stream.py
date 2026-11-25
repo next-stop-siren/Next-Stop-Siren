@@ -195,6 +195,36 @@ def test_an_error_or_malformed_chunk_fails_the_stream(gpt, caplog, line, logged)
 
 
 @pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"choices": None},
+        {"choices": []},
+        {"choices": [None]},
+        {"choices": [{"delta": {"content": 123}}]},
+        {"choices": [{"delta": None, "finish_reason": "stop"}]},
+        {"choices": [{"delta": {}, "finish_reason": ["stop"]}]},
+        {"choices": [{"index": 1, "delta": {"content": "fixture-provider-detail"}}]},
+        {"choices": [{"delta": {}}, {"delta": {}}]},
+    ],
+)
+def test_malformed_chunk_between_valid_pieces_never_completes_partial_answer(gpt, caplog, payload):
+    gpt.lines = [chunk("합성 "), "data: " + json.dumps(payload), chunk(finish_reason="stop"), DONE]
+    assert chat_runner.generate(gpt.provider, CONTEXT) == chat_queue.PROVIDER_FAILED
+    assert len(gpt.requests) == 1
+    assert "outcome=completed" not in caplog.text
+    assert_nothing_private(caplog.text)
+
+
+@pytest.mark.parametrize("late", [chunk("늦은 조각"), chunk(finish_reason="stop"), chunk(finish_reason="length")])
+def test_choice_after_finish_is_a_failure_even_if_done_follows(gpt, late):
+    gpt.lines = [chunk("합성 "), chunk(finish_reason="stop"), late, DONE]
+    pieces, error = read(gpt)
+    assert pieces == ["합성 "] and isinstance(error, ProviderFailed)
+    assert len(gpt.requests) == 1
+
+
+@pytest.mark.parametrize(
     "reply",
     [
         (429, b'{"error": {"message": "rate limit"}}'),

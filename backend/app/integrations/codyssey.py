@@ -1,8 +1,8 @@
 """The real answer provider: Codyssey's GPT API with the fixed gpt-5.5 model (S11, #68).
 
-Nothing in the public service selects this adapter yet; `get_provider()` stays the
-free mock until switching to the real AI is approved separately. It is used by the
-stand-in server checks and the explicit, isolated smoke test.
+The worker selects this adapter only with the explicit server-side
+`CHAT_PROVIDER=codyssey` setting. Mock remains the default. Selection validates
+configuration without contacting the provider.
 
 One call is one HTTP request. There is no automatic retry and no fallback to another
 model or provider. The caller's wait ends at the deadline, when the connection is
@@ -294,6 +294,9 @@ class CodysseyGptProvider:
                     )
                     return
                 content, reason = self._chunk(call, data, pieces)
+                if finish_reason is not None and (content is not None or reason is not None):
+                    self._log_incomplete(call, "after_finish", pieces)
+                    raise ProviderFailed
                 if reason is not None:
                     finish_reason = reason
                 if content:
@@ -330,12 +333,24 @@ class CodysseyGptProvider:
             )
             raise ProviderFailed
         choices = chunk.get("choices")
-        # A chunk without choices, such as a usage report, carries no piece.
-        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        # Only an explicit usage report may have no choices. Malformed chunks must
+        # not silently disappear between valid pieces and a later stop marker.
+        if choices == [] and isinstance(chunk.get("usage"), dict):
             return None, None
-        delta = choices[0].get("delta")
-        content = delta.get("content") if isinstance(delta, dict) else None
-        return (content if isinstance(content, str) else None), choices[0].get("finish_reason")
+        if not isinstance(choices, list) or len(choices) != 1 or not isinstance(choices[0], dict):
+            self._log_incomplete(call, "invalid_response", pieces)
+            raise ProviderFailed
+        choice = choices[0]
+        delta, reason = choice.get("delta"), choice.get("finish_reason")
+        if (
+            not isinstance(delta, dict)
+            or (delta.get("content") is not None and not isinstance(delta["content"], str))
+            or (reason is not None and not isinstance(reason, str))
+            or ("index" in choice and (type(choice["index"]) is not int or choice["index"] != 0))
+        ):
+            self._log_incomplete(call, "invalid_response", pieces)
+            raise ProviderFailed
+        return delta.get("content"), reason
 
     def _log_incomplete(self, call: _Call, reason: str, pieces: int) -> None:
         logger.warning(

@@ -297,4 +297,4 @@ def test_logs_hold_only_status_and_time(gpt, caplog):
 
 
 def test_the_public_service_still_uses_the_free_mock():
-    assert isinstance(get_provider(), MockProvider)
+    assert isinstance(get_provider({}), MockProvider)
