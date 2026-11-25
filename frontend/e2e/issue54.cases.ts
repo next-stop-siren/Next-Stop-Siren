@@ -152,6 +152,10 @@ test('B4 - 새로고침은 임시 delta를 지우고 완료 뒤 저장된 전체
   })
 
   await page.reload()
+  // 이 검사는 이미 저장된 기록의 재진입이다. 초기 빈 목록 표시를 새 대화 의도로 해석하지 않는다.
+  await expect(page.getByRole('navigation', { name: '대화 기록' }).getByRole('button', { name: /대화 ·/ })).toHaveCount(
+    1,
+  )
   await chooseMemberChat(page)
   await expect(page.getByRole('status', { name: '실시간 연결 상태' })).toHaveText('실시간 연결됨')
   await expect(thread(page, question)).toContainText('답변 생성 중입니다.')

@@ -261,6 +261,7 @@ test('대화 목록도 next_cursor를 따라 모두 읽고, 사이드바에 같�
   })
 
   await renderChat()
+  fireEvent.click(screen.getByRole('button', { name: '기록 더 불러오기' }))
 
   expect(await findConversationButton('502')).toBeTruthy()
   await screen.findByText('Q-503')

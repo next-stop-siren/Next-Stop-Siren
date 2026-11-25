@@ -14,6 +14,9 @@ export type SidebarConversations = {
   /** 질문을 보내는 동안처럼 대화를 바꿀 수 없을 때 */
   disabled: boolean
   loading: boolean
+  hasMore?: boolean
+  error?: string
+  onLoadMore?: () => void
 }
 
 type SidebarProps = {
@@ -88,6 +91,12 @@ function Sidebar({ isAuthenticated, onHomeClick, onLoginClick, onLogoutClick, co
               )
             })}
           </ul>
+        )}
+        {member?.error && <p role="alert">{member.error}</p>}
+        {member && (member.hasMore || member.error) && (
+          <button type="button" disabled={member.loading} onClick={member.onLoadMore}>
+            {member.loading ? '기록 불러오는 중...' : member.error ? '기록 다시 불러오기' : '기록 더 불러오기'}
+          </button>
         )}
       </nav>
 
