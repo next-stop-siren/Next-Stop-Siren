@@ -398,12 +398,10 @@ test('B2/B7: retry 응답을 잃은 뒤 재시도 키를 재사용해 예약을 
 
   const keys: string[] = []
   let originalResponseJobId = ''
-  let authorization = ''
   const retryRoute = async (route: Route) => {
     if (route.request().method() !== 'POST') return route.fallback()
     const body = JSON.parse(route.request().postData() ?? '{}') as { retry_key: string }
     keys.push(body.retry_key)
-    authorization = (await route.request().headerValue('authorization')) ?? ''
     if (keys.length === 1) {
       const response = await route.fetch()
       expect(response.status()).toBe(202)
@@ -426,45 +424,48 @@ test('B2/B7: retry 응답을 잃은 뒤 재시도 키를 재사용해 예약을 
     await expect(page.getByRole('alert')).toContainText('다시 누르면 같은 요청으로 확인합니다.')
 
     const retryAgain = retryCard.getByRole('button', { name: '재시도', exact: true })
-    const retryActionVisible = await retryAgain.isVisible()
-    if (!retryActionVisible) {
-      // Confirm the precise lost-response state before classifying the UI recovery gap.
-      await expect(retryAgain).toHaveCount(0)
-      await expect(jobCard(page, question, originalResponseJobId)).toHaveCount(0)
-      const response = await page.request.post(
-        `${ORIGIN}/api/conversations/${failed.job.conversation_id}/messages/${failed.question.id}/retry`,
-        { headers: { Authorization: authorization, Origin: ORIGIN }, data: { retry_key: keys[0] } },
+    await expect(retryAgain).toBeVisible()
+    const secondResponse = page.waitForResponse((response) => {
+      const request = response.request()
+      return (
+        request.method() === 'POST' &&
+        /\/api\/conversations\/\d+\/messages\/\d+\/retry$/.test(new URL(response.url()).pathname)
       )
-      expect(response.status()).toBe(202)
-      expect(((await response.json()) as SubmitEnvelope).job.id).toBe(originalResponseJobId)
-      expect(keys).toHaveLength(1)
-      const member = await memberState(email)
-      expect(member.items.filter((item) => item.job_kind === 'retry')).toHaveLength(1)
-      expect(member.reservation_count).toBe(2)
-    } else {
-      const secondResponse = page.waitForResponse((response) => {
-        const request = response.request()
-        return (
-          request.method() === 'POST' &&
-          /\/api\/conversations\/\d+\/messages\/\d+\/retry$/.test(new URL(response.url()).pathname)
-        )
-      })
-      await retryAgain.click()
-      const response = await secondResponse
-      expect(response.status()).toBe(202)
-      expect(keys).toHaveLength(2)
-      expect(keys[1]).toBe(keys[0])
-      expect(((await response.json()) as SubmitEnvelope).job.id).toBe(originalResponseJobId)
-      expect((await memberState(email)).reservation_count).toBe(2)
-    }
+    })
+    await retryAgain.click()
+    const response = await secondResponse
+    expect(response.status()).toBe(202)
+    expect(keys).toHaveLength(2)
+    expect(keys[1]).toBe(keys[0])
+    expect(((await response.json()) as SubmitEnvelope).job.id).toBe(originalResponseJobId)
+    const acceptedMember = await memberState(email)
+    expect(acceptedMember.items.filter((item) => item.job_kind === 'retry')).toHaveLength(1)
+    expect(acceptedMember.reservation_count).toBe(2)
     releaseGate(question, 'attempt_2')
     await waitForAnswer(question, 'completed', 'settled')
     await saveEvidence(email, question, failed.job.id)
     await saveEvidence(email, question, originalResponseJobId)
-    if (!retryActionVisible) {
-      test.fail(true, '재시도 응답 유실/SSE 단절 시 같은 키 확인 버튼 소실')
-      await expect(retryAgain).toBeVisible()
-    }
+    await page.evaluate(() => {
+      ;(window as unknown as { __blockChatEvents: boolean }).__blockChatEvents = false
+    })
+    await expect(jobCard(page, question, originalResponseJobId)).toContainText('답변 완료 · 저장됨', {
+      timeout: 20_000,
+    })
+    const completedMember = await memberState(email)
+    const retries = completedMember.items.filter((item) => item.job_kind === 'retry')
+    expect(retries).toHaveLength(1)
+    expect(retries[0]).toMatchObject({
+      job_id: originalResponseJobId,
+      job_state: 'completed',
+      reservation_state: 'settled',
+    })
+    expect(
+      (await providerStarts()).filter(
+        (event) => event.question === question && event.attempt === 2 && event.event === 'started',
+      ),
+    ).toHaveLength(1)
+    await openMemberChat(page)
+    await expect(jobCard(page, question, originalResponseJobId)).toContainText('답변 완료 · 저장됨')
   } finally {
     await page.unroute('**/api/conversations/*/messages/*/retry', retryRoute)
     releaseGate(question, 'attempt_2')
