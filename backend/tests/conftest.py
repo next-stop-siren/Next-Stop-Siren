@@ -24,6 +24,8 @@ from db_guard import guarded_live_url
 
 # An app started by a test runs no chat job worker unless the test turns it on.
 os.environ["CHAT_WORKER"] = "off"
+# A developer's opt-in must not turn ordinary worker tests into paid provider calls.
+os.environ["CHAT_PROVIDER"] = "mock"
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

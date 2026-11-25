@@ -1,13 +1,13 @@
 """The answer provider that the chat service calls, and its free mock.
 
-The mock makes no network call and costs nothing, and it stays the public service's
-provider. The real adapter in `codyssey.py` keeps this interface, `complete` and
-`stream`, and its two failures; it is used only by the stand-in server checks and
-the isolated smoke test until switching the public service is approved (#68).
+The mock makes no network call and costs nothing. Only an explicit server-side
+`CHAT_PROVIDER=codyssey` selects the real adapter; invalid settings never fall back
+to mock. Constructing either provider makes no network call.
 """
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
+import os
 from typing import Protocol
 
 
@@ -55,5 +55,19 @@ class MockProvider:
         yield from self.PIECES
 
 
-def get_provider() -> AnswerProvider:
-    return MockProvider()
+class ProviderSettingsError(ValueError):
+    """Invalid provider selection, without echoing environment values."""
+
+
+def get_provider(environ: Mapping[str, str] | None = None) -> AnswerProvider:
+    """Select once at worker startup; omission means mock, every explicit value is checked."""
+    values = os.environ if environ is None else environ
+    selected = values.get("CHAT_PROVIDER", "mock")
+    if selected == "mock":
+        return MockProvider()
+    if selected == "codyssey":
+        # The adapter imports the protocol types above; load it only after this module is ready.
+        from app.integrations.codyssey import CodysseyGptProvider, GptSettings
+
+        return CodysseyGptProvider(GptSettings.from_env(values))
+    raise ProviderSettingsError("CHAT_PROVIDER: mock 또는 codyssey를 정확히 지정해 주세요.")

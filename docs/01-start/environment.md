@@ -55,7 +55,11 @@ macOS에는 Git과 실행 중인 Docker 엔진·Compose(Colima 또는 Docker Des
 
 ## S11 개인 AI 설정
 
-[S11 GPT 기준](../04-reference/ai.md)의 개인별 서버 키·파일럿 총예산·고정 모델 기준을 따른다. 키는 각자의 백엔드/서버 `.env`에만 보관하고 프런트엔드에 전달하지 않는다. `CODYSSEY_API_KEY`, `CODYSSEY_BASE_URL`, `CODYSSEY_MODEL` 파서와 어댑터는 격리 스모크 전용이다. 일반 앱의 `get_provider()`는 모의를 유지한다. 실제 키 없이도 모의 대화 저장·조회가 가능하다.
+[S11 GPT 기준](../04-reference/ai.md)의 개인별 서버 키·파일럿 총예산·고정 모델 기준을 따른다. 키와 제공자 선택은 각자의 백엔드/서버 `.env`에서만 관리하고 프런트엔드에 전달하지 않는다. `CHAT_PROVIDER`를 생략하거나 정확히 `mock`으로 지정하면 무료 모의 제공자를 사용하므로 실제 키 없이도 모의 대화 저장·조회가 가능하다. Codyssey 설정만 추가해도 실제 AI로 전환되지 않는다.
+
+실제 어댑터는 정확한 `CHAT_PROVIDER=codyssey`로 선택한다. 이때 `CODYSSEY_API_KEY`가 필수이며 `CODYSSEY_BASE_URL=https://copa.codyssey.kr/v1`, `CODYSSEY_MODEL=gpt-5.5`와 정확히 일치해야 한다. 선택값이 빈 값·그 밖의 값이거나 Codyssey 설정이 없거나 잘못되면 작업 실행기 시작을 실패시키고 mock·다른 제공자로 자동 대체하지 않는다. 실행기가 켜져 있으면 프로세스 시작 시 주입된 환경값을 한 번 읽어 검증·선택하므로 로컬 프로세스는 변경된 환경값으로 다시 시작하고, 운영 Compose의 `env_file` 변경은 [기존 승인된 배포 절차](../../deploy/actions/README.md)에 따라 백엔드 컨테이너를 재생성해 주입하며 `docker compose restart`만으로는 반영되지 않는다. `CHAT_WORKER=off`이면 제공자를 선택하지 않고 실행기가 꺼진 상태로 시작한다.
+
+어댑터 구성 자체는 요청을 보내지 않지만 실제 어댑터로 시작한 실행기는 접수된 작업에서 유료 호출을 할 수 있다. 운영 활성화와 실제·유료 호출은 별도 승인 뒤에만 수행한다. 운영 예시 `deploy/production.env.example`도 기본값은 `CHAT_PROVIDER=mock`이며, 실제 키는 저장소에 기록하지 않는다.
 
 ## PM 배포 준비 체크리스트
 
