@@ -300,3 +300,20 @@ test('닫은 모달의 늦은 로그인 성공은 회원 화면으로 전환하�
 
   fetchSpy.mockRestore()
 })
+
+test('비회원 홈 버튼은 클릭·Enter·Space로 환영 화면을 유지하며 채팅이나 인증 요청을 만들지 않는다', async () => {
+  const fetchSpy = mockGuestSession()
+  const user = userEvent.setup()
+  render(<App />)
+  const home = await screen.findByRole('button', { name: '교통법 AI 홈' })
+  await user.click(home)
+  for (const key of ['{Enter}', ' ']) {
+    home.focus()
+    await user.keyboard(key)
+    expect(screen.getByRole('heading', { name: /복잡한 교통법/ })).toBeTruthy()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByLabelText('질문 입력')).toBeNull()
+  }
+  expect(fetchSpy.mock.calls.map(([input]) => String(input))).toEqual(['/api/auth/csrf'])
+  fetchSpy.mockRestore()
+})

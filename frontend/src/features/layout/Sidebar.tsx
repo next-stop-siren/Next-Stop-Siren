@@ -18,6 +18,7 @@ export type SidebarConversations = {
 
 type SidebarProps = {
   isAuthenticated: boolean
+  onHomeClick: () => void
   onLoginClick: () => void
   onLogoutClick: () => void
   conversations?: SidebarConversations
@@ -36,13 +37,17 @@ export function conversationLabel(conversation: SidebarConversation): string {
   return `대화 · ${conversationTime.format(new Date(conversation.created_at))}`
 }
 
-function Sidebar({ isAuthenticated, onLoginClick, onLogoutClick, conversations }: SidebarProps) {
+function Sidebar({ isAuthenticated, onHomeClick, onLoginClick, onLogoutClick, conversations }: SidebarProps) {
   const member = isAuthenticated ? conversations : undefined
 
   return (
     <aside className={styles.sidebar} aria-label="사이드바">
       <div className={styles.sidebarHeader}>
-        <h2>교통법 AI</h2>
+        <h2>
+          <button type="button" className={styles.homeButton} onClick={onHomeClick} aria-label="교통법 AI 홈">
+            교통법 AI
+          </button>
+        </h2>
       </div>
 
       <button

@@ -1,3 +1,4 @@
+import { chooseMemberChat } from './member-home.helpers'
 import { expect, type Page, test } from '@playwright/test'
 import {
   ORIGIN,
@@ -228,6 +229,7 @@ test('B9: 4분 빠른 클라이언트 시계에서도 실제 서버 간격·한�
   expect(actualLimits.daily.remaining).toBeGreaterThan(0)
   expect(actualLimits.six_hour.remaining).toBe(0)
   await page.reload()
+  await chooseMemberChat(page)
   await expect(page.getByRole('status', { name: '실시간 연결 상태' })).toHaveText('실시간 연결됨')
 
   const latestReset = [actualLimits.daily, actualLimits.six_hour]
@@ -293,6 +295,7 @@ test('B9: 실제 expires_at 기준으로 queued 만료 초를 안내하고 worke
     expect(apiRemaining).toBeLessThanOrEqual(6)
 
     await page.reload()
+    await chooseMemberChat(page)
     await expect(page.getByRole('status', { name: '실시간 연결 상태' })).toHaveText('실시간 연결됨')
     await expect(card).toContainText(/만료까지 \d+초/)
     const shownSeconds = secondsFrom(await card.innerText(), /만료까지 (\d+)초/)

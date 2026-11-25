@@ -1,3 +1,4 @@
+import { chooseMemberChat } from './member-home.helpers'
 import { expect, test } from '@playwright/test'
 import {
   PASSWORD,
@@ -39,6 +40,7 @@ test('B1 - 202 접수 뒤 저장된 답변은 새로고침 뒤 같은 작업으�
   await saveEvidence(email, question, accepted.job.id)
 
   await page.reload()
+  await chooseMemberChat(page)
   await expect(thread(page, question)).toContainText('모의 답변입니다.')
   await expect(thread(page, question)).toContainText('답변 완료 · 저장됨')
   expect(await memberState(email)).toMatchObject({ question_count: 1, reservation_count: 1 })
@@ -150,6 +152,7 @@ test('B4 - 새로고침은 임시 delta를 지우고 완료 뒤 저장된 전체
   })
 
   await page.reload()
+  await chooseMemberChat(page)
   await expect(page.getByRole('status', { name: '실시간 연결 상태' })).toHaveText('실시간 연결됨')
   await expect(thread(page, question)).toContainText('답변 생성 중입니다.')
   await expect(thread(page, question)).not.toContainText('중간 조각')
@@ -283,6 +286,7 @@ test('B6 - A의 임시 출력과 늦은 이력 응답은 같은 탭에서 B로 �
   await dialog.getByLabel('비밀번호').fill(PASSWORD)
   await dialog.locator('form').getByRole('button', { name: '로그인', exact: true }).click()
   await expect(page.getByRole('button', { name: '로그아웃' })).toBeVisible()
+  await chooseMemberChat(page)
   await expect(page.getByRole('status', { name: '실시간 연결 상태' })).toHaveText('실시간 연결됨')
   await expect(thread(page, question)).toHaveCount(0)
   await expect(page.locator(`[data-job-id="${jobB.id}"]`)).toContainText('답변 생성 중입니다.')
@@ -341,6 +345,7 @@ test('B6 - A의 임시 출력과 늦은 이력 응답은 같은 탭에서 B로 �
   await aDialog.getByLabel('비밀번호').fill(PASSWORD)
   await aDialog.locator('form').getByRole('button', { name: '로그인', exact: true }).click()
   await expect(page.getByRole('button', { name: '로그아웃' })).toBeVisible()
+  await chooseMemberChat(page)
   await expect(page.locator(`[data-job-id="${job.id}"]`)).toContainText('중간 조각 뒤 저장 답변')
   await expect(thread(page, question)).toContainText('답변 완료 · 저장됨')
   expect(await databaseState(question)).toMatchObject({

@@ -8,7 +8,7 @@ import {
   readGoogleLoginFailure,
 } from './features/auth/googleLoginFailure'
 import Sidebar from './features/layout/Sidebar'
-import NonmemberIntro from './features/nonmember/NonmemberIntro'
+import Welcome from './features/home/Welcome'
 import MemberWorkspace from './features/member-chat/MemberWorkspace'
 import MemberChatMockPreview from './features/member-chat/MemberChatMockPreview'
 
@@ -113,11 +113,14 @@ function AppShell() {
           <MemberWorkspace key={user?.id ?? ''} onLogoutClick={handleLogout} />
         ) : (
           <>
-            <Sidebar isAuthenticated={false} onLoginClick={openAuthModal} onLogoutClick={handleLogout} />
+            <Sidebar
+              isAuthenticated={false}
+              onHomeClick={closeAuthModal}
+              onLoginClick={openAuthModal}
+              onLogoutClick={handleLogout}
+            />
 
-            <main className="main-content">
-              {status === 'guest' ? <NonmemberIntro onAuthRequired={openAuthModal} /> : null}
-            </main>
+            <main className="main-content">{status === 'guest' ? <Welcome onStart={openAuthModal} /> : null}</main>
           </>
         )}
 

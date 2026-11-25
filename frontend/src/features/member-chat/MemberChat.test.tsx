@@ -103,7 +103,7 @@ function fakeEvents() {
   }
 }
 
-function renderChat(options: { requestTimeoutMs?: number } = {}) {
+async function renderChat(options: { requestTimeoutMs?: number; startBeforeList?: boolean } = {}) {
   const events = fakeEvents()
   const ui = () => (
     <div className="app-layout">
@@ -120,6 +120,22 @@ function renderChat(options: { requestTimeoutMs?: number } = {}) {
     </div>
   )
   const result = render(ui())
+
+  // 채팅 흐름 검사의 준비 동작: 홈에서 기록 또는 새 대화를 명시적으로 누른다.
+  // 홈 자체의 회귀 검사는 MemberWorkspace.home.test.tsx가 이 helper 없이 다룬다.
+  if (options.startBeforeList) {
+    fireEvent.click(screen.getByRole('button', { name: '＋ 새 대화' }))
+  } else {
+    await waitFor(() => {
+      const history = within(screen.getByRole('navigation', { name: '대화 기록' }))
+      const first = history.queryAllByRole('button')[0]
+      if (first) fireEvent.click(first)
+      else {
+        expect(history.getByText('대화 기록이 아직 없어요.')).toBeTruthy()
+        fireEvent.click(screen.getByRole('button', { name: '＋ 새 대화' }))
+      }
+    })
+  }
 
   return { ...result, events, rerender: () => result.rerender(ui()) }
 }
@@ -230,7 +246,7 @@ test('첫 페이지 이후에도 next_cursor를 따라 최신 메시지까지 �
     return undefined
   })
 
-  renderChat()
+  await renderChat()
 
   expect(await screen.findByText('A-LAST')).toBeTruthy()
   expect(screen.getByText('A-FIRST')).toBeTruthy()
@@ -244,7 +260,7 @@ test('대화 목록도 next_cursor를 따라 모두 읽고, 사이드바에 같�
     return undefined
   })
 
-  renderChat()
+  await renderChat()
 
   expect(await findConversationButton('502')).toBeTruthy()
   await screen.findByText('Q-503')
@@ -262,7 +278,7 @@ test('사이드바에서 대화를 고르면 본문이 그 대화를 보여 주�
     return undefined
   })
 
-  renderChat()
+  await renderChat()
   await screen.findByText('Q-502')
 
   await user.click(conversationButton('501'))
@@ -286,7 +302,7 @@ test('access 토큰이 갱신돼도 선택한 대화가 유지되고 목록을 �
     return undefined
   })
 
-  const { rerender, events } = renderChat()
+  const { rerender, events } = await renderChat()
 
   await screen.findByText('Q-502')
   await user.click(conversationButton('501'))
@@ -316,7 +332,7 @@ test('토큰 갱신 뒤의 요청과 재연결은 새 토큰을 쓴다', async (
     return undefined
   })
 
-  const { rerender, events } = renderChat()
+  const { rerender, events } = await renderChat()
   await findConversationButton('501')
 
   auth.value = { accessToken: 'token-2', user: { id: 'u1' } }
@@ -357,7 +373,7 @@ test('작업 없이 이력에만 있는 실패·중단·진행 중 답변은 내
     return undefined
   })
 
-  renderChat()
+  await renderChat()
 
   expect(await screen.findByText('FINAL-ANSWER')).toBeTruthy()
   expect(screen.queryByText('PARTIAL-FAILED')).toBeNull()
@@ -384,7 +400,7 @@ test('대화를 읽지 못하면 다시 불러오기를 권하고, 누르면 그
     return undefined
   })
 
-  renderChat()
+  await renderChat()
   await screen.findByText('Q-502')
   await user.click(conversationButton('501'))
 
@@ -414,7 +430,7 @@ test('대화를 빠르게 바꾸면 이전 대화의 조회를 끊고, 늦게 �
     return undefined
   })
 
-  renderChat()
+  await renderChat()
   await screen.findByText('Q-502')
 
   await user.click(conversationButton('501'))
@@ -446,7 +462,7 @@ test('202 접수 뒤 대기 → 생성 중 임시 출력 → 저장된 답변으
     return undefined
   })
 
-  const { events } = renderChat()
+  const { events } = await renderChat()
   await findConversationButton('501')
   await waitFor(() => expect(events.connections).toHaveLength(1))
   events.last.emit(snapshot())
@@ -510,7 +526,7 @@ test('구독 이벤트가 접수 응답보다 먼저 와도 늦은 응답이 진
     return undefined
   })
 
-  const { events } = renderChat()
+  const { events } = await renderChat()
   await findConversationButton('501')
   await waitFor(() => expect(events.connections).toHaveLength(1))
 
@@ -541,7 +557,7 @@ test('연결이 끊기면 마지막 server_time을 since로 다시 열고, 끊�
     return undefined
   })
 
-  const { events } = renderChat()
+  const { events } = await renderChat()
   await screen.findByText('질문')
   await waitFor(() => expect(events.connections).toHaveLength(1))
 
@@ -591,7 +607,7 @@ test('전송이 서버 오류로 실패하면 입력이 풀리고, 다시 보낼
     return undefined
   })
 
-  renderChat()
+  await renderChat()
   await findConversationButton('501')
 
   await user.type(textarea(), '  같은 질문  ')
@@ -642,7 +658,7 @@ test('응답이 오지 않으면 시간 초과로 입력을 풀고, 한도 0·10
     return undefined
   })
 
-  const { events } = renderChat({ requestTimeoutMs: 50 })
+  const { events } = await renderChat({ requestTimeoutMs: 50 })
   await findConversationButton('501')
   await waitFor(() => expect(events.connections).toHaveLength(1))
 
@@ -689,7 +705,7 @@ test('응답을 잃은 질문이 실제로 접수돼 구독으로 나타나면 �
     return undefined
   })
 
-  const { events } = renderChat()
+  const { events } = await renderChat()
   await findConversationButton('501')
   await waitFor(() => expect(events.connections).toHaveLength(1))
   events.last.emit(snapshot())
@@ -727,7 +743,7 @@ test('한도 표시는 새 질문 대기·재시도 대기·실행 중을 따로
     return undefined
   })
 
-  const { events } = renderChat()
+  const { events } = await renderChat()
   await findConversationButton('501')
   await waitFor(() => expect(events.connections).toHaveLength(1))
   events.last.emit(
@@ -749,7 +765,7 @@ test('한도·대기 상태에 따라 입력을 막고, 재시도 대기가 가�
     return undefined
   })
 
-  const { events } = renderChat()
+  const { events } = await renderChat()
   await findConversationButton('501')
   await waitFor(() => expect(events.connections).toHaveLength(1))
   await user.type(textarea(), '질문')
@@ -787,7 +803,7 @@ test('10초 간격이 지나면 다시 그려 남은 초 안내를 지우고 보
     return undefined
   })
 
-  const { events } = renderChat()
+  const { events } = await renderChat()
   await findConversationButton('501')
   await waitFor(() => expect(events.connections).toHaveLength(1))
   await user.type(textarea(), '질문')
@@ -818,7 +834,7 @@ test('429 거절은 서버가 알려 준 남은 초를 보여 주고 입력을 �
     return undefined
   })
 
-  renderChat()
+  await renderChat()
   await findConversationButton('501')
   await user.type(textarea(), '질문')
   await user.click(sendButton())
@@ -843,7 +859,7 @@ test('성공한 뒤의 새 질문은 새 request_key를 쓴다', async () => {
     return undefined
   })
 
-  renderChat()
+  await renderChat()
   await findConversationButton('501')
 
   for (let round = 0; round < 2; round += 1) {
@@ -875,7 +891,7 @@ test('다른 대화로 옮긴 뒤 같은 문장을 보내면 이전 대화의 �
     return undefined
   })
 
-  renderChat()
+  await renderChat()
   await findConversationButton('502')
 
   await user.type(textarea(), '같은 문장')
@@ -911,7 +927,7 @@ test('응답을 잃은 질문은 다른 대화를 다녀온 뒤에도 같은 req
     return undefined
   })
 
-  renderChat()
+  await renderChat()
   await findConversationButton('502')
 
   // A(502)에서 응답을 받지 못한다.
@@ -966,7 +982,7 @@ test('#53 이전에 저장된 질문을 같은 키로 다시 보내 job 없이 �
     return undefined
   })
 
-  renderChat()
+  await renderChat()
   await findConversationButton('501')
   await user.type(textarea(), '예전 질문')
   await user.click(sendButton())
@@ -1013,7 +1029,7 @@ test('새로고침 뒤에도 대화의 작업 목록으로 실패 답변의 재�
     return undefined
   })
 
-  renderChat()
+  await renderChat()
 
   expect(await screen.findByRole('button', { name: '재시도' })).toBeTruthy()
   expect(screen.getByRole('button', { name: '건너뛰기' })).toBeTruthy()
@@ -1039,7 +1055,7 @@ test('작업 목록만 읽지 못하면 이력은 보여 주고 안내와 다시
     return undefined
   })
 
-  renderChat()
+  await renderChat()
 
   // 이력은 보인다. 작업 상태를 몰라 버튼은 없고, 그 사실과 다시 불러오는 방법을 알린다.
   expect(await screen.findByText('음주운전 단속 기준은?')).toBeTruthy()
@@ -1084,7 +1100,7 @@ test('재시도 응답을 잃으면 다시 눌러도 같은 retry_key로 보내�
     return undefined
   })
 
-  const { events } = renderChat()
+  const { events } = await renderChat()
   await user.click(await screen.findByRole('button', { name: '재시도' }))
 
   expect((await screen.findByRole('alert')).textContent).toContain('다시 누르면 같은 요청으로 확인합니다.')
@@ -1128,7 +1144,7 @@ test('건너뛰면 멈췄던 뒤 질문을 다시 대기열에 넣고, 실패 �
     return undefined
   })
 
-  renderChat()
+  await renderChat()
   await user.click(await screen.findByRole('button', { name: '건너뛰기' }))
 
   expect(await screen.findByText('대기 중 · 1번째')).toBeTruthy()
@@ -1153,7 +1169,7 @@ test('실행 전 질문을 취소하면 취소한 질문으로 남고, 거절되
     return undefined
   })
 
-  const { events } = renderChat()
+  const { events } = await renderChat()
   await screen.findByText('취소할 질문')
   await waitFor(() => expect(events.connections).toHaveLength(1))
   events.last.emit(snapshot([queued]))
@@ -1186,7 +1202,7 @@ test('실행이 시작돼 취소가 거절되면 안내를 보이고 그 작업�
     return undefined
   })
 
-  const { events } = renderChat()
+  const { events } = await renderChat()
   await screen.findByText('이미 시작된 질문')
   await waitFor(() => expect(events.connections).toHaveLength(1))
   events.last.emit(snapshot([queued]))
@@ -1211,7 +1227,7 @@ test('회원이 바뀌면 다시 그린 첫 화면부터 이전 회원의 기록
     return undefined
   })
 
-  const { rerender, events } = renderChat()
+  const { rerender, events } = await renderChat()
   await screen.findByText('Q-USER-A')
   await waitFor(() => expect(events.connections).toHaveLength(1))
   const connectionA = events.last
@@ -1235,8 +1251,10 @@ test('회원이 바뀌면 다시 그린 첫 화면부터 이전 회원의 기록
   expect(screen.queryByText('Q-USER-A')).toBeNull()
   expect(screen.queryByText('A의 임시 출력')).toBeNull()
   expect(screen.queryByRole('button', { name: conversationLabel(conversation('501')) })).toBeNull()
-  expect(textarea().value).toBe('')
+  expect(screen.queryByLabelText('질문 입력')).toBeNull()
   expect(connectionA.signal.aborted).toBe(true)
+
+  fireEvent.click(await findConversationButton('601'))
 
   // 끊긴 A의 구독으로 늦게 온 이벤트도 B의 화면에 나타나지 않는다.
   connectionA.emit({ type: 'delta', data: { job_id: '7001', text: 'A의 늦은 조각' } })
@@ -1262,7 +1280,7 @@ test('회원이 바뀌면 이전 회원의 대화 목록 조회를 끊는다', a
     return undefined
   })
 
-  const { rerender } = renderChat()
+  const { rerender } = await renderChat({ startBeforeList: true })
   await waitFor(() => expect(listSignalA).toBeDefined())
 
   auth.value = { accessToken: 'token-b', user: { id: 'u2' } }
@@ -1288,7 +1306,7 @@ test('계정이 바뀐 뒤 새 목록 조회가 실패해도 이전 사용자의
     return undefined
   })
 
-  const { rerender } = renderChat()
+  const { rerender } = await renderChat()
   await screen.findByText('Q-USER-A')
   await user.type(textarea(), 'A가 쓰던 초안')
 
@@ -1298,7 +1316,7 @@ test('계정이 바뀐 뒤 새 목록 조회가 실패해도 이전 사용자의
   expect((await screen.findByRole('alert')).textContent).toContain('목록을 불러오지 못했습니다.')
   expect(screen.queryByText('Q-USER-A')).toBeNull()
   expect(screen.queryByRole('button', { name: conversationLabel(conversation('501')) })).toBeNull()
-  expect(textarea().value).toBe('')
+  expect(screen.queryByLabelText('질문 입력')).toBeNull()
 })
 
 test('전송 중에 계정이 바뀌면 입력창이 잠긴 채로 남지 않고, 늦은 전송 응답이 새 계정 화면을 건드리지 않는다', async () => {
@@ -1322,7 +1340,7 @@ test('전송 중에 계정이 바뀌면 입력창이 잠긴 채로 남지 않고
     return undefined
   })
 
-  const { rerender } = renderChat()
+  const { rerender } = await renderChat()
   await findConversationButton('501')
 
   await user.type(textarea(), 'A의 질문')
@@ -1332,6 +1350,7 @@ test('전송 중에 계정이 바뀌면 입력창이 잠긴 채로 남지 않고
   auth.value = { accessToken: 'token-b', user: { id: 'u2' } }
   rerender()
 
+  fireEvent.click(await findConversationButton('601'))
   await screen.findByText('Q-USER-B')
   expect(textarea().disabled).toBe(false)
   expect(textarea().value).toBe('')
@@ -1355,7 +1374,7 @@ test('로그아웃하면 구독을 끊고 화면을 비우지만, 서버 작업�
     return undefined
   })
 
-  const { rerender, events } = renderChat()
+  const { rerender, events } = await renderChat()
   await screen.findByText('Q-PRIVATE')
   await waitFor(() => expect(events.connections).toHaveLength(1))
   events.last.emit(snapshot([makeEnvelope({ question: { content: 'Q-PRIVATE' } })]))
@@ -1389,7 +1408,7 @@ test('화면을 떠나면 진행 중인 조회를 끊고, 늦게 끝난 조회�
     return undefined
   })
 
-  const { unmount, events } = renderChat()
+  const { unmount, events } = await renderChat()
   await waitFor(() => expect(events.connections).toHaveLength(1))
   events.last.emit(snapshot([makeEnvelope({ job: { state: 'running', position: null, allowed_actions: [] } })]))
   // 진행 중이던 작업이 다음 snapshot에서 빠져 최종 결과를 따로 조회한다.
@@ -1426,7 +1445,7 @@ test('첫 대화 목록을 읽는 동안 새 대화를 만들면, 늦게 도착�
     return undefined
   })
 
-  renderChat()
+  await renderChat({ startBeforeList: true })
 
   // 목록 응답이 오기 전에 첫 질문을 보내 새 대화를 만든다.
   await user.type(textarea(), '새 질문')
@@ -1453,7 +1472,7 @@ test('질문 앞뒤 공백은 그대로 보내고, 공백뿐인 질문은 보낼
     return undefined
   })
 
-  renderChat()
+  await renderChat()
   await findConversationButton('501')
 
   fireEvent.change(textarea(), { target: { value: '   \n  ' } })
@@ -1476,7 +1495,7 @@ test('질문 길이는 Unicode 코드 포인트 4,000자까지 허용하고, 이
     return undefined
   })
 
-  renderChat()
+  await renderChat()
   await findConversationButton('501')
 
   const input = textarea()
@@ -1512,7 +1531,7 @@ test('대화가 없을 때 질문을 연달아 제출해도 대화는 하나만 
     return undefined
   })
 
-  renderChat()
+  await renderChat()
   await screen.findByText('대화 기록이 아직 없어요.')
 
   const input = textarea()
@@ -1549,7 +1568,7 @@ test('질문을 보내는 동안에는 사이드바에서 대화를 바꾸거나
     return undefined
   })
 
-  renderChat()
+  await renderChat()
   await findConversationButton('502')
 
   await user.type(textarea(), '질문')
@@ -1584,7 +1603,7 @@ function mockEmptyConversation() {
 test('입력창의 placeholder가 안내 문구이고, 안내를 따로 그리는 요소는 없다', async () => {
   mockEmptyConversation()
 
-  renderChat()
+  await renderChat()
   await findConversationButton('501')
 
   expect(textarea().placeholder).toBe(COMPOSER_NOTICE_TEXT)
@@ -1597,7 +1616,7 @@ test('입력하고 지우고 공백만 넣어도 placeholder는 바뀌지 않는
   const user = userEvent.setup()
   mockEmptyConversation()
 
-  renderChat()
+  await renderChat()
   await findConversationButton('501')
 
   await user.type(textarea(), '가')
@@ -1617,7 +1636,7 @@ test('전송으로 입력값이 비워진 뒤에도 placeholder가 그대로여�
   const user = userEvent.setup()
   mockEmptyConversation()
 
-  renderChat()
+  await renderChat()
   await findConversationButton('501')
 
   await user.type(textarea(), '안내 확인 질문')
