@@ -245,3 +245,13 @@ test('버튼이 없는 대기 작업도 만료까지 남은 시간은 보여 준
 
   expect(screen.getByText('만료까지 30초')).toBeTruthy()
 })
+
+test('접수를 확인하지 못한 재시도는 서버가 새 재시도 동작을 숨긴 뒤에도 같은 키 확인 버튼을 유지한다', async () => {
+  const commands = makeCommands({ hasUnconfirmedRetry: () => true })
+  renderActions(failed([]), { limits: makeLimits({ daily: { ...makeLimits().daily, remaining: 0 } }), commands })
+  const retry = screen.getByRole('button', { name: '재시도' }) as HTMLButtonElement
+  expect(retry.disabled).toBe(false)
+  fireEvent.click(retry)
+  await waitFor(() => expect(commands.retry).toHaveBeenCalledWith('7001'))
+  expect(screen.queryByRole('button', { name: '건너뛰기' })).toBeNull()
+})
