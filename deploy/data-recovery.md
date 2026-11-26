@@ -12,9 +12,9 @@
 
 | 범위 | 담당 |
 | --- | --- |
-| 사전 점검·백업·검증·스키마 적용·되돌림·복원 절차와 도구, 격리 리허설과 증거 | `davekim-dev` |
+| 현재 사전 점검·백업·검증·스키마 적용·되돌림·복원 절차와 도구 관리 | Owner `xifoxy-ru` |
 | 도구 설치, 실제 백업 실행·일일 timer, Owner Mac 암호화 금고 복사·검증, 로그 보존 실행 조건, 실제 작업 승인 | Owner `xifoxy-ru` |
-| 절차·복원 결과의 독립 검토 | `yejoo0310` 또는 구현하지 않은 운영 검토자 |
+| 절차·복원 결과의 독립 운영 검토 | 해당 변경을 구현하지 않은 검증자. 과거 검토자·결과는 날짜별 기록으로 보존 |
 
 ## 원칙
 
@@ -37,7 +37,7 @@
 | `empty_use_db_init` | 제품 테이블이 없다. 첫 파일럿 배포가 여기에 해당한다. | 빈 DB 초기화(아래) |
 | `needs_reservation_fk` | 10개 테이블이 있지만 #53의 `chat_jobs_reservation_fk`가 없다(#52 시점 DB). | [4. 스키마 적용](#4-기존-스키마-적용--chat_jobs_reservation_fk) |
 | `current` | 현재 모델의 테이블과 FK가 있다. | 적용할 것 없음 |
-| `partial_stop` | 일부 테이블만 있다. | **중단**하고 Owner·`davekim-dev`가 원인을 확인한다. `create_all()`로 메우지 않는다. |
+| `partial_stop` | 일부 테이블만 있다. | **중단**하고 Owner가 원인을 확인한다. `create_all()`로 메우지 않는다. |
 
 빈 DB 초기화는 Owner가 승인한 첫 배포에서 한 번만, 격리 smoke와 같은 명시 명령으로 한다. 앱 시작이나 배포
 스크립트가 자동으로 하지 않는다.
@@ -120,7 +120,7 @@ Owner Mac이나 리허설에서는 `--compose-project` 대신 일회용 컨테�
 | --- | --- | --- |
 | `stop_backend_first` | backend 실행 중 | backend를 멈추고 다시 시작한다. |
 | `fresh_pre_change_backup_required`, `backup_does_not_match_current` | 백업이 오래됐거나, `daily`이거나, 백업 뒤 데이터가 바뀌었다. | 새 `pre-change` 백업부터 다시 한다. |
-| `orphan_reservations` | 없는 예약을 가리키는 작업이 있다. FK를 추가할 수 없다. | **중단.** 데이터를 임의로 고치거나 지우지 않는다. 행 ID는 진단 파일로만 확인하고 정정 방법은 `davekim-dev`·Owner가 별도 결정한다. 앱은 FK 없이 그대로 동작한다. |
+| `orphan_reservations` | 없는 예약을 가리키는 작업이 있다. FK를 추가할 수 없다. | **중단.** 데이터를 임의로 고치거나 지우지 않는다. 행 ID는 진단 파일로만 확인하고 정정 방법은 Owner가 별도 결정한다. 앱은 FK 없이 그대로 동작한다. |
 | `apply_failed` | 트랜잭션 실패(잠금 5초 초과 포함). 변경은 반영되지 않았다. | `precheck`로 FK 없음·데이터 동일을 확인하고 backend를 다시 시작한다. 원인 확인 후 재시도한다. |
 | `unexpected_change_after_apply` | 적용 뒤 FK 외 차이 | backend를 멈춘 채 두고 보고서의 차이 이름을 확인한다. 데이터 손상이면 [7. 복원](#7-복원)을 결정한다. |
 | `backup_sha256_mismatch`, `backup_size_mismatch`, `manifest_invalid` | archive가 바뀌었거나 짝이 맞지 않는다. | 그 백업을 쓰지 않는다. 금고 사본과 대조한다. |
@@ -282,7 +282,7 @@ PY
 
 - 복원한 DB가 백업과 일치하는데 `auth`·`worker`·앱 버전 때문에 실패했다. DB는 그대로 두고 설정을 고치거나 [앱 되돌림](#6-앱-되돌림과-스키마-호환)을 한다.
 - DB 컨테이너 자체가 응답하지 않는다. 먼저 컨테이너를 복구하고 1단계부터 다시 한다.
-- 이전 DB의 보존이나 행 수를 확인할 수 없다. 이름을 바꾸지 않고 Owner와 `davekim-dev`가 함께 판단한다.
+- 이전 DB의 보존이나 행 수를 확인할 수 없다. 이름을 바꾸지 않고 Owner가 함께 판단한다.
 
 **6. 이전 DB로 돌아가는 절차** (backend 정지 유지, Owner 승인)
 
@@ -310,7 +310,7 @@ SQL
 3. backend를 시작하고 `/api/ready` 200을 확인한다.
 4. 기능 확인(`verify-pilot-readiness`)을 한다.
 5. 다음을 #75에 남긴다. 복원·복귀 시각, 실패한 검증과 원인 위치, 1·2단계 결과, 4단계의 새 쓰기 여부와 Owner 결정, 복귀 후 `precheck` 비교 결과, 남긴 DB 이름.
-6. 다른 백업(금고 사본 등)으로 다시 복원할지 Owner와 `davekim-dev`가 결정한다. `nss_failed_restore_<UTC>`는 원인을
+6. 다른 백업(금고 사본 등)으로 다시 복원할지 Owner가 결정한다. `nss_failed_restore_<UTC>`는 원인을
    확인하고 디스크 여유를 본 뒤 Owner가 `DROP DATABASE`로 지운다.
 
 2026-11-19 `davekim-dev` 자체 확인: 일회용 `postgres:17.11` 컨테이너에서 실제 `restore`로 교체 후 상태를 만들고
@@ -404,12 +404,13 @@ PR #99 병합 뒤 main `ef24f75`로 Windows Docker Desktop(`desktop-linux`, Engi
 macOS(Colima) 실행과 독립 검토자 재현은 아직 없다. 증거 디렉터리(`result.json`, `commands.json`, 보고서)는 합성
 데이터만 담지만 저장소에 넣지 않고 `davekim-dev`가 로컬에 보관한다.
 
-## 11. 미실행·남은 조건
+## 11. 현재 운영 보고와 남은 조건 (2026-11-25)
 
-- 실제 EC2 백업·복원·FK 판정, 서버 도구 설치, 일일 timer와 실패 알림, 금고 복사·검증 — Owner의 별도 승인 작업.
-- 분석용 로그 별도 보관의 실제 위치와 삭제 시점 — Owner.
-- `deploy-gates.json`의 `data_recovery` 승인 증거는 이 절차의 실제 서버 결과와 독립 검토로 Owner가 준비한다.
-- 독립 복원 검토(`yejoo0310` 또는 구현하지 않은 운영 검토자)와 #76 인계: 확인자, 대상, 시각, 결과, 남은 조건.
-- [교체 후 검증 실패 대응](#교체-후-검증-실패-대응)의 확인·복귀 명령은 격리 리허설에 포함되지 않았다. 독립 검토자가 격리
-  환경에서 교체 후 실패 → 이전 DB 복귀 → 복귀 후 확인을 시험하고 대상·시각·결과를 #75에 남긴다.
-- 대량 데이터의 백업·복원 시간과 t2.micro 부하는 #76에서 측정한다. 스냅샷은 표 전체를 한 번에 해시하므로 파일럿 규모를 전제로 한다.
+현재 담당은 Owner `xifoxy-ru`다. [운영 인계](README.md#현재-운영-인계-2026-11-25-kst)의 Owner·PM-2 보고에 따르면 수동 백업 1회와 서버 밖 Mac 암호화 금고 사본의 무결성 일치, Discord 실패 알림 수신을 확인했다. 첫 정기 timer는 **2026-11-26 04:00 KST 예정**이며 11/25 현재 실행 성공으로 세지 않는다. 문서 Worker가 원본 DB·사본·비밀값·Discord에 접근한 결과가 아니다.
+
+- 첫 timer 실제 성공·실패와 새 백업/서버 밖 사본, 반복 실행·보존·디스크 상한을 예정 시각 뒤 확인한다.
+- 금고 사본의 무결성 일치는 실제 운영 DB 복원 성공과 구분한다. EC2 복원·재접속 경합·운영 Compose/TLS/readiness 전체의 복구 시간·기능 확인과 RTO 충족은 미확인이다.
+- 분석용 로그의 실제 보관 위치·삭제 시점과 컨테이너 교체 전 보관, 실패 알림의 대응 책임·후속 조치를 운영 기록에 남긴다.
+- #105의 교체 후 실패·이전 DB 복귀 절차는 병합됐고 [11/20 격리 독립 검증](https://github.com/next-stop-siren/Next-Stop-Siren/issues/75#issuecomment-7026821519)과 [11/22 수정 재검토](https://github.com/next-stop-siren/Next-Stop-Siren/issues/75#issuecomment-7071685558)가 완료됐다. 이전 실패 재현을 미해결로 되돌리거나 이번 최신 main에서 재실행했다고 주장하지 않는다. 이것은 #75 전체 운영 완료가 아니다.
+- `deploy-gates.json`의 `data_recovery` 증거·승인과 #76 인계는 실제 source·범위·수행자·시각·남은 조건을 Owner가 대조한다. 독립 운영 확인자는 해당 변경 구현자와 분리한다.
+- 대량 데이터·t2.micro의 CPU credit·메모리·디스크·백업/복원 시간은 #76의 실제 운영 측정으로 남는다. [로컬 3인 mock 리허설](README.md#76-로컬-3인-mock-리허설-2026-11-25)은 EC2 부하나 운영 복원의 대체 증거가 아니다.

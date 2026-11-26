@@ -2,7 +2,11 @@
 
 Next-Stop-Siren은 교통법 질문을 위한 챗봇 프로젝트다. 일반 앱은 무료 모의 답변을 사용한다. 요청·응답의 단일 계약은 [API 기준](docs/04-reference/api.md), 정책의 의도와 구현 경계는 [회원 채팅 정책](docs/04-reference/chat-policy.md)에 있다.
 
-## 구현 상태 (2026-10-25)
+## 현재 운영 상태 (2026-11-25)
+
+Owner `xifoxy-ru`/PM-2의 실제 시험 배포에서 HTTPS·readiness, 모의 답변 저장/복구·한도1회 차감·로그아웃을 확인했다. 배포 앱 source는 `fe2ae6d`, 최신 main은 `f3df305a`로 PR #111–114의 병합·로컬 검사와 새 이미지 배포는 다르다. Google 설정·start302/callback 확인은 보고됐고 실제 가입·재로그인과 실제 AI 호출은 미검증이다. [운영 증거·로컬 3인 리허설·다음 배포 체크리스트](deploy/README.md#현재-운영-인계-2026-11-25-kst)와 [현재 공정](docs/02-team/development-flow.md)을 따른다. #73–76의 남은 운영 항목은 열려 있다.
+
+## 구현 상태 기록 (2026-10-25)
 
 기준 코드는 [main 병합 커밋 `2d50da5`](https://github.com/next-stop-siren/Next-Stop-Siren/commit/2d50da5976548db7b85c5b0b931b7c43e622fa15)이다. 현재 상태와 요구사항을 구분한다.
 
@@ -89,7 +93,7 @@ Set-Location Next-Stop-Siren
 - `compose.yaml`: 개발·테스트 PostgreSQL 서비스
 - `docs/`: 제품 범위, API·DB·인증 기준, 온보딩 및 팀 지침
 
-현재 Compose에는 개발·테스트 DB만 있습니다. 프런트엔드와 API는 위 명령으로 호스트에서 실행합니다. 운영 대상은 [단일 AWS EC2의 Nginx·백엔드·PostgreSQL Compose 구성](docs/01-start/stack.md#선택한-배포-구성)으로 정했으며, 배포는 아직 구현되지 않았습니다. `build`는 프런트엔드 산출물만 만듭니다.
+루트 Compose는 개발·테스트 DB 전용이며 프런트엔드와 API는 위 로컬 명령으로 호스트에서 실행합니다. 별도 `deploy/compose.yaml`의 [단일 EC2 운영 구성과 실제 시험 배포](deploy/README.md)는 구분합니다. 로컬 `build`는 프런트엔드 산출물만 만듭니다.
 
 ## 명령어
 

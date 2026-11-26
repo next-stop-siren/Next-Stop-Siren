@@ -3,7 +3,11 @@
 B71-OBS-057 · 2026-11-25 · 코드 대조 기준 main `9e003adfa5c38e168ce34434e33dace541c28026`.
 기존 OAuth 성공 경로와 [#69 실패 복귀](google-login-failure.md)를 사용한다. 이 작업에서는 실제 환경 파일·자격 증명·Google Console·서버를 읽거나 변경하지 않았다. 아래 운영 절차는 Owner가 승인된 환경에서 수행할 인계이며, 문서 작성이나 합성 테스트 통과를 실제 Google 가입·로그인 성공으로 표시하지 않는다.
 
-Owner가 이번 인계에서 **Google OAuth 웹 클라이언트는 아직 없다**고 확인했다. 따라서 첫 운영 단계는 Owner가 승인된 Google Cloud 프로젝트에서 파일럿용 **Web application** 클라이언트를 만들고 아래 callback을 등록하는 것이다. 실제 가입·재로그인은 아직 미검증이다. 이는 Owner 제공 전제이며 이 작업에서 Console을 조회한 결과는 아니다.
+## 현재 운영 보고 (2026-11-25 KST)
+
+Owner가 Google Web OAuth 클라이언트를 생성하고 Mac 암호화 금고에 설정을 보관한 뒤, PM-2/Owner가 EC2 backend에 설정을 반영했다고 인계했다. 기존 backend 이미지를 재사용했고 DB/Nginx는 변경하지 않았다는 보고다. public `/api/ready` 200, Google start 302의 목적지 `accounts.google.com`, 정확한 callback `https://next-stop-siren.duckdns.org/api/auth/google/callback`을 확인했다. 아래 Console·주입 절차는 새 환경/설정 변경 때의 참조이며 현재 미생성 상태를 뜻하지 않는다.
+
+이 보고는 문서 Worker가 자격 증명·서버·Google에 접속해 독립 재검증한 결과가 아니다. **실제 신규 Google 가입·기존 계정 재로그인·세션 복구는 아직 미검증**이다. start 302는 code 교환·DB 저장·사용자 로그인 성공의 증거가 아니다. 현재 운영 담당은 Owner `xifoxy-ru`이며 실제 실행은 PM-2/Owner가 관리한다.
 
 ## 확인된 구현과 아직 확인하지 않은 것
 
@@ -13,7 +17,7 @@ Owner가 이번 인계에서 **Google OAuth 웹 클라이언트는 아직 없다
 | 시작·callback | `app.api.google_auth`와 `app.services.google_login`이 state·nonce·PKCE, 서명/claim을 검증한 뒤 저장·쿠키 발급 | 배포 환경에서 Google과 실제 교환·DB 저장·브라우저 세션 복구 |
 | 실패·취소 | 고정 cancelled/invalid_request/temporarily_unavailable 복귀와 안전한 503, 기존 세션 보존 | 실제 Google이 보낸 취소/오류와 합성 callback의 결과 구분 |
 | 상태 확인 | `/api/ready`는 DB·앱 인증/가입 설정·제품 스키마·worker를 확인 | 선택 기능인 Google 자격 증명·제공자 연결·계정 성공은 검사하지 않음 |
-| 배포 설정 | `deploy/backend-entrypoint.py`와 `deploy/production.env.example`의 고정 HTTPS Origin | 현재 서버에 주입된 값·설치 revision·재생성 결과는 이 작업에서 미조회 |
+| 배포 설정 | `deploy/backend-entrypoint.py`와 `deploy/production.env.example`의 고정 HTTPS Origin | 설정 반영·start 302는 위 Owner 보고, 실제 값과 서버는 이 문서 Worker가 미조회 |
 
 형식에 맞는 합성 `fixture.apps.googleusercontent.com`과 가짜 secret도 설정 파서를 통과할 수 있다. 이는 외부 자격의 진위를 조회하지 않는 기존 계약이다. `--validate-only`도 외부 서비스를 검사하지 않는다고 출력한다. 이를 Google 운영 준비 완료로 부르거나 실제 값을 추측하지 않는다. 검토한 경로에서 이 구분 자체를 실행 코드 결함으로 판단하지 않았으며 새 OAuth 구현이나 자격 검증 API를 추가하지 않았다.
 
@@ -36,18 +40,18 @@ callback은 `AUTH_API_ORIGIN + /api/auth/google/callback`과 문자열이 정확
 
 Google을 쓰지 않을 때 자격을 생략해도 비밀번호 인증은 유지된다. Google을 쓰려면 ID·secret·transaction key·redirect URI를 모두 준비하고 배포 entrypoint가 요구하는 frontend Origin도 명시한다. 일반 `/api/ready` 200만으로 이 항목들을 확인했다고 기록하지 않는다.
 
-## Operator: Google Console에서 준비할 순서 (미실행)
+## Operator: Google Console 설정 절차 (참조)
 
 1. Owner가 승인한 Google Cloud 프로젝트를 선택하고 **Google Auth Platform**을 연다. 새 프로젝트·청구 계정·유료 서비스를 임의로 만들지 않는다.
 2. **Branding**에서 앱 이름·지원 이메일·개발자 연락처와 필요한 동의 화면 항목을 확인한다. **Audience**에서 Internal/External과 Publishing status를 확인한다. External의 Testing 상태라면 실제 파일럿 Google 계정을 **Test users**에 등록해야 한다. 조직 내부 전용이면 허용 조직 계정인지 확인한다. 임의로 Production 게시나 scope 확대를 하지 않는다.
 3. **Data Access**에서 기존 코드의 `openid`, `email` 범위를 대조한다. 새 권한은 요구하지 않는다. 정책상 추가 검증이 필요하면 해당 Console 안내와 Owner 판단을 따른다.
-4. 현재 웹 클라이언트가 없으므로 Owner가 **Clients → Create client → Application type: Web application**으로 파일럿용 OAuth client를 만든다. client 이름은 비밀이 없는 식별 이름으로 정한다. 다른 유형의 client나 다른 프로젝트의 secret을 혼합하지 않는다. 실제 생성은 Owner의 승인된 운영 범위에서 수행하며 이 문서 작업에서는 실행하지 않는다.
+4. 새 환경에서 웹 클라이언트가 없다면 Owner가 **Clients → Create client → Application type: Web application**으로 파일럿용 OAuth client를 만든다. client 이름은 비밀이 없는 식별 이름으로 정한다. 다른 유형의 client나 다른 프로젝트의 secret을 혼합하지 않는다. 실제 생성은 Owner의 승인된 운영 범위에서 수행하며 이 문서 작업에서는 실행하지 않는다.
 5. **Authorized redirect URIs → Add URI**에 위 HTTPS callback 전체 문자열을 등록·저장한다. 개발용 callback을 함께 쓸 때는 별도 허용 항목으로 정확히 등록하며 배포 값을 개발 주소로 바꾸지 않는다. 변경 전후 확인은 URI·client 유형·프로젝트 식별에 필요한 최소 비밀 없는 기록으로 남긴다.
 6. 동일 client의 ID·secret을 승인된 비밀 보관 경로로 전달한다. JSON 다운로드·secret 화면·네트워크 캡처를 공개 증거에 붙이지 않는다. Console 저장/전파가 끝난 뒤 다음 서버 설정 단계로 넘긴다.
 
 Google Console UI 이름은 계정·언어에 따라 다를 수 있다. callback의 최종 값과 테스트 사용자 허용 여부를 기준으로 확인한다. 이 문서는 Console 실제 변경을 수행하지 않았다.
 
-## Operator: 서버 주입·형식 확인·재생성 (미실행)
+## Operator: 서버 주입·형식 확인·재생성 (참조)
 
 Owner/PM-2가 승인된 운영 절차로 기존 `/etc/next-stop-siren/production.env`에 필요한 Google 값만 주입한다. 다른 DB·인증 키를 교체하거나 파일을 예시로 덮어쓰지 않는다. 파일 소유·권한과 secret 보관은 기존 [배포 지침](../../deploy/README.md#서버-설정과-실패-경계)을 따른다. 입력 파일을 shell에서 source하거나 `cat`, 전체 `docker inspect`, `compose config` 출력으로 공유하지 않는다.
 
