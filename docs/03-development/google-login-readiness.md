@@ -19,6 +19,8 @@ Owner가 Google Web OAuth 클라이언트를 생성하고 Mac 암호화 금고�
 | 상태 확인 | `/api/ready`는 DB·앱 인증/가입 설정·제품 스키마·worker를 확인 | 선택 기능인 Google 자격 증명·제공자 연결·계정 성공은 검사하지 않음 |
 | 배포 설정 | `deploy/backend-entrypoint.py`와 `deploy/production.env.example`의 고정 HTTPS Origin | 설정 반영·start 302는 위 Owner 보고, 실제 값과 서버는 이 문서 Worker가 미조회 |
 
+사용자가 Google 로그인을 시작하면 authorization 요청에 `prompt=select_account`를 보내 계정 선택 화면을 요청한다. 브라우저에 Google 로그인 상태가 남아 있어도 사용할 계정을 직접 고를 수 있도록 하며, 기존 `state`·`nonce`·PKCE와 `openid email` 범위는 유지한다. 이 값은 대화형 로그인 시작 요청에만 적용하고 callback의 code 교환에는 추가하지 않는다. 합성 HTTP 회귀는 요청 쿼리를 확인하며, 실제 Google 선택 화면·가입·재로그인 확인은 별도 운영 검증으로 남긴다.
+
 형식에 맞는 합성 `fixture.apps.googleusercontent.com`과 가짜 secret도 설정 파서를 통과할 수 있다. 이는 외부 자격의 진위를 조회하지 않는 기존 계약이다. `--validate-only`도 외부 서비스를 검사하지 않는다고 출력한다. 이를 Google 운영 준비 완료로 부르거나 실제 값을 추측하지 않는다. 검토한 경로에서 이 구분 자체를 실행 코드 결함으로 판단하지 않았으며 새 OAuth 구현이나 자격 검증 API를 추가하지 않았다.
 
 ## 배포 대상의 정확한 URL·설정 조건

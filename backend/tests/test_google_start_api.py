@@ -119,6 +119,7 @@ def test_start_returns_302_and_matching_encrypted_transaction(google_start_clien
         "nonce": [transaction.nonce],
         "code_challenge": [transaction.code_challenge],
         "code_challenge_method": ["S256"],
+        "prompt": ["select_account"],
     }
     assert transaction.return_to == "/"
     assert transaction.code_verifier not in response.headers["location"]
@@ -181,6 +182,7 @@ def test_query_cannot_override_server_oauth_parameters(google_start_client, goog
             "nonce": "evil",
             "code_challenge_method": "plain",
             "scope": "extra-permission",
+            "prompt": "none",
         },
     )
     transaction, query, _ = transaction_from(response, google_settings)
@@ -188,6 +190,7 @@ def test_query_cannot_override_server_oauth_parameters(google_start_client, goog
     assert query["redirect_uri"] == [google_settings.redirect_uri]
     assert query["state"] == [transaction.state] and query["nonce"] == [transaction.nonce]
     assert query["scope"] == ["openid email"] and query["code_challenge_method"] == ["S256"]
+    assert query["prompt"] == ["select_account"]
 
 
 def test_new_start_replaces_transaction_and_rejects_previous_state(google_start_client, google_settings):
