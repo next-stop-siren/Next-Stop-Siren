@@ -66,6 +66,7 @@ async def google_authorization_url(
         state=transaction.state,
         nonce=transaction.nonce,
         code_verifier=transaction.code_verifier,
+        prompt="select_account",
     )
     return str(url)
 
