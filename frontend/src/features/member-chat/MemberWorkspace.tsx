@@ -39,7 +39,10 @@ function MemberWorkspace({ onLogoutClick, options }: MemberWorkspaceProps) {
           },
           onNew: startQuestion,
           disabled: chat.sending,
-          loading: chat.loading,
+          loading: chat.conversationsLoading,
+          hasMore: chat.hasMoreConversations,
+          error: chat.conversationsError,
+          onLoadMore: () => void chat.loadMoreConversations(),
         }}
       />
 
