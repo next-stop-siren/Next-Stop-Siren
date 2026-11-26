@@ -1084,7 +1084,7 @@ test('재시도 응답을 잃으면 다시 눌러도 같은 retry_key로 보내�
     if (url === '/api/conversations/501/messages?limit=100') return json(200, page(history))
     if (url === '/api/chat/jobs?conversation_id=501&limit=100') return json(200, jobPage([paused, failed]))
     if (url === '/api/chat/jobs/7002') {
-      return json(200, { job: failed, question: history[0], answer: history[1] })
+      return json(200, { job: { ...failed, allowed_actions: [] }, question: history[0], answer: history[1] })
     }
     if (url === '/api/conversations/501/messages/9003/retry' && init?.method === 'POST') {
       retries += 1
@@ -1106,6 +1106,7 @@ test('재시도 응답을 잃으면 다시 눌러도 같은 retry_key로 보내�
 
   expect((await screen.findByRole('alert')).textContent).toContain('다시 누르면 같은 요청으로 확인합니다.')
 
+  await waitFor(() => expect(fetchSpy.mock.calls.some(([url]) => String(url) === '/api/chat/jobs/7002')).toBe(true))
   await user.click(screen.getByRole('button', { name: '재시도' }))
   await waitFor(() => expect(retries).toBe(2))
 

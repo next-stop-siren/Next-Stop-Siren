@@ -16,7 +16,7 @@ type ChatJobActionsProps = {
 
 /**
  * 작업 하나의 재시도·건너뛰기·취소 버튼과 안내 문구.
- * 버튼은 서버가 준 `allowed_actions`에 있을 때만 보이고, 한도·간격 때문에 막힌 재시도는 이유와 함께 비활성화한다.
+ * 새 동작은 서버의 `allowed_actions`를 따르고, 접수를 확인하지 못한 재시도는 보관한 같은 키로 확인할 수 있다.
  * 버튼을 눌러도 화면은 바로 바뀌지 않는다. 서버가 보내는 job 이벤트로 바뀐다.
  */
 function ChatJobActions({ envelope, jobs, limits, nowMs, commands }: ChatJobActionsProps) {
@@ -26,9 +26,10 @@ function ChatJobActions({ envelope, jobs, limits, nowMs, commands }: ChatJobActi
 
   const actions = job.allowed_actions
   const activeRetry = activeRetryFor(job, jobs)
+  const unconfirmedRetry = commands.hasUnconfirmedRetry(job.id)
+  const showRetry = actions.includes('retry') || unconfirmedRetry
   // 접수를 확인하지 못한 재시도를 같은 키로 다시 확인하는 일은 한도·간격과 무관하다.
-  const retryBlocked =
-    actions.includes('retry') && !commands.hasUnconfirmedRetry(job.id) ? retryBlockReason(limits, nowMs) : null
+  const retryBlocked = showRetry && !unconfirmedRetry ? retryBlockReason(limits, nowMs) : null
 
   const run = async (name: string, send: (jobId: string) => Promise<void>) => {
     if (pending) return
@@ -48,7 +49,7 @@ function ChatJobActions({ envelope, jobs, limits, nowMs, commands }: ChatJobActi
   const reasonId = `retry-reason-${job.id}`
   const waiting = job.state === 'queued' || job.state === 'paused'
 
-  if (actions.length === 0 && !activeRetry && !waiting && !error) return null
+  if (actions.length === 0 && !showRetry && !activeRetry && !waiting && !error) return null
 
   return (
     <div className={styles.actions}>
@@ -60,9 +61,9 @@ function ChatJobActions({ envelope, jobs, limits, nowMs, commands }: ChatJobActi
         </p>
       )}
 
-      {actions.length > 0 && (
+      {(actions.length > 0 || showRetry) && (
         <div className={styles.buttons}>
-          {actions.includes('retry') && (
+          {showRetry && (
             <button
               type="button"
               disabled={pending !== null || retryBlocked !== null}
@@ -83,6 +84,10 @@ function ChatJobActions({ envelope, jobs, limits, nowMs, commands }: ChatJobActi
             </button>
           )}
         </div>
+      )}
+
+      {unconfirmedRetry && (
+        <p className={styles.note}>접수를 확인하지 못했습니다. 재시도를 다시 누르면 같은 요청으로 확인합니다.</p>
       )}
 
       {retryBlocked && (
