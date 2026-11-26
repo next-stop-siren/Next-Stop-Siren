@@ -7,7 +7,7 @@ import { questionBlockReason } from './chatRetryRules'
 import {
   ChatApiError,
   createConversation,
-  listAllConversations,
+  listConversations,
   listAllMessages,
   retryQuestion,
   sendMessage,
@@ -53,6 +53,10 @@ export interface MemberChatOptions {
 
 export interface MemberChat {
   conversations: ApiConversation[]
+  conversationsLoading: boolean
+  conversationsError: string
+  hasMoreConversations: boolean
+  loadMoreConversations: () => Promise<void>
   conversationId: string | null
   threads: ChatThread[]
   loading: boolean
@@ -185,6 +189,11 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
   const requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS
 
   const [conversations, setConversations] = useState<ApiConversation[]>([])
+  const [conversationsLoading, setConversationsLoading] = useState(true)
+  const [conversationsError, setConversationsError] = useState('')
+  const [conversationCursor, setConversationCursor] = useState<string | null | undefined>(undefined)
+  const conversationCursorRef = useRef<string | null | undefined>(undefined)
+  const listControllerRef = useRef<AbortController | null>(null)
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ApiMessage[]>([])
   const [question, setQuestion] = useState('')
@@ -293,39 +302,60 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
     [alive, setLoadError],
   )
 
-  useEffect(() => {
+  const loadMoreConversations = useCallback(async () => {
     const token = accessTokenRef.current
-    if (!userId || !token) return
-
-    let stale = false
-    // 회원이 바뀌거나 화면을 떠나면 진행 중인 목록 조회를 끊는다.
+    if (
+      !alive() ||
+      !token ||
+      conversationCursorRef.current === null ||
+      (listControllerRef.current && !listControllerRef.current.signal.aborted)
+    )
+      return
     const controller = new AbortController()
-
-    async function load(accessToken: string) {
-      setLoading(true)
-
-      try {
-        const items = await listAllConversations(accessToken, controller.signal)
-        if (stale) return
-
-        // 목록을 읽는 동안 새로 만든 대화가 있으면 그대로 두고, 서버 목록에서 아직 없는 것만 뒤에 붙인다.
-        setConversations((current) => [...current, ...items.filter((item) => !current.some((c) => c.id === item.id))])
-
-        // 홈에서는 목록만 준비한다. 대화 선택·이력 조회는 사용자가 기록을 누른 뒤 시작한다.
-      } catch (err) {
-        if (!stale) setLoadError(errorText(err, '대화 목록을 불러오지 못했습니다.'))
-      } finally {
-        if (!stale) setLoading(false)
+    listControllerRef.current = controller
+    const lifetime = lifetimeRef.current.signal
+    const stop = () => controller.abort()
+    lifetime.addEventListener('abort', stop, { once: true })
+    const isCurrent = () => alive() && !controller.signal.aborted && listControllerRef.current === controller
+    setConversationsLoading(true)
+    setConversationsError('')
+    try {
+      const cursor = conversationCursorRef.current
+      const page = await listConversations(token, 20, cursor ?? undefined, controller.signal)
+      if (!isCurrent()) return
+      if (
+        page.next_cursor &&
+        (!page.items.length ||
+          !/^[1-9]\d*$/.test(page.next_cursor) ||
+          (cursor && BigInt(page.next_cursor) >= BigInt(cursor)))
+      ) {
+        throw new Error('대화 목록의 다음 페이지를 확인하지 못했습니다.')
+      }
+      setConversations((current) => [
+        ...current,
+        ...page.items.filter((item) => !current.some((known) => known.id === item.id)),
+      ])
+      conversationCursorRef.current = page.next_cursor
+      setConversationCursor(page.next_cursor)
+    } catch (err) {
+      if (isCurrent()) setConversationsError(errorText(err, '대화 목록을 불러오지 못했습니다.'))
+    } finally {
+      lifetime.removeEventListener('abort', stop)
+      if (listControllerRef.current === controller) {
+        listControllerRef.current = null
+        if (alive()) setConversationsLoading(false)
       }
     }
+  }, [alive])
 
-    void load(token)
-
+  useEffect(() => {
+    if (!userId) return
+    void loadMoreConversations()
     return () => {
-      stale = true
-      controller.abort()
+      listControllerRef.current?.abort()
+      listControllerRef.current = null
     }
-  }, [userId, setLoadError])
+  }, [userId, loadMoreConversations])
 
   const selectConversation = async (id: string) => {
     if (!accessTokenRef.current || sendingRef.current) return
@@ -590,6 +620,10 @@ export function useMemberChat(options: MemberChatOptions = {}): MemberChat {
 
   return {
     conversations,
+    conversationsLoading,
+    conversationsError,
+    hasMoreConversations: !!conversationCursor,
+    loadMoreConversations,
     conversationId,
     threads,
     loading,
