@@ -306,8 +306,32 @@ Nginx→backend→disposable PostgreSQL의 **13개 통합 항목**을 통과했�
    - Codyssey 키·고정 URL/model은 worker 시작 때 읽는다. 기존 `GptSettings.from_env()` 형식 검사는 외부 키의 유효성·사용 한도·과금을 확인하지 않는다. 제공자 장애/잘못된 설정에 자동 mock 전환·다른 모델 fallback·자동 유료 재시도를 기대하지 않는다. 진행 중 작업을 끝내거나 승인된 중단 기준을 적용한 뒤 교체하며 결과가 불명확한 질문을 무조건 재전송하지 않는다.
    - `POSTGRES_PASSWORD`/DB URL은 이 앱 키 교체에 섞지 않는다. env만 바꿔도 영속 DB의 role 암호가 바뀌지는 않는다. 실제 DB 자격·role 변경, 스키마·백업·복원은 #75의 별도 승인과 정합성 절차를 따른다.
 3. **주입·형식 확인:** 승인된 전달 경로로 필요한 값만 서버에 보낸다. runtime 파일은 서버 배포 도구가 요구하는 root 소유·그룹/기타 접근 금지(예:0600), 일반 설정/실행 경로는 root 소유·타인 쓰기 금지를 유지한다. 같은 보호 경로의 임시 파일에 준비해 권한·대상·형식을 확인하고 원자적으로 적용한다. env를 shell에서 source하거나 전체 `compose config`/`docker inspect`/환경값을 출력하지 않는다. `validate-release.py`로 파일 권한·문법·경로·digest를, 실제 backend의 `--validate-only`로 production/Auth/Origin/내부 DB/Google 형식을 확인한다. **Codyssey 형식은 별도로 기존 GptSettings 검사**가 필요하고 어느 형식 검사도 실제 Google/AI 성공 확인은 아니다.
-4. **반영·확인:** env_file 수정 후 단순 `restart`로 새 값이 주입됐다고 보지 않는다. 승인된 고정 릴리스/config/gate로 backend를 **재생성**하고 Nginx upstream을 기존 배포 절차에 맞춘다. 새 container/image ID와 비밀 없는 형식 결과·readiness를 기록한다. 필요한 로그인·provider 확인은 승인된 최소 범위로 한 번 실행하고 실행/미실행을 구분한다. Compose60초 종료 경계는 무손실 worker 종료 보장이 아니다.
-5. **실패·복귀:** 검증/시작/readiness 실패는 중단·보고하고 env·토큰·provider 응답을 덤프하지 않는다. Owner가 영향과 진행 중 작업 상태를 확인한 뒤, 유출되지 않은 이전 정상 설정과 불변 릴리스 쌍으로 복귀하거나 새 안전한 키를 선택한다. 이전 설정 복구도 파일 권한/형식 검사→재생성→readiness·허용된 최소 기능 확인 순서다. **유출된 키를 재활성화하지 않는다.** 키/세션 정합성 때문에 재로그인이 필요할 수 있으며 DB snapshot 복원으로 해결하지 않는다. DB 새 쓰기·복원 판단은 #75에 남긴다. S1은 이 방법 기록이며 실제 회전 연습 완료를 뜻하지 않는다.
+4. **반영·확인:** env_file 수정 후 단순 `restart`나 같은 릴리스의 배포 재실행으로 새 값이 주입됐다고 보지 않는다. `server_deploy.py`의 적용 식별자는 release/gates hash이며 **runtime 내용은 포함하지 않는다**. 같은 릴리스·gate·이미지면 `already_applied_checked`로 끝나 backend를 재생성하지 않고, 기존 키로 readiness가 성공할 수 있다. 따라서 비밀 교체·복구는 Owner가 **backend 강제 재생성 및 Nginx 설정 재적용을 별도로 승인**하고 아래 순서로 수행한다. 배포 기록/gate를 임의 변경해 이 분기를 우회하지 않는다.
+   - 자동 배포와 동시 실행하지 않는다. root 운영 셸에서 같은 `/opt/next-stop-siren/deploy.lock`에 비차단 배타 lock을 잡고, `inflight.json`이 없으며 보존된 current-release·release/gates·실행 이미지가 승인 대상과 일치함을 확인한다. lock 실패나 불일치는 중단한다. 아래 `RELEASE_DIR`는 그 검토를 마친 기존 `releases/<source>-<release hash 앞12자리>` 디렉터리이며, 경로만 입력하고 비밀값은 명령 인수에 넣지 않는다. 보호 파일 교체부터 사후 확인까지 같은 lock을 유지한다.
+   - 3번의 보호 파일 교체·형식 확인 뒤, 같은 project/Compose/env 파일을 사용해 다음 **backend만** 강제 재생성한다. DB 시작·재생성·볼륨 변경은 하지 않는다. `--no-deps`이므로 DB가 이미 정상 실행 중이어야 한다. 이 명령은 실행 예시이며 이번 문서 작업에서 EC2에 실행하지 않았다.
+
+     ```sh
+     # 별도 승인된 root 운영 셸. 파일 교체 전부터 이 lock을 유지한다.
+     exec 9>>/opt/next-stop-siren/deploy.lock
+     flock -n 9 || exit 1
+     test ! -e /opt/next-stop-siren/inflight.json || exit 1
+     # 승인 대상/current-release/이미지 대조 및 3번 보호 파일 교체·검사를 먼저 수행
+     compose_current() {
+       docker --host unix:///var/run/docker.sock compose \
+         --project-name next-stop-siren \
+         --env-file /etc/next-stop-siren/production.env \
+         --env-file "$RELEASE_DIR/release.env" \
+         --file "$RELEASE_DIR/compose.yaml" "$@"
+     }
+     compose_current config --quiet &&
+     compose_current run --rm --no-deps backend --validate-only &&
+     compose_current up -d --no-deps --force-recreate backend &&
+     compose_current exec -T nginx nginx -t &&
+     compose_current exec -T nginx nginx -s reload
+     ```
+
+   - backend IP가 바뀔 수 있어 Nginx는 설정 검사 후 reload로 upstream을 다시 해석한다. reload 실패도 성공 처리하지 않는다. 새 backend container ID/시작 시각, 승인된 동일 image ID·digest, DB container/volume 불변을 비밀 없이 기록한다. 보호된 운영 검사에서 교체 대상 env 값이 **새 container의 설정과 일치하는지만** 비교하고 결과만 남긴다(값·환경 전체·비밀 hash는 출력하지 않음). readiness만으로 새 키 반영을 증명하지 않는다. `/api/ready` 및 승인된 최소 기능 검사를 수행하고, 로그인/provider 실제 실행 여부를 구분한다. Compose60초 종료 경계는 무손실 worker 종료 보장이 아니다.
+5. **실패·복귀:** 검증/시작/readiness 실패는 중단·보고하고 env·토큰·provider 응답을 덤프하지 않는다. Owner가 영향과 진행 중 작업 상태를 확인한 뒤, 유출되지 않은 이전 정상 설정과 불변 릴리스 쌍으로 복귀하거나 새 안전한 키를 선택한다. 이전 설정 복구도 같은 lock 아래 파일 권한/형식 검사→4번의 backend `--force-recreate`·Nginx reload→새 container 설정 일치·readiness·허용된 최소 기능 확인 순서다. 같은 릴리스 재실행만으로 복구됐다고 보지 않는다. **유출된 키를 재활성화하지 않는다.** 키/세션 정합성 때문에 재로그인이 필요할 수 있으며 DB snapshot 복원으로 해결하지 않는다. DB 새 쓰기·복원 판단은 #75에 남긴다. S1은 이 방법 기록이며 실제 회전 연습 완료를 뜻하지 않는다.
 
 ## S2 · 실제 게시 이미지 쌍의 격리 앱 되돌림 결과 (2026-11-28)
 
