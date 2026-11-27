@@ -90,8 +90,8 @@ Compose 버전**으로 고정한다. mutable tag만으로 되돌림을 식별하
 
 Owner PC의 암호화 금고에 비밀 원본/복구 사본을 보관한다. 서버에는 실행 필수값만
 권장 경로 `/etc/next-stop-siren/production.env`에 제한된 권한으로 주입한다. 이 경로의 실제
-파일을 여기서 만들거나 읽지 않는다. 제품·계정·금고 경로·서버 권한/교체/복구 절차는
-Owner가 정해야 한다. 채워진 파일을 저장소·이미지·배포 명령 출력·로그에 넣지 않는다.
+파일을 여기서 만들거나 읽지 않는다. 실제 제품·계정·금고 경로의 값은 공개하지 않는다.
+교체·복구는 아래 S1 절차로 Owner가 대상·권한·중단 및 복귀 기준을 승인한 뒤 수행한다. 채워진 파일을 저장소·이미지·배포 명령 출력·로그에 넣지 않는다.
 `DATABASE_URL`은 URL 인코딩한 자격을 사용한 **plain `postgresql://...@db:5432/...`**이며
 POSTGRES_USER/PASSWORD/DB와 일치해야 한다. `postgresql+psycopg`는 현재 `/api/ready`와
 호환되지 않으므로 허용하지 않는다.
@@ -293,3 +293,43 @@ Nginx→backend→disposable PostgreSQL의 **13개 통합 항목**을 통과했�
 현재 인계·실행 담당은 Owner `xifoxy-ru`다. 과거 `davekim-dev`/`yejoo0310`의 구현·독립 검토 증거는 [데이터 보존 절차](data-recovery.md)의 날짜별 기록으로 보존하며 새 팀 배정으로 읽지 않는다. Owner는 실제 구성·DB/볼륨·권한과 파일럿 날짜, 변경 전 백업·복원 대상·호환성·실패 중단·로그 보관 조건을 대조한다. 실제 운영 DB 복원과 첫 timer 성공은 미확인이고, 독립 운영 확인자는 해당 변경 구현자와 분리해 결과에 기록한다. 비밀값·실제 DB 내용·금고 경로는 공개 자료에 넣지 않는다.
 
 수동 백업 1회·서버 밖 사본 무결성 일치와 Discord 실패 알림 수신 보고는 위 현재 인계에 구분했다. 정기 백업은 첫 예정 시각 뒤 실제 결과를 확인해야 하며 사본 무결성만으로 복원 가능성을 완료 처리하지 않는다. #105의 교체 후 실패 대응 재검토 완료와 #75 전체 완료도 구분한다. 앱 되돌림·DB 복원은 자동으로 수행하지 않는다.
+
+
+## S1 · 비밀 교체·복구 방법 (2026-11-28 정리)
+
+아래는 기존 구현에 맞춘 **방법과 책임의 기록**이다. 실제 금고 열람·자격 교체·키 회전 연습을 수행했다는 뜻이 아니다. 현재 실행 담당은 Owner `xifoxy-ru`, 승인된 운영 실행은 Owner/PM-2다. 문서 병합은 EC2·Google Console·Codyssey·DB 변경의 실행 승인이 아니다.
+
+1. **변경 전 고정·보관:** 대상 변수 이름, 기존/예정 릴리스의 불변 FE·BE digest 쌍, Compose/config revision, 기존 세션과 진행 중 작업에 미칠 영향, 중단 조건·안전한 복귀 대상을 먼저 기록한다. 값은 Owner의 기존 암호화 금고에 보관하고 공개 기록에는 값·금고 경로·원시 env/cookie/token을 남기지 않는다. 실행 서버의 이전 정상 runtime/release 설정은 보호된 사본으로 보존한다. DB 볼륨은 비밀 복구 사본도 데이터 백업도 아니다.
+2. **종류별 영향 분리:**
+   - 앱 인증은 `AUTH_ACCESS_KEY`, `AUTH_REFRESH_KEY`, `AUTH_REFRESH_DIGEST_KEY`, `AUTH_CSRF_KEY` 네 독립 키를 사용한다. 각 키는 최소32바이트 Base64이며 서로 달라야 한다. JWT 키를 바꾸면 대응 `AUTH_ACCESS_KID`/`AUTH_REFRESH_KID`도 정합하게 관리한다. 현재 검증기는 **키 종류별 단일 활성 키/kid**를 사용하므로 이전 JWT의 무중단 유효성 유지나 다중키 전환을 보장하지 않는다. refresh digest/CSRF 키 변경도 기존 세션·쿠키의 복구를 실패시킬 수 있으므로 재로그인 필요성을 먼저 승인·안내한다. 사용자 데이터 변경이나 이메일 자동 연결을 하지 않는다.
+   - Google client secret의 외부 교체는 기존 client ID·등록 callback과 맞춰 별도 승인된 Console 절차로 한다. `GOOGLE_TRANSACTION_KEY`는32바이트이며 교체 때 진행 중 OAuth 트랜잭션 쿠키가 무효가 될 수 있으므로 새 로그인 시작이 필요하다. 실제 Google 로그인 확인은 별도 실행 범위다.
+   - Codyssey 키·고정 URL/model은 worker 시작 때 읽는다. 기존 `GptSettings.from_env()` 형식 검사는 외부 키의 유효성·사용 한도·과금을 확인하지 않는다. 제공자 장애/잘못된 설정에 자동 mock 전환·다른 모델 fallback·자동 유료 재시도를 기대하지 않는다. 진행 중 작업을 끝내거나 승인된 중단 기준을 적용한 뒤 교체하며 결과가 불명확한 질문을 무조건 재전송하지 않는다.
+   - `POSTGRES_PASSWORD`/DB URL은 이 앱 키 교체에 섞지 않는다. env만 바꿔도 영속 DB의 role 암호가 바뀌지는 않는다. 실제 DB 자격·role 변경, 스키마·백업·복원은 #75의 별도 승인과 정합성 절차를 따른다.
+3. **주입·형식 확인:** 승인된 전달 경로로 필요한 값만 서버에 보낸다. runtime 파일은 서버 배포 도구가 요구하는 root 소유·그룹/기타 접근 금지(예:0600), 일반 설정/실행 경로는 root 소유·타인 쓰기 금지를 유지한다. 같은 보호 경로의 임시 파일에 준비해 권한·대상·형식을 확인하고 원자적으로 적용한다. env를 shell에서 source하거나 전체 `compose config`/`docker inspect`/환경값을 출력하지 않는다. `validate-release.py`로 파일 권한·문법·경로·digest를, 실제 backend의 `--validate-only`로 production/Auth/Origin/내부 DB/Google 형식을 확인한다. **Codyssey 형식은 별도로 기존 GptSettings 검사**가 필요하고 어느 형식 검사도 실제 Google/AI 성공 확인은 아니다.
+4. **반영·확인:** env_file 수정 후 단순 `restart`로 새 값이 주입됐다고 보지 않는다. 승인된 고정 릴리스/config/gate로 backend를 **재생성**하고 Nginx upstream을 기존 배포 절차에 맞춘다. 새 container/image ID와 비밀 없는 형식 결과·readiness를 기록한다. 필요한 로그인·provider 확인은 승인된 최소 범위로 한 번 실행하고 실행/미실행을 구분한다. Compose60초 종료 경계는 무손실 worker 종료 보장이 아니다.
+5. **실패·복귀:** 검증/시작/readiness 실패는 중단·보고하고 env·토큰·provider 응답을 덤프하지 않는다. Owner가 영향과 진행 중 작업 상태를 확인한 뒤, 유출되지 않은 이전 정상 설정과 불변 릴리스 쌍으로 복귀하거나 새 안전한 키를 선택한다. 이전 설정 복구도 파일 권한/형식 검사→재생성→readiness·허용된 최소 기능 확인 순서다. **유출된 키를 재활성화하지 않는다.** 키/세션 정합성 때문에 재로그인이 필요할 수 있으며 DB snapshot 복원으로 해결하지 않는다. DB 새 쓰기·복원 판단은 #75에 남긴다. S1은 이 방법 기록이며 실제 회전 연습 완료를 뜻하지 않는다.
+
+## S2 · 실제 게시 이미지 쌍의 격리 앱 되돌림 결과 (2026-11-28)
+
+실제 GHCR 게시 릴리스 두 쌍을 linux/amd64로 받아 `6983d45 → fe2ae6d → 6983d45` 순서로 **backend와 Nginx/FE를 모두 새 container로 재생성**했다. restart를 되돌림으로 대신하지 않았다. frozen release.json의 source/platform/Compose hash와 registry의 amd64 child/config·로컬 RootFS·revision 라벨을 대조했다. 로컬 등가 build fallback은 사용하지 않았다.
+
+| 릴리스 source | FE 불변 참조 | BE 불변 참조 |
+| --- | --- | --- |
+| `6983d45f75ce1c80745047981fc8222a0b1bde2a` | `ghcr.io/next-stop-siren/frontend@sha256:48c548b17d61e477e05fcd1f688e8b89e76b07ebbb4b576461a5f67b39dea733` | `ghcr.io/next-stop-siren/backend@sha256:e14618147d0aee515746c700be51c1539c405d5f6372db5480cde5b328fb15b4` |
+| `fe2ae6d8993cdf1821588ac0023bca20e74613d8` | `ghcr.io/next-stop-siren/frontend@sha256:3a3fb0106388e8a3b1bc3505862039cf116c0d644c34077934596a1931832b5e` | `ghcr.io/next-stop-siren/backend@sha256:87a8dce230dacd3f7396521f4394d31bcd1965d74696c76bd6512c88babaef1b` |
+
+두 release의 Compose SHA256은 `ddf9802ac2585c91520e832c837c6ae997f28bf9f81966dc01ed71306666697f`로 같다. 게시 근거는 [새 release run45910907413](https://github.com/next-stop-siren/Next-Stop-Siren/actions/runs/45910907413)과 [이전 release run44274974640](https://github.com/next-stop-siren/Next-Stop-Siren/actions/runs/44274974640)이다.
+
+| 단계 | source | 실제 FE / BE container ID(앞12자) | 앱 확인 |
+| --- | --- | --- | --- |
+| new-before | `6983d45` | `ca4da04b5eea` / `55828440ad54` | ready 200 · 동일 질문/답변/job |
+| rollback-old | `fe2ae6d` | `7671f031abca` / `14206db7a938` | ready 200 · 동일 질문/답변/job |
+| restore-new | `6983d45` | `fde0f87062b7` / `46b6ed92b98a` | ready 200 · 동일 질문/답변/job |
+
+- 고유 프로젝트 `b71-ops065-12012dd3f0b4`의 새 PostgreSQL17.11 container/volume을 만들었다. 생성 전 같은 이름의 resource가 없고, 새 volume의 소유 label·DB system ID·공개 테이블0개를 **변경 전에** 확인했다. published backend의 실제 `app.db_init.initialize_schema`로 등록 ORM schema를 초기화했으며 lookalike SQL schema를 수작업으로 만들지 않았다.
+- 실제 HTTPS 앱 API로 합성 계정·대화·질문1건을 만들고 mock worker가 답변1건을 완료·저장하도록 했다. 이후 이전 쌍/복귀 쌍 각각에서 `/api/me`, 대화 메시지, job API로 **같은 user/conversation/question/answer/job 식별자와 본문·완료 상태·메시지2개**를 읽었다. DB container·volume·system ID는 세 단계 내내 같고 schema 재초기화·DB restore는 없었다. 비교한 비밀 없는 business snapshot SHA256은 `e22b50cff159adae976428011598db393079ffc58445dba3d0f6529e819d4b18`로 같다.
+- 각 단계의 `/api/ready`는200 ready, Nginx의 실제 HTML과 연결된 bundle asset도 loopback `curl --connect-to`로 성공했다. 새 쌍과 복귀 쌍의 HTML/asset hash는 같고 이전 FE의 HTML hash는 달랐다. 이는 **실제 UI 파일 제공** 확인이며 브라우저 렌더링·실제 Google/AI 확인이 아니다.
+- 실제 실행은 nonce project, 보호된 합성 env, loopback ephemeral ports/새 subnet/certificate override를 사용한 `docker compose --project-name <nonce> --env-file <fixture> --env-file <release> -f deploy/compose.yaml -f <owned-override>` 기준이다. `up -d --wait db` → 실제 앱 schema 초기화 → `up -d --no-deps --force-recreate backend nginx`를 각 불변 쌍에 실행했다. `docker inspect`는 실행 image/label/DB mount identity를, curl은 `--noproxy '*' --connect-to <host>:443:127.0.0.1:<owned-port>`를 사용했다. env/token/cookie 값은 증거에서 제외했다.
+- 소유 label을 다시 확인한 해당 nonce project만 `down --volumes --remove-orphans`로 정리했다. 소유 container/volume/network 잔류0, 합성 env·private test certificate 삭제, 기존 resource inventory 보존을 확인했다. 받은 공개 이미지 cache는 지우지 않았다.
+
+한계: 로컬 Docker의 linux/amd64 실행(호스트의 emulation), mock·자체서명 TLS/loopback override 범위다. 실제 EC2/IAM/SSM·성능·비밀 교체 연습·Google·유료 AI·#75 backup restore·운영 rollback 실행 결과가 아니다. 원본 command/exit·manifest/image/DB identity·app readback·cleanup은 별도 검토 증거에 보관했다. 이 문서/PR은 #73 전체 종료나 실제 배포 승인을 자동으로 만들지 않는다.
